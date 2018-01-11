@@ -1,15 +1,16 @@
 defmodule MultiAgent do
   @moduledoc """
   MultiAgents are a simple abstraction around **group** of states.
-  Often in Elixir there is a need to share or store states that
-  must be accessed from different processes or by the same process
-  at different points in time. There are two main solutions: (1) use
-  a group of `Agent`s; or (2) a `GenServer`/`Agent` that hold states
-  in list/set or some key-value storage and provides parallel access
-  for different states. The `MultiAgent` module follows the latter
-  approach. It stores states in ETS-table and provides a basic server
-  implementation that allows states to be retrieved and updated via
-  an API similar to the `Agent` module one.
+  Often in Elixir there is a need to share or store group of states
+  that must be accessed from different processes or by the same
+  process at different points in time. There are two main solutions:
+  (1) use a group of `Agent`s; or (2) a `GenServer`/`Agent` that hold
+  states in list/set or some key-value storage (ETS/`Map`/process
+  dictionary) and provides concurrent access to different states. The
+  `MultiAgent` module follows the latter approach. It stores states in
+  Map and provides a basic server implementation that allows states to
+  be retrieved and updated via an API similar to the one of `Agent` and
+  `Map` modules.
 
   ## Examples
 
@@ -96,8 +97,31 @@ defmodule MultiAgent do
 
       {:update, :sample, {:advanced, {Enum, :into, [%{}]}}}
 
-  The multiagent's states will be added to the given list of arguments (`[%{}]`) as
-  the first argument.
+  The multiagent's states will be added to the given list of arguments
+  (`[%{}]`) as the first argument.
+
+  # Using `Enum` module and `[:key]` operator
+
+  Via `p_enum` package that implements `Enumerable` for processes (may be
+  named). After it's added to your deps, `Enum` could be used to interact
+  with this multiagent.
+
+      > {:ok, multiagent} = MultiAgent.start()
+      > Enum.empty? multiagent
+      true
+      > MultiAgent.init(:id, fn -> 42 end)
+      42
+      > Enum.empty? multiagent
+      false
+
+  Similarly, `p_access` package implements `Access` protocol, so adding it
+  to your deps gives a nice syntax sugar:
+
+      > {:ok, multiagent} = MultiAgent.start(:id, fn -> 42 end)
+      > multiagent[:id]
+      42
+      > multiagent[:otherid]
+      nil
   """
 
   @typedoc "Return values of `start*` functions"
@@ -109,11 +133,14 @@ defmodule MultiAgent do
   @typedoc "The multiagent reference"
   @type multiagent :: pid | {atom, node} | name
 
+  @typedoc "The multiagent state key"
+  @type key :: term
+
   @typedoc "The multiagent state"
   @type state :: term
 
-  @typedoc "{module, function, arguments}"
-  @type mfa :: {module, atom, [any]}
+  @typedoc "fun | {&Module.fun/arity, args} | {Module, fun, args}"
+  @type fun_arg :: fun | {fun, [any]} | {module, atom, [any]}
 
 
   @doc false
@@ -145,6 +172,55 @@ defmodule MultiAgent do
     end
   end
 
+
+  # is function given in form of {M,f,args}, {f,args}
+  # or other. Needed args num after arguments apply could be
+  # specified
+  defp fun?( fun, args_num \\ 0)
+
+  defp fun?( {module, fun, args}, args_num) when is_atom( module) do
+    fun?( {fun, args}, args_num)
+  end
+
+  defp fun?( {fun, args}, args_num) when is_list( args) do
+    fun?( fun, length( args)+args_num)
+  end
+
+  defp fun?( fun, args_num), do: is_function( fun, args_num)
+
+
+  # common for start_link and start
+  defp prepair( inits, opts) do
+    # repair opts:
+    {inits, timeout_opts} = case Keyword.get_values( inits, :timeout) do
+                              [] -> {inits, opts}
+                              [timeout_value] when is_function( value, 0)
+                                -> {inits, opts}
+
+                                timeout_values
+                                -> Enum.split_with( inits, fn {k, } -> end)
+                            end
+
+    opts = timeout_opts++opts
+
+    warns = [malformed:  Enum.flat_map( inits, fn {k,v} ->
+                           if fun?( v, 0), do: [k], else: []
+                         end)
+
+             duplicated: Keyword.keys( inits)
+                         |> (& &1 -- Enum.uniq( &1)).()
+                         |> Enum.uniq()]
+
+    |> Enum.reject( fn {_,v} ->
+         v == []
+       end)
+
+    if warns == [] do
+      {inits, opts}
+    else
+      {:error, warns}
+    end
+  end
 
   @doc """
   Starts a multiagent linked to the current process with the given function.
@@ -185,8 +261,8 @@ defmodule MultiAgent do
       iex> MultiAgent.get( pid, :errorid, & &1)
       nil
 
-      iex> MultiAgent.start_link( [{:id1, fn -> :timer.sleep( 250) end},
-                                   {:id2, fn -> :timer.sleep( 600) end}],
+      iex> MultiAgent.start_link( id1: fn -> :timer.sleep( 250) end,
+                                  id2: fn -> :timer.sleep( 600) end,
                                   timeout: 500)
       {:error, :timeout}
 
@@ -196,11 +272,22 @@ defmodule MultiAgent do
 
       iex> MultiAgent.start_link( id: fn -> 42 end,
                                   id: fn -> 43 end)
-      {:error, {:duplicated, [:id]}}
+      {:error, [{:duplicated, [:id]}]}
+
+      iex> MultiAgent.start_link( id: 76,
+                                  id: fn -> 43 end)
+      {:error, [
+                 {:mailformed, [:id]},
+                 {:duplicated, [:id]}
+               ]}
   """
-  @spec start_link( keyword((() -> term) | mfa), GenServer.options) :: on_start
-  def start_link( tuples \\ [], options \\ []) do
-    GenServer.start_link( MultiAgent.Server, tuples, options)
+  @spec start_link( keyword( fun_arg), GenServer.options) :: on_start
+  def start_link( inits \\ [], options \\ []) do
+    with {inits, opts} <- prepair( inits, options) do
+      GenServer.start_link( MultiAgent.Server, inits, options)
+    else
+      error -> error
+    end
   end
 
   @doc """
@@ -216,9 +303,13 @@ defmodule MultiAgent do
       42
       iex> {:error, {:badarith, _}} = MultiAgent.start( id: fn -> 1/0 end)
   """
-  @spec start( keyword((() -> term) | mfa), GenServer.options) :: on_start
+  @spec start( keyword( fun_arg), GenServer.options) :: on_start
   def start( tuples \\ [], options \\ []) do
-    GenServer.start( MultiAgent.Server, tuples, options)
+    with {inits, opts} <- prepair( inits, options) do
+      GenServer.start( MultiAgent.Server, inits, options)
+    else
+      error -> error
+    end
   end
 
 
