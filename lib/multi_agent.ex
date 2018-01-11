@@ -382,18 +382,18 @@ defmodule MultiAgent do
   """
   @spec update( multiagent, term, (state -> state), timeout) :: :ok
   def update( multiagent, id, fun, timeout \\ 5000) when is_function( fun, 1) do
-    GenServer.call(agent, {:update, fun}, timeout)
+    GenServer.call( multiagent, {:update, id, fun}, timeout)
   end
 
   @doc """
   Updates the agent state via the given function.
-  Same as `update/3` but a module, function, and arguments are expected
+  Same as `update/4 but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
   argument to the given list of arguments.
   """
-  @spec update(agent, module, atom, [term], timeout) :: :ok
-  def update(agent, module, fun, args, timeout \\ 5000) do
-    GenServer.call(agent, {:update, {module, fun, args}}, timeout)
+  @spec update( multiagent, term, module, atom, [term], timeout) :: :ok
+  def update( multiagent, id, module, fun, args, timeout \\ 5000) do
+    GenServer.call( multiagent, {:update, id, {module, fun, args}}, timeout)
   end
 
   @doc """
