@@ -1,22 +1,21 @@
 defmodule MultiAgent do
+
   @moduledoc """
-  MultiAgents are a simple abstraction around **group** of states.
-  Often in Elixir there is a need to share or store group of states
-  that must be accessed from different processes or by the same
-  process at different points in time. There are two main solutions:
-  (1) use a group of `Agent`s; or (2) a `GenServer`/`Agent` that hold
-  states in list/set or some key-value storage (ETS/`Map`/process
-  dictionary) and provides concurrent access to different states. The
-  `MultiAgent` module follows the latter approach. It stores states in
-  Map and provides a basic server implementation that allows states to
-  be retrieved and updated via an API similar to the one of `Agent` and
-  `Map` modules.
+  MultiAgent is a simple abstraction around **group** of states. Often in Elixir
+  there is a need to share or store group of states that must be accessed from
+  different processes or by the same process at different points in time. There
+  are two main solutions: (1) use a group of `Agent`s; or (2) a
+  `GenServer`/`Agent` that hold states in some key-value storage
+  (ETS/`Map`/process dictionary) and provides concurrent access for different
+  states. The `MultiAgent` module follows the latter approach. It stores states
+  in `Map` and provides a basic server implementation that allows states to be
+  retrieved and updated via an API similar to the one of `Agent` and `Map`
+  modules.
 
   ## Examples
 
-  For example, let us manage tasks and projects. Each task can be in
-  `:added`, `:started` or `:done` states. This is easy to implement
-  with a `MultiAgent`:
+  For example, let us manage tasks and projects. Each task can have `:added`,
+  `:started` or `:done` state. This is easy to implement with a `MultiAgent`:
 
       defmodule TasksServer do
         use MultiAgent
