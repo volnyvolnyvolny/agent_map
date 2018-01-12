@@ -248,11 +248,11 @@ defmodule MultiAgent do
 
       iex> MultiAgent.start_link( key: fn -> 42 end,
                                   key: fn -> 43 end)
-      {:error, {:initerror, {:already_has, :key}}}
+      {:error, {:init, {:already_has, :key}}}
 
       iex> MultiAgent.start_link( key: 76,
                                   key: fn -> 43 end)
-      {:error, {:initerror, {:is_not_fun, :key}}}
+      {:error, {:init, {:is_not_fun, :key}}}
   """
   @spec start_link( keyword( fun_arg), GenServer.options) :: on_start
   def start_link( inits \\ [], options \\ []) do
@@ -281,17 +281,22 @@ defmodule MultiAgent do
 
 
   @doc """
-  Initialize a multiagent state via the given anonymous function or MFA.
-  The function `fun` is sent to the `multiagent` which invokes it.
-  Its return value is used as the multiagent state with given id.
-  Note that `init/4` does not return until the given function has
-  returned.
+  Initialize a multiagent state via the given anonymous function, `{fun, args}`
+  or MFA tuple. The function `fun` is sent to the `multiagent` which invokes it
+  as a `Task`.
 
-  `timeout` is an integer greater than zero which specifies how many
-  number of milliseconds multiagent is allowed to spend on
-  initialization or it will be terminated and this function will
-  return `{:error, :timeout}`. Also, the atom `:infinity` can be
-  provided to make multiagent wait indefinitely.
+  Its return value is used as the multiagent state with given id. Note that
+  `init/4` does not return until the given function has returned.
+
+  State may also be added via `update/4` or `get_and_update/4` functions:
+
+      update( multiagent, :key, fn nil -> :state end)
+      update( multiagent, fn _ -> [:s1, :s2] end, [:key1, :key2])
+
+  `timeout` is an integer greater than zero which specifies how many number of
+  milliseconds multiagent is allowed to spend on initialization or it will be
+  terminated and this function will return `{:error, :timeout}`. Also, the atom
+  `:infinity` can be provided to make multiagent wait indefinitely.
 
   ## Examples
 
@@ -304,187 +309,271 @@ defmodule MultiAgent do
       42
 
       iex> MultiAgent.init( pid, :key, fn -> 43 end)
-      {:initerror, {:already, :key}}
+      {:error, {:already, :key}}
 
       iex> MultiAgent.init( pid, :key, fn -> :timer.sleep( 300) end, 200)
-      {:initerror, {:already, :key}}
+      {:error, {:already, :key}}
       iex> MultiAgent.init( pid, :_, fn -> :timer.sleep( 300) end, 200)
-      {:initerror, :timeout}
+      {:error, :timeout}
   """
-  @spec init( multiagent, term, (() -> term), timeout) :: a when a: var
-                                                     | {:initerror, :timeout | {:already, }}
-  def init( multiagent, id, fun, timeout \\ 5000) when is_function( fun, 0) do
-    GenServer.call( multiagent, {:init, id, fun}, timeout)
+  @spec init( multiagent, key, fun_arg, timeout)
+          :: any | {:error, :timeout}
+                 | {:error, {:already | :is_not_fun, key}}
+  def init( multiagent, key, fun, timeout \\ 5000) do
+    GenServer.call( multiagent, {:init, key, fun}, timeout)
   end
 
 
 
   @doc """
-  Gets the multiagent state with given id. The function `fun` is sent to the
+  Gets the multiagent state with given key. The function `fun` is sent to the
   `multiagent` which invokes the function passing the multiagent state. The
   result of the function invocation is returned from this function.
 
-  `timeout` is an integer greater than zero which specifies how many
-  milliseconds are allowed before the multiagent executes the function and returns
-  the result value, or the atom `:infinity` to wait indefinitely. If no result
-  is received within the specified time, the function call fails and the caller
-  exits.
+  If there is no state with such key, `nil` will be passed to fun.
 
-  If there is no state with such id, `nil` will be passed to fun.
+  Also, keys list could be passed to make transaction-like call. Be aware,
+  that in this case keys and fun arguments are swaped (keys list must be given
+  as a third argument).
+
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds are allowed before the multiagent executes the function and
+  returns the result value, or the atom `:infinity` to wait indefinitely. If
+  no result is received within the specified time, the function call fails
+  and the caller exits. See `flush/2` if queue clean for state is needed.
 
   ## Examples
 
       iex> {:ok, pid} = MultiAgent.start_link()
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> MultiAgent.get( pid, :key, & &1)
       nil
-      iex> MultiAgent.init( pid, :id, fn -> 42 end)
+      iex> MultiAgent.init( pid, :key, fn -> 42 end)
       42
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> MultiAgent.get( pid, :key, & &1)
       42
-
-      iex> MultiAgent.get( pid, :id, & 1+&1)
+      iex> MultiAgent.get( pid, :key, & 1+&1)
       43
+
+      iex> MultiAgent.init( pid, :key2, fn -> 43 end)
+      43
+      iex> MultiAgent.get( pid, &Enum.sum/1, [:key, :key2])
+      85
+
+      iex> MultiAgent.get( pid, {&Enum.reduce/3, [0, &-/2]}, [:key, :key2])
+      1
+      iex> MultiAgent.get( pid, {&Enum.reduce/3, [0, &-/2]}, [:key2, :key])
+      -1
   """
-  @spec get( multiagent, term, (state -> a), timeout) :: a when a: var
-  def get( multiagent, id, fun, timeout \\ 5000) when is_function( fun, 1) do
-    GenServer.call( multiagent, {:get, id, fun}, timeout)
+  def get( multiagent, _, _, timeout \\ 5000)
+
+  @spec get( multiagent, fun_arg, [key], timeout) :: any
+  def get( multiagent, fun, keys, timeout) when is_list( keys) do
+    GenServer.call( multiagent, {:get, fun, keys}, timeout)
   end
 
+  @spec get( multiagent, key, fun_arg, timeout) :: any
+  def get( multiagent, key, fun, timeout) do
+    GenServer.call( multiagent, {:get, key, fun}, timeout)
+  end
+
+
   @doc """
-  Gets a multiagent value via the given function.
-  Same as `get/4` but a module, function, and arguments are expected
-  instead of an anonymous function. The state is added as first
-  argument to the given list of arguments.
+  Works as `get/4`, but executes function in a separate process. Every state
+  has an associated queue of calls to be made on it. Using `get!/4` the state
+  with given key can be retrived immediately, "out of queue turn".
+
+  See `get/4` for the details.
+
+  ## Examples
+
+      iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
+      iex> MultiAgent.cast( pid, :key, fn _ -> :timer.sleep( 100); 43 end)
+
+      iex> MultiAgent.get!( pid, :key, & &1)
+      42
+      iex> MultiAgent.get( pid, :key, & &1)
+      43
+      iex> MultiAgent.get!( pid, :key, & &1)
+      43
   """
-  @spec get( multiagent, term, module, atom, [term], timeout) :: any
-  def get( multiagent, id, module, fun, args, timeout \\ 5000) do
-    GenServer.call( multiagent, {:get, id, {module, fun, args}}, timeout)
+  def get!( multiagent, _, _, timeout \\ 5000)
+
+  @spec get!( multiagent, fun_arg, [key], timeout) :: any
+  def get!( multiagent, fun, keys, timeout) when is_list( keys) do
+    GenServer.call( multiagent, {:get!, fun, keys}, timeout)
+  end
+
+  @spec get!( multiagent, key, fun_arg, timeout) :: any
+  def get!( multiagent, key, fun, timeout) do
+    GenServer.call( multiagent, {:get!, key, fun}, timeout)
   end
 
 
   @doc """
   Gets and updates the multiagent state in one operation via the given
-  anonymous function.
+  anonymous function, `{fun, args}` pair or MFA tuple.
 
   The function `fun` is sent to the `multiagent` which invokes the function
-  passing the multiagent state. The function must return a tuple with two
-  elements, the first being the value to return (that is, the "get" value)
-  and the second one being the new state of the multiagent.
+  passing the multiagent state with given key (or `nil` if there is no such
+  key). The function must return a tuple with two elements, the first being the
+  value to return (that is, the "get" value) and the second one being the new
+  state with such key of the multiagent.
+
+  `fun` may also return `:pop`, which means the current value shall be removed
+  from `multiagent` and returned (making this function behave similar to
+  `Map.get_and_update/3`).
+
+  Also, list of keys may be passed to make transaction-like calls. Be aware,
+  that in this case keys and fun arguments are swaped (list must be given as the
+  third argument). `fun` must return list of `{get, new_state}` pairs. Also,
+  `:pop` atom may be given as the list argument, which removes corresponding
+  state. And also, if `fun` return `:pop` — all states with given keys will be
+  removed.
 
   `timeout` is an integer greater than zero which specifies how many
   milliseconds are allowed before the multiagent executes the function and
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
-  caller exits.
+  caller exits. See `flush/2` if queue clean for state is needed.
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start_link( id: fn -> 42 end)
-      iex> MultiAgent.get_and_update( pid, :id, & {&1, &1 + 1})
+      iex> {:ok, pid} = MultiAgent.start_link( key1: fn -> 22 end,
+                                               key2: fn -> 24 end,
+                                               key3: fn -> 42 end,
+                                               key4: fn -> 44 end)
+      iex> MultiAgent.get_and_update( pid, :key1, & {&1, &1 + 1})
+      22
+      iex> MultiAgent.get( pid, :key1, & &1)
+      23
+
+      iex> MultiAgent.get_and_update( pid, :key3, fn _ -> :pop end)
       42
-      iex> MultiAgent.get( pid, :id, & &1)
-      43
+      iex> MultiAgent.get( pid, :key3, & &1)
+      nil
+
+      # transaction-like calls:
+      iex> MultiAgent.get_and_update( pid, fn [s1, s2] -> [{s1, s2},{s2, s1}]} end, [:key1, :key2])
+      [23, 24]
+      iex> MultiAgent.get( pid, & &1, [:key1, :key2])
+      [24, 23]
+
+      iex> MultiAgent.get_and_update( pid, fn _ -> :pop, [:key2])
+      [42]
+      iex> MultiAgent.get( pid, & &1, [:key1, :key2, :key3, :key4])
+      [24, nil, nil, 44]
+
+      iex> MultiAgent.get_and_update( pid, fn _ -> [{nil, :s}, {:s, nil}, :pop] end, [:key2, :key3, :key4])
+      [nil, :s, 44]
+      iex> MultiAgent.get( pid, & &1, [:key1, :key2, :key3, :key4])
+      [24, :s, nil, nil]
   """
-  @spec get_and_update( multiagent, term, (state -> {a, state}), timeout) :: a when a: var
-  def get_and_update( multiagent, id, fun, timeout \\ 5000) when is_function( fun, 1) do
-    GenServer.call( multiagent, {:get_and_update, id, fun}, timeout)
+  def get_and_update( multiagent, fun, keys, timeout \\ 5000)
+
+  @spec get_and_update( multiagent, fun_arg, [key], timeout) :: any
+  def get_and_update( multiagent, fun, keys, timeout) when is_list( keys) do
+    GenServer.call( multiagent, {:get_and_update, fun, keys}, timeout)
   end
 
-  @doc """
-  Gets and updates the multiagent state in one operation via the given function.
-  Same as `get_and_update/4` but a module, function, and arguments are expected
-  instead of an anonymous function. The state is added as first argument to the
-  given list of arguments.
-  """
-  @spec get_and_update( multiagent, term, module, atom, [term], timeout) :: any
-  def get_and_update( multiagent, id, module, fun, args, timeout \\ 5000) do
-    GenServer.call( multiagent, {:get_and_update, id, {module, fun, args}}, timeout)
+  @spec get_and_update( multiagent, key, fun_arg, timeout) :: any
+  def get_and_update( multiagent, key, fun, timeout) do
+    GenServer.call( multiagent, {:get_and_update, key, fun}, timeout)
   end
 
 
   @doc """
-  Updates the agent state via the given anonymous function.
+  Updates the multiagent state via the given anonymous function, `{fun,
+  args}` or MFA tuple.
 
   The function `fun` is sent to the `multiagent` which invokes the function
-  passing the multiagent state. The return value of `fun` becomes the new
-  state of the multiagent.
+  passing the multiagent state with given key. The return value of `fun`
+  becomes the new state of the multiagent.
+
+  Every state has it's own FIFO queue that is processed in a separate process,
+  so update of one state will not block processing of others states queues.
 
   This function always returns `:ok`.
 
+  If there is no state with given key, `nil` will be passed to update fun.
+  Unlike `get_and_update/4`, if result of fun execution is `nil`,
+  state with given key will not be deleted.
+
+  Also, list of keys could be passed to make transaction-like call. Be aware,
+  that: (1) in this case keys and fun arguments are swaped (list must be given
+  as a third argument); (2) function given as argument should return list of
+  updated states (of the same size).
+
   `timeout` is an integer greater than zero which specifies how many
   milliseconds are allowed before the multiagent executes the function and
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
-  caller exits.
+  caller exits. See `flush/2` if queue clean for state is needed.
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start_link( id: fn -> 42 end)
-      iex> MultiAgent.update( pid, :id, & 1 + &1)
+      iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
+      iex> MultiAgent.update( pid, :key, & 1 + &1)
       :ok
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> MultiAgent.get( pid, :key, & &1)
       43
 
-      iex> MultiAgent.update( pid, :otherid, fn nil -> 42 end)
+      iex> MultiAgent.update( pid, :otherkey, fn nil -> 42 end)
       :ok
-      iex> MultiAgent.get( pid, :otherid, & &1)
+      iex> MultiAgent.get( pid, :othekey, & &1)
       42
   """
-  @spec update( multiagent, term, (state -> state), timeout) :: :ok
-  def update( multiagent, id, fun, timeout \\ 5000) when is_function( fun, 1) do
-    GenServer.call( multiagent, {:update, id, fun}, timeout)
+  def update( multiagent, _, _, timeout \\ 5000)
+
+  @spec update( multiagent, fun_arg, [key], timeout) :: :ok
+  def update( multiagent, fun, keys, timeout) when is_list( keys) do
+    GenServer.call( multiagent, {:update, fun, keys}, timeout)
   end
 
-  @doc """
-  Updates the agent state via the given function.
-  Same as `update/4 but a module, function, and arguments are expected
-  instead of an anonymous function. The state is added as first
-  argument to the given list of arguments.
-  """
-  @spec update( multiagent, term, module, atom, [term], timeout) :: :ok
-  def update( multiagent, id, module, fun, args, timeout \\ 5000) do
-    GenServer.call( multiagent, {:update, id, {module, fun, args}}, timeout)
+  @spec update( multiagent, key, fun_arg, timeout) :: :ok
+  def update( multiagent, key, fun, timeout) do
+    GenServer.call( multiagent, {:update, key, fun}, timeout)
   end
+
 
   @doc """
   Performs a cast (*fire and forget*) operation on the agent state.
-  The function `fun` is sent to the `agent` which invokes the function
-  passing the agent state. The return value of `fun` becomes the new
-  state of the agent.
-  Note that `cast` returns `:ok` immediately, regardless of whether `agent` (or
-  the node it should live on) exists.
+
+  The function `fun` is sent to the `multiagent` which invokes the
+  function passing the multiagent state with given key. The return
+  value of `fun` becomes the new state of the multiagent.
+
+  Note that `cast` returns `:ok` immediately, regardless of whether
+  `multiagent` (or the node it should live on) exists.
   """
-  @spec cast(agent, (state -> state)) :: :ok
-  def cast(agent, fun) when is_function(fun, 1) do
-    GenServer.cast(agent, {:cast, fun})
+  @spec cast( multiagent, fun_arg, [key]) :: :ok
+  def cast( multiagent, fun, keys) when is_list( keys) do
+    GenServer.cast( multiagent, {:update, fun, keys})
+  end
+
+  @spec cast( multiagent, key, fun_arg) :: :ok
+  def cast( multiagent, key, fun) do
+    GenServer.cast( multiagent, {:update, key, fun})
   end
 
   @doc """
-  Performs a cast (*fire and forget*) operation on the agent state.
-  Same as `cast/2` but a module, function, and arguments are expected
-  instead of an anonymous function. The state is added as first
-  argument to the given list of arguments.
-  """
-  @spec cast(agent, module, atom, [term]) :: :ok
-  def cast(agent, module, fun, args) do
-    GenServer.cast(agent, {:cast, {module, fun, args}})
-  end
+  Synchronously stops the multiagent with the given `reason`.
 
-  @doc """
-  Synchronously stops the agent with the given `reason`.
-  It returns `:ok` if the agent terminates with the given
-  reason. If the agent terminates with another reason, the call will
-  exit.
+  It returns `:ok` if the multiagent terminates with the given
+  reason. If the multiagent terminates with another reason, the call
+  will exit.
+
   This function keeps OTP semantics regarding error reporting.
   If the reason is any other than `:normal`, `:shutdown` or
   `{:shutdown, _}`, an error report will be logged.
+
   ## Examples
-      iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
-      iex> Agent.stop(pid)
+      iex> {:ok, pid} = MultiAgent.start_link( fn -> 42 end)
+      iex> MultiAgent.stop( pid)
       :ok
   """
-  @spec stop(agent, reason :: term, timeout) :: :ok
-  def stop(agent, reason \\ :normal, timeout \\ :infinity) do
-    GenServer.stop(agent, reason, timeout)
+  @spec stop( multiagent, reason :: term, timeout) :: :ok
+  def stop( multiagent, reason \\ :normal, timeout \\ :infinity) do
+    GenServer.stop( multiagent, reason, timeout)
   end
+
 end
