@@ -109,7 +109,7 @@ defmodule MultiAgent do
       > {:ok, multiagent} = MultiAgent.start()
       > Enum.empty? multiagent
       true
-      > MultiAgent.init(:id, fn -> 42 end)
+      > MultiAgent.init(:key, fn -> 42 end)
       42
       > Enum.empty? multiagent
       false
@@ -117,10 +117,10 @@ defmodule MultiAgent do
   Similarly, `p_access` package implements `Access` protocol, so adding it
   to your deps gives a nice syntax sugar:
 
-      > {:ok, multiagent} = MultiAgent.start(:id, fn -> 42 end)
-      > multiagent[:id]
+      > {:ok, multiagent} = MultiAgent.start(:key, fn -> 42 end)
+      > multiagent[:key]
       42
-      > multiagent[:otherid]
+      > multiagent[:errorkey]
       nil
   """
 
@@ -139,7 +139,7 @@ defmodule MultiAgent do
   @typedoc "The multiagent state"
   @type state :: term
 
-  @typedoc "fun | {&Module.fun/arity, args} | {Module, fun, args}"
+  @typedoc "fun | {fun, args} | {Module, fun, args}"
   @type fun_arg :: fun | {fun, [any]} | {module, atom, [any]}
 
 
@@ -157,14 +157,14 @@ defmodule MultiAgent do
     quote location: :keep, bind_quoted: [opts: opts] do
       spec = [
         id: opts[:id] || __MODULE__,
-        start: Macro.escape( opts[:start]) || quote( do: {__MODULE__, :start_link, [tuples]}),
+        start: Macro.escape( opts[:start]) || quote( do: {__MODULE__, :start_link, [funs]}),
         restart: opts[:restart] || :permanent,
         shutdown: opts[:shutdown] || 5000,
         type: :worker
       ]
 
       @doc false
-      def child_spec( tuples) do
+      def child_spec( funs) do
         %{unquote_splicing( spec)}
       end
 
@@ -190,37 +190,13 @@ defmodule MultiAgent do
 
 
   # common for start_link and start
-  defp prepair( inits, opts) do
-    # repair opts:
-    {inits, timeout_opts} = case Keyword.get_values( inits, :timeout) do
-                              [] -> {inits, opts}
-                              [timeout_value] when is_function( value, 0)
-                                -> {inits, opts}
+  defp prepair( inits, []) do
+    {opts, inits} = Enum.reverse( inits)
+                    |> Enum.split_while( fn {_,v} -> not fun?( v) end)
 
-                                timeout_values
-                                -> Enum.split_with( inits, fn {k, } -> end)
-                            end
-
-    opts = timeout_opts++opts
-
-    warns = [malformed:  Enum.flat_map( inits, fn {k,v} ->
-                           if fun?( v, 0), do: [k], else: []
-                         end)
-
-             duplicated: Keyword.keys( inits)
-                         |> (& &1 -- Enum.uniq( &1)).()
-                         |> Enum.uniq()]
-
-    |> Enum.reject( fn {_,v} ->
-         v == []
-       end)
-
-    if warns == [] do
-      {inits, opts}
-    else
-      {:error, warns}
-    end
+    {inits, Enum.reverse( opts)}
   end
+
 
   @doc """
   Starts a multiagent linked to the current process with the given function.
@@ -255,39 +231,33 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start_link( id: fn -> 42 end)
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
+      iex> MultiAgent.get( pid, :key, & &1)
       42
-      iex> MultiAgent.get( pid, :errorid, & &1)
+      iex> MultiAgent.get( pid, :errorkey, & &1)
       nil
 
-      iex> MultiAgent.start_link( id1: fn -> :timer.sleep( 250) end,
-                                  id2: fn -> :timer.sleep( 600) end,
+      iex> MultiAgent.start_link( key1: fn -> :timer.sleep( 250) end,
+                                  key2: fn -> :timer.sleep( 600) end,
                                   timeout: 500)
       {:error, :timeout}
 
-      iex> {:ok, pid} = MultiAgent.start_link( [], name: :multiagent)
-      iex> MultiAgent.start_link( [], name: :multiagent)
+      iex> {:ok, pid} = MultiAgent.start_link( name: :multiagent)
+      iex> MultiAgent.start_link( name: :multiagent)
       {:error, {:already_started, pid}}
 
-      iex> MultiAgent.start_link( id: fn -> 42 end,
-                                  id: fn -> 43 end)
-      {:error, [{:duplicated, [:id]}]}
+      iex> MultiAgent.start_link( key: fn -> 42 end,
+                                  key: fn -> 43 end)
+      {:error, {:initerror, {:already_has, :key}}}
 
-      iex> MultiAgent.start_link( id: 76,
-                                  id: fn -> 43 end)
-      {:error, [
-                 {:mailformed, [:id]},
-                 {:duplicated, [:id]}
-               ]}
+      iex> MultiAgent.start_link( key: 76,
+                                  key: fn -> 43 end)
+      {:error, {:initerror, {:is_not_fun, :key}}}
   """
   @spec start_link( keyword( fun_arg), GenServer.options) :: on_start
   def start_link( inits \\ [], options \\ []) do
-    with {inits, opts} <- prepair( inits, options) do
-      GenServer.start_link( MultiAgent.Server, inits, options)
-    else
-      error -> error
-    end
+    {inits, opts} = prepair( inits, options)
+    GenServer.start_link( MultiAgent.Server, inits, opts)
   end
 
   @doc """
@@ -298,18 +268,15 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start( id: fn -> 42 end)
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> {:ok, pid} = MultiAgent.start( key: fn -> 42 end)
+      iex> MultiAgent.get( pid, :key, & &1)
       42
-      iex> {:error, {:badarith, _}} = MultiAgent.start( id: fn -> 1/0 end)
+      iex> {:error, {:badarith, _}} = MultiAgent.start( key: fn -> 1/0 end)
   """
   @spec start( keyword( fun_arg), GenServer.options) :: on_start
-  def start( tuples \\ [], options \\ []) do
-    with {inits, opts} <- prepair( inits, options) do
-      GenServer.start( MultiAgent.Server, inits, options)
-    else
-      error -> error
-    end
+  def start( inits \\ [], options \\ []) do
+    {inits, opts} = prepair( inits, options)
+    GenServer.start( MultiAgent.Server, inits, opts)
   end
 
 
@@ -329,35 +296,27 @@ defmodule MultiAgent do
   ## Examples
 
       iex> {:ok, pid} = MultiAgent.start_link()
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> MultiAgent.get( pid, :key, & &1)
       nil
-      iex> MultiAgent.init( pid, :id, fn -> 42 end)
+      iex> MultiAgent.init( pid, :key, fn -> 42 end)
       42
-      iex> MultiAgent.get( pid, :id, & &1)
+      iex> MultiAgent.get( pid, :key, & &1)
       42
 
-      iex> MultiAgent.init( pid, :id, fn -> 43 end)
-      {:error, :already}
+      iex> MultiAgent.init( pid, :key, fn -> 43 end)
+      {:initerror, {:already, :key}}
 
-      iex> MultiAgent.init( pid, :id, fn -> :timer.sleep( 300) end, 200)
-      {:error, :already}
-      iex> MultiAgent.init( pid, :otherid, fn -> :timer.sleep( 300) end, 200)
-      {:error, :timeout}
+      iex> MultiAgent.init( pid, :key, fn -> :timer.sleep( 300) end, 200)
+      {:initerror, {:already, :key}}
+      iex> MultiAgent.init( pid, :_, fn -> :timer.sleep( 300) end, 200)
+      {:initerror, :timeout}
   """
   @spec init( multiagent, term, (() -> term), timeout) :: a when a: var
-                                                     | {:error, :timeout | :already}
+                                                     | {:initerror, :timeout | {:already, }}
   def init( multiagent, id, fun, timeout \\ 5000) when is_function( fun, 0) do
     GenServer.call( multiagent, {:init, id, fun}, timeout)
   end
 
-  @doc """
-  Initialize a multiagent state with given id via the given MFA. See, `init/4`.
-  """
-  @spec init( multiagent, term, module, atom, [any], timeout) :: a when a: var
-                                                            | {:error, :timeout | :already}
-  def init( multiagent, id, module, fun, args, timeout \\ 5000) do
-    GenServer.call( multiagent, {:init, id, {module, fun, args}}, timeout)
-  end
 
 
   @doc """
