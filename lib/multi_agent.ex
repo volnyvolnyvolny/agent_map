@@ -14,8 +14,8 @@ defmodule MultiAgent do
 
   ## Examples
 
-  For example, let us manage tasks and projects. Each task can have `:added`,
-  `:started` or `:done` state. This is easy to do with a `MultiAgent`:
+  For example, let us manage tasks and projects. Each task can be in `:added`,
+  `:started` or `:done` states. This is easy to do with a `MultiAgent`:
 
       defmodule TasksServer do
         use MultiAgent
@@ -36,12 +36,13 @@ defmodule MultiAgent do
 
         @doc "Returns list of all tasks for project"
         def list( project) do
-          MultiAgent.lookup(__MODULE__, fn _ -> true end)
+          MultiAgent.keys(__MODULE__)
         end
 
         @doc "Returns list of tasks for project in given state"
         def list( project, state: state) do
-          MultiAgent.lookup(__MODULE__, & &1 == state)
+          MultiAgent.reduce(__MODULE__, [], & if &2 == state, do: [&1], else: [])
+          |> List.flatten()
         end
 
         @doc "Updates task for project"
@@ -138,10 +139,10 @@ defmodule MultiAgent do
   @typedoc "The multiagent state"
   @type state :: term
 
-  @typedoc "fun | {fun, args} | {Module, fun, args}"
+  @typedoc "Anonymous function, `{fun, args}` or MFA triplet"
   @type fun_arg( a, r) :: (a -> r) | {(... -> r), [a | any]} | {module, atom, [a | any]}
 
-  @typedoc "fun/0 | {fun, args}/0 | {Module, fun, args}/0"
+  @typedoc "Anonymous function with zero arity, pair `{fun/length( args), args}` or corresponding MFA tuple"
   @type fun_arg( r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
 
@@ -255,20 +256,25 @@ defmodule MultiAgent do
       {:error, :timeout}
 
       iex> {:ok, pid} = MultiAgent.start_link( name: :multiagent)
-      iex> MultiAgent.start_link( name: :multiagent)
-      {:error, {:already_started, pid}}
+      iex> match? {:error, {:already_started, ^pid}},
+      ...>        MultiAgent.start_link( name: :multiagent)
+      true
 
       iex> MultiAgent.start_link( key: fn -> 42 end,
       ...>                        key: fn -> 43 end)
       {:error, {:key, :already_exists}}
 
       iex> MultiAgent.start_link( key: 76,
-                                  key: fn -> 43 end)
+      ...>                        key: fn -> 43 end)
       {:error, {:key, :cannot_execute}}
   """
   @spec start_link( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
-  def start_link( inits \\ [], options \\ []) do
+  def start_link( inits \\ [], options \\ [timeout: 5000, async: true]) do
     {inits, opts} = prepair( inits, options)
+
+    opts = opts |> Keyword.put_new( opts, :async, true)
+                |> Keyword.put_new( opts, :timeout, 5000)
+
     GenServer.start_link( MultiAgent.Server, inits, opts)
   end
 
@@ -293,9 +299,9 @@ defmodule MultiAgent do
 
 
   @doc """
-  Initialize a multiagent state via the given anonymous function, `{fun, args}`
-  or MFA tuple. The callback is sent to the `multiagent` which invokes it as a
-  `Task`.
+  Initialize a multiagent state via the given anonymous function with zero
+  arity, `{fun/length(args), args}` or corresponding MFA triplet. The callback
+  is sent to the `multiagent` which invokes it in `GenServer` call.
 
   Its return value is used as the multiagent state with given key. Note that
   `init/4` does not return until the given callback has returned.
@@ -317,6 +323,23 @@ defmodule MultiAgent do
   expired. This happend when caller timeout is took place before function
   execution.
 
+  `:async` option specifies should multiagent execute `get` calls on the same
+  key in parallel. By default it is set to true, so
+
+      sleep100ms = fn _ -> :timer.sleep(100) end
+      List.duplicate( fn -> MultiAgent.get( multiagent, :k, sleep100ms) end, 5)
+      |> Enum.map( &Task.async/1)
+      |> Enum.map( &Task.await/1)
+
+  will be executed in around of 100 ms, not 500. Be aware, that this call:
+
+      Task.start( fn -> get( multiagent, :k, sleep100ms) end)
+      get_and_update( multiagent, :k, sleep100ms)
+      get_and_update( multiagent, :k, sleep100ms)
+
+  will be executed in around of 200 ms because `multiagent` can parallelize any
+  sequence of `get/4` calls ending with `get_and_update/4` or `update/4` calls.
+
   ## Examples
 
       iex> {:ok, pid} = MultiAgent.start_link()
@@ -326,18 +349,15 @@ defmodule MultiAgent do
       {:ok, 42}
       iex> MultiAgent.get( pid, :k, & &1)
       42
-
       iex> MultiAgent.init( pid, :k, fn -> 43 end)
       {:error, {:k, :already_exists}}
-
-      iex> MultiAgent.init( pid, :_, fn -> :timer.sleep( 300) end, timeout: 200)
+      iex> MultiAgent.init( pid, :_, fn -> :timer.sleep(300) end, timeout: 200)
       {:error, :timeout}
-      iex> MultiAgent.init( pid, :k, fn -> :timer.sleep( 300) end, timeout: 200)
+      iex> MultiAgent.init( pid, :k, fn -> :timer.sleep(300) end, timeout: 200)
       {:error, {:k, :already_exists}}
-
       iex> MultiAgent.init( pid, :k2, fn -> 42 end, callexpired: false)
       {:ok, 42}
-      iex> MultiAgent.cast( pid, :k2, & :timer.sleep( 100) && &1) #blocks for 100 ms
+      iex> MultiAgent.cast( pid, :k2, & :timer.sleep(100) && &1) #blocks for 100 ms
       iex> MultiAgent.update( pid, :k, fn _ -> 0 end, timeout: 50)
       {:error, :timeout}
       iex> MultiAgent.get( pid, :k, & &1) #update was not happend
@@ -347,7 +367,7 @@ defmodule MultiAgent do
         :: {:ok, a}
          | {:error, :timeout}
          | {:error, {key, :already_exists | :cannot_execute | any}} when a: var
-  def init( multiagent, key, fun, opts \\ [timeout: 5000, clean: true]) do
+  def init( multiagent, key, fun, opts \\ [timeout: 5000, callexpired: true]) do
     GenServer.call( multiagent,
                     {:init, key, fun, opts[:callexpired] || false},
                     opts[:timeout] || 5000)
@@ -362,7 +382,7 @@ defmodule MultiAgent do
     funs = Keyword.values( funs)
 
     prun = fn {fun, state} ->
-      Task.start_link( MultiAgent.Server.run( fun, state))
+      Task.start_link( MultiAgent.Server.run( fun, [state]))
     end
 
     GenServer.call( multiagent,
@@ -373,21 +393,14 @@ defmodule MultiAgent do
 
   @doc """
   Gets the multiagent state with given key. The callback `fun` will be sent to
-  the `multiagent`, which will add it to the execution queue of the given key
-  state. Before the invocation, the multiagent state will be passed as the first
-  argument. The result of the `fun` invocation is returned from this function.
+  the `multiagent`, which will add it to the execution queue for the given key.
+  Before the invocation, the multiagent state will be passed as the first
+  argument. If `multiagent` has no state with such key, `nil` will be passed to
+  `fun`. The result of the `fun` invocation is returned from this function.
 
-  If `multiagent` has no state with such key, `nil` will be passed to `fun`.
-
-  Also, list of keys could be passed to make transaction-like call. Be aware,
-  that: (1) the list of keys must be given as the third argument and callback
-  as the second; (2) aggregated requests could be simply done like
+  Also, list of keys could be passed to make aggregate function calls:
 
       get( accounts, &Enum.sum/1, [:alice, :bob])
-
-  (3) there is a special `get/2` form for the case of batch processing; (4) all
-  the corresponding states are locked until callback is executed for all keys
-  (see `get_and_update/2` for more details).
 
   `timeout` is an integer greater than zero which specifies how many
   milliseconds are allowed before the multiagent executes the callback and
@@ -405,16 +418,16 @@ defmodule MultiAgent do
       42
       iex> MultiAgent.get( pid, :key, & &1)
       42
-      iex> MultiAgent.get( pid, :key, & 1+&1)
+      iex> MultiAgent.get( pid, :key, & &1+1)
       43
-
-      # aggregate:
-
+      #
+      # aggregate calls:
+      #
       iex> MultiAgent.init( pid, :key2, fn -> 43 end)
       43
       iex> MultiAgent.get( pid, &Enum.sum/1, [:key, :key2])
       85
-
+      # order matters:
       iex> MultiAgent.get( pid, {&Enum.reduce/3, [0, &-/2]}, [:key, :key2])
       1
       iex> MultiAgent.get( pid, {&Enum.reduce/3, [0, &-/2]}, [:key2, :key])
@@ -457,9 +470,10 @@ defmodule MultiAgent do
 
 
   @doc """
-  Works as `get/4`, but executes function asynchronously. Every state has an
-  associated queue of calls to be made on it. Using `get!/4` the state with
-  given key can be retrived immediately, "out of queue turn".
+
+  Works as `get/4`, but executes callback asynchronously, as a separate `Task`.
+  Every state has an associated queue of calls to be made on it. Using `get!/4`
+  the state with given key can be retrived immediately, "out of queue turn".
 
   See `get/4` for the details.
 
@@ -488,14 +502,13 @@ defmodule MultiAgent do
 
 
   @doc """
-
   Gets and updates the multiagent state with given key in one operation. The
   callback `fun` will be sent to the `multiagent`, which will add it to the
-  execution queue of the given key state. Before the invocation, the multiagent
+  execution queue for then given key. Before the invocation, the multiagent
   state will be passed as the first argument. If `multiagent` has no state with
-  such key, `nil` will be passed to `fun`. The function must return a tuple with
-  two elements, the first being the value to return (that is, the "get" value)
-  and the second one being the new state.
+  such key, `nil` will be passed to the `fun`. The function must return a tuple
+  with two elements, the first being the value to return (that is, the "get"
+  value) and the second one being the new state.
 
   Callback may also return `:pop`. Similar to `Map.get_and_update/3` it returns
   state with given key and removes it from `multiagent`.
@@ -504,9 +517,9 @@ defmodule MultiAgent do
   args}` or MFA tuple; (2) every state has it's own FIFO queue of callbacks and
   all the queues are processed asynchronously.
 
-  ## Transaction-like calls
+  ## Transaction calls
 
-  Transaction-like call could be made by
+  Transaction call could be made by
 
   (1) passing list of keys and callback that takes list of states with given
   keys and returns list of get values and new states:
@@ -547,12 +560,17 @@ defmodule MultiAgent do
   the keys are locked (see next section).
 
   (!) Passing key list will lock all the correspondings states queues until
-  callback is executed. So, for example
+  callback is executed. So, for example,
 
       get( multiagent, fn _ -> :timer.sleep( 1000) end, [:alice, :bob])
 
   will block the possibility to update or get `:alice` and `:bob` states for 1
-  sec. Nonetheless intermediate state is still available for `get!/4`.
+  sec. Nonetheless state with given key is still available for `get!/4`.
+
+  Transactions provided by `get_and_update/4`, `get_and_update/2` and `update/4`
+  and `update/2` are *Isolated* and *Durabled* (see, ACID model). *Atomicity*
+  can be implemented inside callbacks and *Consistency* is out of question here
+  as its the application level concept.
 
   ## Timeout
 
@@ -574,24 +592,25 @@ defmodule MultiAgent do
       22
       iex> get( pid, :k1, & &1)
       23
-
+      #
       iex> get_and_update( pid, :k3, fn _ -> :pop end)
       42
       iex> get( pid, :k3, & &1)
       nil
-
-      # transaction-like calls:
+      #
+      # transaction calls:
+      #
       iex> get_and_update( pid, fn [s1, s2] -> [{s1, s2}, {s2, s1}]} end,
       ...>                      [:k1, :k2])
       [23, 24]
       iex> get( pid, & &1, [:k1, :k2])
       [24, 23]
-
+      #
       iex> get_and_update( pid, fn _ -> :pop, [:k2])
       [42]
       iex> get( pid, & &1, [:k1, :k2, :k3, :k4])
       [24, nil, nil, 44]
-
+      #
       iex> get_and_update( pid, fn _ -> [:id, {nil, :_}, {:_, nil}, :pop] end,
       ...>                      [:k1, :k2, :k3, :k4])
       [24, nil, :_, 44]
@@ -600,8 +619,15 @@ defmodule MultiAgent do
   """
   def get_and_update( multiagent, fun, keys, timeout \\ 5000)
 
-  @spec get_and_update( multiagent, fun_arg( [state], [{any, state} | :pop | :id] | :pop), [key], timeout)
+  @spec get_and_update( multiagent,
+                        fun_arg([state], [{any, state} | :pop | :id]),
+                        [key],
+                        timeout)
         :: [any | state]
+  @spec get_and_update( multiagent, fun_arg([state], :pop), [key], timeout)
+        :: [state]
+  @spec get_and_update( multiagent, fun_arg([state], {any, [state] | :pop}), [key], timeout)
+        :: any
   def get_and_update( multiagent, fun, keys, timeout) when is_list( keys) do
     GenServer.call( multiagent, {:get_and_update, fun, keys}, timeout)
   end
@@ -639,8 +665,8 @@ defmodule MultiAgent do
 
   @doc """
   Updates multiagent state with given key. The callback `fun` will be sent to
-  the `multiagent`, which will add it to the execution queue of the given key
-  state. Before the invocation, the multiagent state will be passed as the first
+  the `multiagent`, which will add it to the execution queue for the given key.
+  Before the invocation, the multiagent state will be passed as the first
   argument. If `multiagent` has no state with such key, `nil` will be passed to
   `fun`. The return value of callback becomes the new state of the multiagent.
 
@@ -666,11 +692,11 @@ defmodule MultiAgent do
   ## Examples
 
       iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
-      iex> MultiAgent.update( pid, :key, & 1 + &1)
+      iex> MultiAgent.update( pid, :key, & &1+1)
       :ok
       iex> MultiAgent.get( pid, :key, & &1)
       43
-
+      #
       iex> MultiAgent.update( pid, :otherkey, fn nil -> 42 end)
       :ok
       iex> MultiAgent.get( pid, :othekey, & &1)
@@ -700,7 +726,7 @@ defmodule MultiAgent do
 
 
   @doc """
-  Performs a cast (*fire and forget*) operation on the agent state.
+  Performs a cast (*fire and forget*) operation on the multiagent state.
 
   The callbacks are sent to the `multiagent` which invokes them passing the
   multiagent state with given key. The return value becomes the new state of the
@@ -722,8 +748,9 @@ defmodule MultiAgent do
   end
 
   @doc """
-  Version of `cast/3` for use in batch processing. Be aware, that states for
-  all keys are locked while callback is executed. See `update/2` for details.
+  Version of `cast/3` for use in batch processing. Be aware, that states for all
+  involved keys are locked while callback is executed. See `update/2` for
+  details.
   """
   @spec cast( multiagent, [{key, fun_arg( state, state)}]) :: :ok
   def cast( multiagent, funs) do
@@ -731,7 +758,7 @@ defmodule MultiAgent do
     funs = Keyword.values( funs)
 
     prun = fn {fun, state} ->
-      Task.start_link( MultiAgent.Server.run( fun, state))
+      Task.start_link( MultiAgent.Server.run( fun, [state]))
     end
 
     GenServer.cast( multiagent,

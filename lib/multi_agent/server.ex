@@ -3,9 +3,13 @@ defmodule MultiAgent.Server do
 
   use GenServer
 
-  def init( fun) do
-    _ = initial_call( fun)
-    {:ok, run( fun, [])}
+  def init( funs) do
+    IO.inspect( funs)
+    _ = initial_call( funs)
+    {:ok, {%{}, %{}}}
+  end
+
+  defp initialize( key, ) do
   end
 
   def handle_call({:get, fun}, _from, state) do
@@ -54,6 +58,8 @@ defmodule MultiAgent.Server do
     {mod, fun, length( args)}
   end
 
-  defp run({m, f, a}, extra), do: apply( m, f, extra ++ a)
-  defp run( fun, extra), do: apply( fun, extra)
+
+  def run({m, f, args}, state), do: apply m, f, state++[args]
+  def run({f, args}, state), do: apply f, state++[args]
+  def run( fun, state), do: apply( fun, state)
 end
