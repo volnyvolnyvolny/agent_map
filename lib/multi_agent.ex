@@ -250,8 +250,8 @@ defmodule MultiAgent do
       nil
 
       iex> MultiAgent.start_link( key1: fn -> :timer.sleep( 250) end,
-                                  key2: fn -> :timer.sleep( 600) end,
-                                  timeout: 500)
+      ...>                        key2: fn -> :timer.sleep( 600) end,
+      ...>                        timeout: 500)
       {:error, :timeout}
 
       iex> {:ok, pid} = MultiAgent.start_link( name: :multiagent)
@@ -259,7 +259,7 @@ defmodule MultiAgent do
       {:error, {:already_started, pid}}
 
       iex> MultiAgent.start_link( key: fn -> 42 end,
-                                  key: fn -> 43 end)
+      ...>                        key: fn -> 43 end)
       {:error, {:key, :already_exists}}
 
       iex> MultiAgent.start_link( key: 76,
@@ -282,7 +282,8 @@ defmodule MultiAgent do
       iex> {:ok, pid} = MultiAgent.start( key: fn -> 42 end)
       iex> MultiAgent.get( pid, :key, & &1)
       42
-      iex> {:error, {:badarith, _}} = MultiAgent.start( key: fn -> 1/0 end)
+      iex> match?( {:error, {:badarith, _}}, MultiAgent.start( key: fn -> 1/0 end))
+      true
   """
   @spec start( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
   def start( inits \\ [], options \\ []) do
@@ -371,24 +372,25 @@ defmodule MultiAgent do
 
 
   @doc """
-  Gets the multiagent state with given key. The function `fun` is sent to the
-  `multiagent` which invokes the function passing the multiagent state. The
-  result of the function invocation is returned from this function.
+  Gets the multiagent state with given key. The callback `fun` will be sent to
+  the `multiagent`, which will add it to the execution queue of the given key
+  state. Before the invocation, the multiagent state will be passed as the first
+  argument. The result of the `fun` invocation is returned from this function.
 
-  If there is no state with such key, `nil` will be passed to fun.
+  If `multiagent` has no state with such key, `nil` will be passed to `fun`.
 
-  Also, keys list could be passed to make transaction-like call. Be aware, that:
-  (1) in this case keys list must be given as a third argument and callbacks as
-  the second; (2) aggregated requests could be simply done like
+  Also, list of keys could be passed to make transaction-like call. Be aware,
+  that: (1) the list of keys must be given as the third argument and callback
+  as the second; (2) aggregated requests could be simply done like
 
       get( accounts, &Enum.sum/1, [:alice, :bob])
 
-  (3) batch processing could be made via `get/2`; (4) all the corresponding
-  states are locked until callback is executed for all keys (see
-  `get_and_update/2` for more details).
+  (3) there is a special `get/2` form for the case of batch processing; (4) all
+  the corresponding states are locked until callback is executed for all keys
+  (see `get_and_update/2` for more details).
 
   `timeout` is an integer greater than zero which specifies how many
-  milliseconds are allowed before the multiagent executes the function and
+  milliseconds are allowed before the multiagent executes the callback and
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
   caller exits. If this happened but callback is so far in the queue it will
@@ -405,6 +407,8 @@ defmodule MultiAgent do
       42
       iex> MultiAgent.get( pid, :key, & 1+&1)
       43
+
+      # aggregate:
 
       iex> MultiAgent.init( pid, :key2, fn -> 43 end)
       43
@@ -428,9 +432,27 @@ defmodule MultiAgent do
     GenServer.call( multiagent, {:get, key, fun}, timeout)
   end
 
+  @doc """
+  Version of `get/4` for batch processing. Be aware, that states for all keys
+  are locked until callback is executed (see `get_and_update/4` for details).
+
+  ## Examples
+
+      iex> {:ok, pid} = MultiAgent.start_link()
+      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+      [nil, nil]
+      iex> MultiAgent.update( pid, alice: fn nil -> 42 end,
+      ...>                         bob:   fn nil -> 24 end)
+      :ok
+      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+      [42, 24]
+      iex> MultiAgent.update( pid, alice: & &1-10, bob: & &1+10)
+      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+      [32, 34]
+  """
   @spec get( multiagent, [{key, fun_arg( state, any)} | {:timeout, timeout}]) :: [any]
-  def get( multiagent, funs_and_opts) do
-    batch_call( multiagent, funs_and_opts, :get)
+  def get( multiagent, funs_and_timeout) do
+    batch_call( multiagent, funs_and_timeout, :get)
   end
 
 
@@ -445,7 +467,6 @@ defmodule MultiAgent do
 
       iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
       iex> MultiAgent.cast( pid, :key, fn _ -> :timer.sleep( 100); 43 end)
-
       iex> MultiAgent.get!( pid, :key, & &1)
       42
       iex> MultiAgent.get( pid, :key, & &1)
@@ -467,17 +488,21 @@ defmodule MultiAgent do
 
 
   @doc """
-  Gets and updates the multiagent state in one operation via the given
-  anonymous function, `{fun, args}` pair or MFA tuple.
 
-  The function `fun` is sent to the `multiagent` which invokes the function
-  passing the multiagent state with given key (or `nil` if there is no such
-  key). The function must return a tuple with two elements, the first being the
-  value to return (that is, the "get" value) and the second one being the new
-  state.
+  Gets and updates the multiagent state with given key in one operation. The
+  callback `fun` will be sent to the `multiagent`, which will add it to the
+  execution queue of the given key state. Before the invocation, the multiagent
+  state will be passed as the first argument. If `multiagent` has no state with
+  such key, `nil` will be passed to `fun`. The function must return a tuple with
+  two elements, the first being the value to return (that is, the "get" value)
+  and the second one being the new state.
 
   Callback may also return `:pop`. Similar to `Map.get_and_update/3` it returns
   state with given key and removes it from `multiagent`.
+
+  Be aware that: (1) as a callback can be passed anonymous function, `{fun,
+  args}` or MFA tuple; (2) every state has it's own FIFO queue of callbacks and
+  all the queues are processed asynchronously.
 
   ## Transaction-like calls
 
@@ -499,8 +524,8 @@ defmodule MultiAgent do
   Please notice that in this case keys and fun arguments are swaped (list must
   be given as the third argument). This follows from fact that `multiagent` do
   not impose any restriction on the key type: anything can be a key in a
-  `multiagent`, and even a list. So it could not be detected if its a key or a
-  list of keys.
+  `multiagent`, even a list. So it could not be detected if its a key or a list
+  of keys.
 
   Callback may return list of `{get, new_state} | :id | :pop`. Keys for which
   `:pop` atom is returned will be removed from `multiagent`. `:id` will not
@@ -542,9 +567,9 @@ defmodule MultiAgent do
 
       iex> import MultiAgent
       iex> {:ok, pid} = start_link( k1: fn -> 22 end,
-                                    k2: fn -> 24 end,
-                                    k3: fn -> 42 end,
-                                    k4: fn -> 44 end)
+      ...>                          k2: fn -> 24 end,
+      ...>                          k3: fn -> 42 end,
+      ...>                          k4: fn -> 44 end)
       iex> get_and_update( pid, :k1, & {&1, &1 + 1})
       22
       iex> get( pid, :k1, & &1)
@@ -572,12 +597,6 @@ defmodule MultiAgent do
       [24, nil, :_, 44]
       iex> get( pid, & &1, [:k1, :k2, :k3, :k4])
       [24, :_, nil, nil]
-
-      # batch-processing:
-      iex> get_and_update( pid, k1: fn _ -> 1 end, k2: fn _ -> 2 end)
-      [24, :_]
-      iex> get( pid, & &1, [:k1, :k2])
-      [1, 2]
   """
   def get_and_update( multiagent, fun, keys, timeout \\ 5000)
 
@@ -593,32 +612,47 @@ defmodule MultiAgent do
     GenServer.call( multiagent, {:get_and_update, key, fun}, timeout)
   end
 
+  @doc """
+  Version of `get_and_update/4` for use in batch processing. Be aware, that
+  states for all keys are locked until callback is executed (see
+  `get_and_update/4` for details).
+
+  ## Examples
+
+      iex> {:ok, pid} = MultiAgent.start_link()
+      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+      [nil, nil]
+      iex> MultiAgent.update( pid, alice: fn nil -> 42 end,
+      ...>                         bob:   fn nil -> 24 end)
+      :ok
+      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+      [42, 24]
+      iex> MultiAgent.update( pid, alice: & &1-10, bob: & &1+10)
+      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+      [32, 34]
+  """
   @spec get_and_update( multiagent, [{key, fun_arg( state, {any, state} | :pop)} | {:timeout, timeout}]) :: [any | state]
-  def get_and_update( multiagent, funs_and_opts) do
-    batch_call( multiagent, funs_and_opts, :get_and_update)
+  def get_and_update( multiagent, funs_and_timeout) do
+    batch_call( multiagent, funs_and_timeout, :get_and_update)
   end
 
 
   @doc """
-  Updates the multiagent state via the given anonymous function, `{fun, args}`
-  or MFA tuple.
+  Updates multiagent state with given key. The callback `fun` will be sent to
+  the `multiagent`, which will add it to the execution queue of the given key
+  state. Before the invocation, the multiagent state will be passed as the first
+  argument. If `multiagent` has no state with such key, `nil` will be passed to
+  `fun`. The return value of callback becomes the new state of the multiagent.
 
-  The function `fun` is sent to the `multiagent` which invokes the function
-  passing the multiagent state with given key. The return value of callback
-  becomes the new state of the multiagent.
+  Be aware that: (1) this function always returns `:ok`; (2) as a callback can be
+  passed anonymous function, `{fun, args}` or MFA tuple; (3) every state has
+  it's own FIFO queue of callbacks and all the queues are processed
+  asynchronously.
 
-  Every state has it's own FIFO queue that is processed in a separate process,
-  so update of one state will not block processing of others states queues.
-
-  This function always returns `:ok`.
-
-  If there is no state with given key, `nil` will be passed to update fun.
-
-  Also, list of keys could be passed to make transaction-like call. Be aware,
-  that: (1) in this case keys and fun arguments are swaped (list must be given
-  as a third argument); (2) function given as argument should return list of
-  updated states (of the same size); (3) batch processing could be made via
-  `update/2`; (4) all the corresponding states are locked until callback is
+  Also, list of keys could be passed to make transaction-like call. But: (1) in
+  this case keys and fun arguments are swaped (list must be given as a third
+  argument); (2) function given as argument should return the same size list of
+  updated states; (3) all the corresponding states are locked until callback is
   executed for all keys (see `get_and_update/2`).
 
   `timeout` is an integer greater than zero which specifies how many
@@ -626,7 +660,8 @@ defmodule MultiAgent do
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
   caller exits. If this happened but callback is so far in the queue, and in
-  `init/4` call `:callexpired` flag is set to true, it will still be executed.
+  `init/4` call `:callexpired` option was set to true (by def.), it will still
+  be executed.
 
   ## Examples
 
@@ -653,9 +688,14 @@ defmodule MultiAgent do
     GenServer.call( multiagent, {:update, key, fun}, timeout)
   end
 
+  @doc """
+  Version of `update/4` for use in batch processing. Be aware, that states for
+  all keys are locked until callback is executed. See `get_and_update/4` for
+  details and `get/2` for examples.
+  """
   @spec update( multiagent, [{key, fun_arg( state, state)} | {:timeout, timeout}]) :: :ok
-  def update( multiagent, funs_and_opts) do
-    batch_call( multiagent, funs_and_opts, :update)
+  def update( multiagent, funs_and_timeout) do
+    batch_call( multiagent, funs_and_timeout, :update)
   end
 
 
@@ -669,9 +709,9 @@ defmodule MultiAgent do
   Note that `cast` returns `:ok` immediately, regardless of whether `multiagent`
   (or the node it should live on) exists.
 
-  All over details are the same as with `update/3` and `update/2`.
+  All over details are the same as with `update/4` and `update/2`.
   """
-  @spec cast( multiagent, fun_arg( [state], state), [key]) :: :ok
+  @spec cast( multiagent, fun_arg( [state], [state]), [key]) :: :ok
   def cast( multiagent, fun, keys) when is_list( keys) do
     GenServer.cast( multiagent, {:update, fun, keys})
   end
@@ -681,9 +721,21 @@ defmodule MultiAgent do
     GenServer.cast( multiagent, {:update, key, fun})
   end
 
+  @doc """
+  Version of `cast/3` for use in batch processing. Be aware, that states for
+  all keys are locked while callback is executed. See `update/2` for details.
+  """
   @spec cast( multiagent, [{key, fun_arg( state, state)}]) :: :ok
-  def cast( multiagent, funs_and_opts) do
-    batch_call( multiagent, funs_and_opts, :update)
+  def cast( multiagent, funs) do
+    keys = Keyword.keys( funs)
+    funs = Keyword.values( funs)
+
+    prun = fn {fun, state} ->
+      Task.start_link( MultiAgent.Server.run( fun, state))
+    end
+
+    GenServer.cast( multiagent,
+                    {:update, & Enum.zip( funs, &1) |> Enum.map( prun), keys})
   end
 
 
