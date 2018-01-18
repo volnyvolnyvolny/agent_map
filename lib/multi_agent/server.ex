@@ -8,34 +8,29 @@ defmodule MultiAgent.Server do
     Enum.reduce_while( funs, {:ok, {%{}, %{}}}, fn {k,f}, {:ok, {map, %{}}} ->
       try do
         if Map.has_key?( map, k) do
-          {:halt, {:error, {k, :already_exists}}}
+          {:halt, {:stop, {k, :already_exists}}}
         else
-          {:cont, {:ok, {Map run( f, [])
+          {:cont, {:ok, {Map.put( map, k, run( f, [])), %{}}}}
         end
       rescue
         [BadFunctionError, BadArityError] -> {:halt, {:stop, {k, :cannot_execute}}}
-        err -> {:halt, {:stop, err}}
       end
-
-      {:ok, {, %{}}}acc ->
     end)
-
-    IO.inspect( funs)
-    _ = initial_call( funs)
-    {:ok, {%{}, %{}}}
   end
 
   # async: false
   def init( {funs, false}) do
-    Enum.map( )
-    IO.inspect( funs)
-    _ = initial_call( funs)
+    tasks = Enum.map( funs, fn {k,f} ->
+      {k, Task.async( fn -> try do
+                              run( f)
+                            rescue
+                              x -> x
+                            end end)}
+    end)
+
     {:ok, {%{}, %{}}}
   end
 
-
-  defp initialize( key, ) do
-  end
 
   def handle_call({:get, fun}, _from, state) do
     {:reply, run( fun, [state]), state}
@@ -66,21 +61,6 @@ defmodule MultiAgent.Server do
 
   def code_change(_old, state, fun) do
     {:ok, run( fun, [state])}
-  end
-
-  defp initial_call( mfa) do
-    _ = Process.put(:"$initial_call", get_initial_call( mfa))
-    :ok
-  end
-
-  defp get_initial_call( fun) when is_function( fun, 0) do
-    {:module, module} = :erlang.fun_info( fun, :module)
-    {:name, name} = :erlang.fun_info( fun, :name)
-    {module, name, 0}
-  end
-
-  defp get_initial_call({mod, fun, args}) do
-    {mod, fun, length( args)}
   end
 
 
