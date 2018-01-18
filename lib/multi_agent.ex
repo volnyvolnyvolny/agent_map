@@ -239,34 +239,31 @@ defmodule MultiAgent do
   specified name already exists, the function returns `{:error,
   {:already_started, pid}}` with the PID of that process.
 
-  If one of the callbacks fails, the function returns `{:error, {key,
-  init_error_reason}}`.
+  If one of the callbacks fails, the function returns `{:error, [{key,
+  init_error_reason}]}`, where `init_error_reason` is `:timeout`,
+  `:cannot_call`, `already_exists` or arbitrary exception. Callback must be
+  given in form of anonymous function, `{fun, args}` or MFA-tuple, or else
+  `{:error, [key: :cannot_call]}` would be returned. So this are allowed:
+
+      fn -> Enum.empty? [:a, :b] end
+      {&Enum.empty?/1, [[:a, :b]]}
+      {Enum, :empty?, [[:a, :b]]}
+      {fn -> Enum.empty? [:a, :b] end, []}
+      {& &1+1, [42]}
+
+  and this are not:
+
+      42
+      {fn -> Enum.empty? [1,2,3] end, [:extraarg]}
+      … so on
 
   ## Examples
 
       iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
       iex> MultiAgent.get( pid, :key, & &1)
       42
-      iex> MultiAgent.get( pid, :errorkey, & &1)
+      iex> MultiAgent.get( pid, :nosuchkey, & &1)
       nil
-
-      iex> MultiAgent.start_link( key1: fn -> :timer.sleep( 250) end,
-      ...>                        key2: fn -> :timer.sleep( 600) end,
-      ...>                        timeout: 500)
-      {:error, :timeout}
-
-      iex> {:ok, pid} = MultiAgent.start_link( name: :multiagent)
-      iex> match? {:error, {:already_started, ^pid}},
-      ...>        MultiAgent.start_link( name: :multiagent)
-      true
-
-      iex> MultiAgent.start_link( key: fn -> 42 end,
-      ...>                        key: fn -> 43 end)
-      {:error, {:key, :already_exists}}
-
-      iex> MultiAgent.start_link( key: 76,
-      ...>                        key: fn -> 43 end)
-      {:error, {:key, :cannot_execute}}
   """
   @spec start_link( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
   def start_link( funs \\ [], options \\ [timeout: 5000, async: true]) do
@@ -279,17 +276,35 @@ defmodule MultiAgent do
   end
 
   @doc """
-  Starts an multiagent process without links (outside of a supervision tree).
+  Starts a multiagent process without links (outside of a supervision tree).
 
-  See `start_link/2` for more information.
+  See `start_link/2` for details.
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start( key: fn -> 42 end)
-      iex> MultiAgent.get( pid, :key, & &1)
-      42
-      iex> match?( {:error, {:badarith, _}}, MultiAgent.start( key: fn -> 1/0 end))
-      true
+      iex> MultiAgent.start( key1: 42,
+      ...>                   key2: fn -> :timer.sleep(150) end,
+      ...>                   key3: fn -> :timer.sleep(:infinity) end,
+      ...>                   timeout: 100)
+      {:error, [key1: :cannot_call, key2: :timeout, key3: :timeout]}
+
+      iex> MultiAgent.start( key1: :foo,
+      ...>                   key1: :bar,
+      ...>                   key2: fn -> :timer.sleep(:infinity) end,
+      ...>                   timeout: 100)
+      {:error, [key1: :already_exists]}
+
+      iex> err = MultiAgent.start( key1: 76, key2: fn -> raise "oops" end)
+      iex> {:error, [key1: :cannot_call, key2: {exception, _stacktrace}]} = err
+      iex> exception
+      %RuntimeError{ message: "oops"}
+
+      # but:
+      iex> MultiAgent.start( key1: fn -> :timer.sleep(:infinity) end,
+      ...>                   key2: :errorkey,
+      ...>                   timeout: 100,
+      ...>                   async: false)
+      {:error, :timeout}
   """
   @spec start( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
   def start( funs \\ [], options \\ [timeout: 5000, async: true]) do

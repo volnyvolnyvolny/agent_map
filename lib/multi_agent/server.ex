@@ -3,33 +3,60 @@ defmodule MultiAgent.Server do
 
   use GenServer
 
-  # async: true
-  def init( {funs, true}) do
-    Enum.reduce_while( funs, {:ok, {%{}, %{}}}, fn {k,f}, {:ok, {map, %{}}} ->
-      try do
-        if Map.has_key?( map, k) do
-          {:halt, {:stop, {k, :already_exists}}}
-        else
-          {:cont, {:ok, {Map.put( map, k, run( f, [])), %{}}}}
-        end
-      rescue
-        [BadFunctionError, BadArityError] -> {:halt, {:stop, {k, :cannot_execute}}}
-      end
-    end)
+  # Common helpers for init
+  defp prepair( funs) do
+    keys = Keyword.keys funs
+    case keys -- Enum.dedup( keys) do
+      []  -> {:ok, funs}
+      [k] -> {:error, {k, :already_exists}}
+      ks  -> {:error, {ks, :already_exist}}
+    end
   end
 
-  # async: false
-  def init( {funs, false}) do
-    tasks = Enum.map( funs, fn {k,f} ->
-      {k, Task.async( fn -> try do
-                              run( f)
-                            rescue
-                              x -> x
-                            end end)}
-    end)
 
-    {:ok, {%{}, %{}}}
+  defp frun( f) do
+    try do
+      {:ok, run( f)}
+    rescue
+      [BadFunctionError, BadArityError] -> {:error, :malformed}
+      reason -> {:error, reason}
+    end
   end
+
+  # defp frun( funs, true, timeout) do
+  #   keys = Keyword.keys( funs)
+
+  #   Keyword.values( funs)
+  #   |> Enum.map( & Task.async( fn -> frun(&1) end))
+  #   |> Task.yield_many( timeout)
+  #   |> Enum.map( fn {task, res} ->
+  #        res || Task.shutdown( task, :brutal_kill)
+  #      end)
+  #   |> Enum.zip( keys)
+  #   |> Enum.reduce_while( {:ok, %{}}, fn {res,k}, {:ok, map} ->
+  #   |> Enum.map( fn {{:ok}, k} -> [{}]
+  #      end)
+  # end
+
+  # defp frun( funs, false, _) do
+  #   Enum.reduce_while( funs, {:ok, %{}}, fn {k,f}, {:ok, map} ->
+  #     case frun( f) do
+  #       {:ok, result}        -> {:cont, {:ok, Map.put( map, k, result)}}
+  #       {:error, :malformed} -> {:halt, {:error, {k, :cannot_execute}}}
+  #       {:error, reason}     -> {:halt, {:error, {k, reason}}}
+  #     end
+  #   end)
+  # end
+
+  # def init( {funs, async, timeout}) do
+  #   with {:ok, funs} <- prepair( funs),
+  #        {:ok, map} <- frun( funs, async) do
+
+  #     {:ok, {map, %{}}}
+  #   else
+  #     {:error, err} -> {:stop, err}
+  #   end
+  # end
 
 
   def handle_call({:get, fun}, _from, state) do
@@ -63,6 +90,8 @@ defmodule MultiAgent.Server do
     {:ok, run( fun, [state])}
   end
 
+
+  def run( fun, state \\ [])
 
   def run({m, f, args}, state), do: apply m, f, state++[args]
   def run({f, args}, state), do: apply f, state++[args]
