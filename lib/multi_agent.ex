@@ -269,13 +269,13 @@ defmodule MultiAgent do
       {:error, {:key, :cannot_execute}}
   """
   @spec start_link( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
-  def start_link( inits \\ [], options \\ [timeout: 5000, async: true]) do
-    {inits, opts} = prepair( inits, options)
+  def start_link( funs \\ [], options \\ [timeout: 5000, async: true]) do
+    {funs, opts} = prepair( funs, options)
 
-    opts = opts |> Keyword.put_new( opts, :async, true)
-                |> Keyword.put_new( opts, :timeout, 5000)
+    opts = opts |> Keyword.put_new(:timeout, 5000)
+                |> Keyword.put_new(:async, true)
 
-    GenServer.start_link( MultiAgent.Server, inits, opts)
+    GenServer.start_link( MultiAgent.Server, {funs, opts[:async]}, opts)
   end
 
   @doc """
@@ -292,9 +292,13 @@ defmodule MultiAgent do
       true
   """
   @spec start( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
-  def start( inits \\ [], options \\ []) do
-    {inits, opts} = prepair( inits, options)
-    GenServer.start( MultiAgent.Server, inits, opts)
+  def start( funs \\ [], options \\ [timeout: 5000, async: true]) do
+    {funs, opts} = prepair( funs, options)
+
+    opts = opts |> Keyword.put_new(:timeout, 5000)
+                |> Keyword.put_new(:async, true)
+
+    GenServer.start( MultiAgent.Server, {funs, opts[:async]}, opts)
   end
 
 

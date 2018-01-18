@@ -3,11 +3,36 @@ defmodule MultiAgent.Server do
 
   use GenServer
 
-  def init( funs) do
+  # async: true
+  def init( {funs, true}) do
+    Enum.reduce_while( funs, {:ok, {%{}, %{}}}, fn {k,f}, {:ok, {map, %{}}} ->
+      try do
+        if Map.has_key?( map, k) do
+          {:halt, {:error, {k, :already_exists}}}
+        else
+          {:cont, {:ok, {Map run( f, [])
+        end
+      rescue
+        [BadFunctionError, BadArityError] -> {:halt, {:stop, {k, :cannot_execute}}}
+        err -> {:halt, {:stop, err}}
+      end
+
+      {:ok, {, %{}}}acc ->
+    end)
+
     IO.inspect( funs)
     _ = initial_call( funs)
     {:ok, {%{}, %{}}}
   end
+
+  # async: false
+  def init( {funs, false}) do
+    Enum.map( )
+    IO.inspect( funs)
+    _ = initial_call( funs)
+    {:ok, {%{}, %{}}}
+  end
+
 
   defp initialize( key, ) do
   end
