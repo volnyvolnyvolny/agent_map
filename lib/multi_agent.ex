@@ -146,6 +146,9 @@ defmodule MultiAgent do
   @type fun_arg( r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
 
+  alias MultiAgent.Helpers
+
+
   @doc false
   def child_spec( tuples) do
     %{
@@ -176,31 +179,24 @@ defmodule MultiAgent do
   end
 
 
-  # is function given in form of anonymous fun, {fun,args} or
-  # {Module, fun, args}? The second argument is the needed num of
-  # args after arguments apply.
-  defp fun?( fun, args_num \\ 0)
-
-  defp fun?( {module, fun, args}, args_num) when is_atom( module) do
-    fun?( {fun, args}, args_num)
-  end
-
-  defp fun?( {fun, args}, args_num) when is_list( args) do
-    fun?( fun, length( args)+args_num)
-  end
-
-  defp fun?( fun, args_num), do: is_function( fun, args_num)
-
 
   # common for start_link and start
-  defp prepair( inits, []) do
-    {opts, inits} = Enum.reverse( inits)
-                    |> Enum.split_while( fn {_,v} -> not fun?( v) end)
+  defp separate( funs_and_opts) do
+    {opts, funs} = Enum.reverse( funs_and_opts)
+                   |> Enum.split_while( fn {_,v} -> not Helpers.fun?( v) end)
 
-    {Enum.reverse( inits), opts}
+    {Enum.reverse( funs), opts}
   end
 
-  defp prepair( inits, opts), do: {inits, opts}
+
+  defp start( mf, funs_and_opts) do
+    {funs, opts} = separate( funs_and_opts)
+
+    opts = opts |> Keyword.put_new(:timeout, 5000)
+                |> Keyword.put_new(:async, true)
+
+    apply( mf, [MultiAgent.Server, {funs, opts[:async], opts[:timeout]}, opts])
+  end
 
 
   @doc """
@@ -211,17 +207,18 @@ defmodule MultiAgent do
   particular). The second element of each pair is an anonymous function, `{fun,
   args}` or MFA-tuple with zero num of arguments.
 
-  For each key, callback is executed in separate process. Give `async: false`
-  option to execute callbacks sequentially in the order they were given.
+  For each key, callback is executed in a separate process. Provide `async:
+  false` option to execute callbacks sequentially in the order they were given.
 
   ## Options
 
   The `:name` option is used for registration as described in the module
   documentation.
 
-  If the `:timeout` option is present, the agent is allowed to spend at most the
-  given number of milliseconds on the whole process of initialization or it will
-  be terminated and the start function will return `{:error, :timeout}`.
+  If the `:timeout` option is present, the multiagent is allowed to spend at
+  most the given number of milliseconds on the whole process of initialization
+  or it will be terminated and the start function will return `{:error,
+  :timeout}`.
 
   If the `:debug` option is present, the corresponding function in the
   [`:sys` module](http://www.erlang.org/doc/man/sys.html) will be invoked.
@@ -230,7 +227,7 @@ defmodule MultiAgent do
   to the underlying process as in `Process.spawn/4`.
 
   If the `:async` option is present and its value is true, every callback is
-  executed in separate process.
+  executed as a `Task`.
 
   ## Return values
 
@@ -243,7 +240,7 @@ defmodule MultiAgent do
   init_error_reason}]}`, where `init_error_reason` is `:timeout`,
   `:cannot_call`, `already_exists` or arbitrary exception. Callback must be
   given in form of anonymous function, `{fun, args}` or MFA-tuple, or else
-  `{:error, [key: :cannot_call]}` would be returned. So this are allowed:
+  `:cannot_call` would be returned. So this are allowed:
 
       fn -> Enum.empty? [:a, :b] end
       {&Enum.empty?/1, [[:a, :b]]}
@@ -255,7 +252,7 @@ defmodule MultiAgent do
 
       42
       {fn -> Enum.empty? [1,2,3] end, [:extraarg]}
-      … so on
+      … and so on
 
   ## Examples
 
@@ -265,14 +262,9 @@ defmodule MultiAgent do
       iex> MultiAgent.get( pid, :nosuchkey, & &1)
       nil
   """
-  @spec start_link( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
-  def start_link( funs \\ [], options \\ [timeout: 5000, async: true]) do
-    {funs, opts} = prepair( funs, options)
-
-    opts = opts |> Keyword.put_new(:timeout, 5000)
-                |> Keyword.put_new(:async, true)
-
-    GenServer.start_link( MultiAgent.Server, {funs, opts[:async]}, opts)
+  @spec start_link( [{term, fun_arg( any)} | GenServer.option | {:async, boolean}]) :: on_start
+  def start_link( funs_and_opts \\ [timeout: 5000, async: true]) do
+    start( &GenServer.start_link/3, funs_and_opts)
   end
 
   @doc """
@@ -306,14 +298,9 @@ defmodule MultiAgent do
       ...>                   async: false)
       {:error, :timeout}
   """
-  @spec start( [{term, fun_arg( any)}], [GenServer.option | {:async, boolean}]) :: on_start
-  def start( funs \\ [], options \\ [timeout: 5000, async: true]) do
-    {funs, opts} = prepair( funs, options)
-
-    opts = opts |> Keyword.put_new(:timeout, 5000)
-                |> Keyword.put_new(:async, true)
-
-    GenServer.start( MultiAgent.Server, {funs, opts[:async]}, opts)
+  @spec start( [{term, fun_arg( any)} | GenServer.option | {:async, boolean}]) :: on_start
+  def start( funs_and_opts \\ [timeout: 5000, async: true]) do
+    start( &GenServer.start/3, funs_and_opts)
   end
 
 
@@ -395,13 +382,13 @@ defmodule MultiAgent do
 
   # batch processing
   defp batch_call( multiagent, funs_and_opts, atom) do
-    {funs, opts} = prepair( funs_and_opts, [])
+    {funs, opts} = separate( funs_and_opts)
 
     keys = Keyword.keys( funs)
     funs = Keyword.values( funs)
 
     prun = fn {fun, state} ->
-      Task.start_link( MultiAgent.Server.run( fun, [state]))
+      Task.start_link( Helpers.run( fun, [state]))
     end
 
     GenServer.call( multiagent,
@@ -777,7 +764,7 @@ defmodule MultiAgent do
     funs = Keyword.values( funs)
 
     prun = fn {fun, state} ->
-      Task.start_link( MultiAgent.Server.run( fun, [state]))
+      Task.start_link( Helpers.run( fun, [state]))
     end
 
     GenServer.cast( multiagent,
