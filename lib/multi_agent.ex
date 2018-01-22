@@ -8,9 +8,9 @@ defmodule MultiAgent do
   `GenServer`/`Agent` that hold states in some key-value storage
   (ETS/`Map`/process dictionary) and provides concurrent access for different
   states. The `MultiAgent` module follows the latter approach. It stores states
-  in `Map` and provides a basic server implementation that allows states to be
-  retrieved and updated via an API similar to the one of `Agent` and `Map`
-  modules.
+  in a number of processed that executes user requests. Module provides a basic
+  server implementation that allows states to be retrieved and updated via an
+  API similar to the one of `Agent` and `Map` modules.
 
   ## Examples
 
@@ -146,7 +146,7 @@ defmodule MultiAgent do
   @type fun_arg( r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
 
-  alias MultiAgent.Helpers
+  alias MultiAgent.Callback
 
 
   @doc false
@@ -183,7 +183,7 @@ defmodule MultiAgent do
   # common for start_link and start
   defp separate( funs_and_opts) do
     {opts, funs} = Enum.reverse( funs_and_opts)
-                   |> Enum.split_while( fn {_,v} -> not Helpers.fun?( v) end)
+                   |> Enum.split_while( fn {_,v} -> not Callback.valid?( v) end)
 
     {Enum.reverse( funs), opts}
   end
@@ -388,7 +388,7 @@ defmodule MultiAgent do
     funs = Keyword.values( funs)
 
     prun = fn {fun, state} ->
-      Task.start_link( Helpers.run( fun, [state]))
+      Task.start_link( Callback.run( fun, [state]))
     end
 
     GenServer.call( multiagent,
@@ -764,7 +764,7 @@ defmodule MultiAgent do
     funs = Keyword.values( funs)
 
     prun = fn {fun, state} ->
-      Task.start_link( Helpers.run( fun, [state]))
+      Task.start_link( Callback.run( fun, [state]))
     end
 
     GenServer.cast( multiagent,

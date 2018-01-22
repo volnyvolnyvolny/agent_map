@@ -1,7 +1,7 @@
 defmodule MultiAgent.Server do
   @moduledoc false
 
-  alias MultiAgent.Helpers
+  alias MultiAgent.Callback
 
   use GenServer
 
@@ -15,11 +15,27 @@ defmodule MultiAgent.Server do
   end
 
 
+  defp flow( key, state) do
+    :timer.sleep(:infinity)
+  end
+
+  # initialize state
+  defp init_state( global_state, key, state) do
+    unless global_state[ key] do
+      Map.
+      {:ok, state}
+    else
+      {:error, {key, :already_exists}}
+    end
+  end
+
+
   def init( {funs, async, timeout}) do
     with {:ok, funs} <- prepair( funs),
-         {:ok, map} <- Helpers.safe_run( funs, async, timeout-10) do
+         {:ok, map} <- Callback.safe_run( funs, async, timeout-10) do
 
-      {:ok, {map, %{}}}
+      for {k,state} <- map, do: init_state( k, state)
+      {:ok, %{}}
     else
       {:error, err} -> {:stop, err}
     end
@@ -27,18 +43,18 @@ defmodule MultiAgent.Server do
 
 
   def handle_call({:get, fun}, _from, state) do
-    {:reply, Helpers.run( fun, [state]), state}
+    {:reply, Callback.run( fun, [state]), state}
   end
 
   def handle_call({:get_and_update, fun}, _from, state) do
-    case Helpers.run( fun, [state]) do
+    case Callback.run( fun, [state]) do
       {reply, state} -> {:reply, reply, state}
       other -> {:stop, {:bad_return_value, other}, state}
     end
   end
 
   def handle_call({:update, fun}, _from, state) do
-    {:reply, :ok, Helpers.run( fun, [state])}
+    {:reply, :ok, Callback.run( fun, [state])}
   end
 
   def handle_call( msg, from, state) do
@@ -46,7 +62,7 @@ defmodule MultiAgent.Server do
   end
 
   def handle_cast({:cast, fun}, state) do
-    {:noreply, Helpers.run( fun, [state])}
+    {:noreply, Callback.run( fun, [state])}
   end
 
   def handle_cast( msg, state) do
@@ -54,7 +70,7 @@ defmodule MultiAgent.Server do
   end
 
   def code_change(_old, state, fun) do
-    {:ok, Helpers.run( fun, [state])}
+    {:ok, Callback.run( fun, [state])}
   end
 
 end
