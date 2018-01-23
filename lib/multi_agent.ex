@@ -476,7 +476,6 @@ defmodule MultiAgent do
 
 
   @doc """
-
   Works as `get/4`, but executes callback asynchronously, as a separate `Task`.
   Every state has an associated queue of calls to be made on it. Using `get!/4`
   the state with given key can be retrived immediately, "out of queue turn".
