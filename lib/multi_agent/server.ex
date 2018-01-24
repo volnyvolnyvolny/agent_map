@@ -12,7 +12,7 @@ defmodule MultiAgent.Server do
   defp add_state( global_state, {key, state}, opts \\ []) do
     case Worker.find( global_state, key) do
       :error ->
-        worker = spawn_link( fn -> Worker.loop([], opts) end)
+        worker = Worker.find_or_init( global_state)
         global_state = Worker.add_key( global_state, worker, key)
         send worker, {{:cast, {key, fn -> state end}}, :infinity}
         {:ok, {global_state, worker}}
@@ -31,12 +31,21 @@ defmodule MultiAgent.Server do
     end
   end
 
-  def init({funs, async, timeout}) do
+
+  def init({funs, :infinity, extra_state}) do
+    init( funs, :infinity, extra_state)
+  end
+
+  def init({funs, timeout, extra_state}) do
+    init( funs, timeout-10, extra_state)
+  end
+
+  defp init( funs, timeout, extra_state) do
     with {:ok, funs} <- dup_check( funs),
-         {:ok, map} <- Callback.safe_run( funs, async, timeout-10),
+         {:ok, map} <- Callback.safe_run( funs, timeout),
          {:ok, global_state} <- Enum.reduce( map, %{}, & add_state( &2, &1)) do
 
-      {:ok, global_state}
+      {:ok, {global_state, extra_state}}
     else
       {:error, err} -> {:stop, err}
     end

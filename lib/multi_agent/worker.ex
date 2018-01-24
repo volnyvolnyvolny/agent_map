@@ -13,8 +13,34 @@ defmodule MultiAgent.Worker do
     end
   end
 
+  def find_or_init( global_state) do
+    case Worker.find_least_loaded( global_state) do
+      {:ok, worker} ->
+        if( Worker.empty_interval( global_state, worker) > 500) do
+          spawn_link( Worker, :loop, [[], opts])
+        else
+          worker
+        end
+      :error -> spawn_link( Worker, :loop, [[], opts])
+    end
+  end
+
+  def find_least_loaded( global_state) do
+    IO.inspect(:TBD_find_least_loaded)
+    case Map.values( global_state) do
+      [] -> :error
+      workers -> {:ok, Enum.min_by( workers,
+                                    & empty_interval( global_state, &1))}
+    end
+  end
+
+  # interval of time in millisecs when worker
+  # expected to have empty message queue
+  def empty_interval(_global_state,_worker), do: 50
+
+
   # move key from worker1 to worker2
-  def move_key( global_state, worker1, worker2, key) do
+  def move_key( global_state, _worker1, _worker2, _key) do
     IO.inspect(:TBD_move_key)
     global_state
   end
@@ -34,8 +60,8 @@ defmodule MultiAgent.Worker do
   defp execute( stack, opts) when is_list( stack) do
     case Enum.flat_map( stack, &execute(&1, opts)) do
       [{:delete, key}] -> Process.delete( key)
-      [{:put, key, state}] -> Process.put( key, new_state)
-      [] -> :donothing
+      [{:put, key, state}] -> Process.put( key, state)
+      [] -> :skip
     end
   end
 
@@ -58,8 +84,8 @@ defmodule MultiAgent.Worker do
     end
   end
 
-  defp execute({:update, from, {key, fun}},_opts) do
-    change = execute({:cast, {key, fun}})
+  defp execute({:update, from, {key, fun}}, opts) do
+    change = execute({:cast, {key, fun}}, opts)
     GenServer.reply( from, :ok)
     change
   end

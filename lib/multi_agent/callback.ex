@@ -42,8 +42,8 @@ defmodule MultiAgent.Callback do
   defp decorate( key, {:error, reason}, {:error, errs}), do: {:error, errs++[{key, reason}]}
   defp decorate( _, {:ok, _}, errors), do: errors
 
-  # run group of funs. Params are funs_with_ids, async and timeout 
-  def safe_run( funs, true, timeout) do
+  # run group of funs. Params are funs_with_ids and timeout 
+  def safe_run( funs, timeout) do
     keys = Keyword.keys( funs)
 
     Keyword.values( funs)
@@ -61,11 +61,5 @@ defmodule MultiAgent.Callback do
     |> Enum.reduce( {:ok, %{}}, fn {r, k}, acc ->
          decorate( k, r, acc)
        end)
-  end
-
-  def safe_run( funs, false, _) do
-    Enum.reduce( funs, {:ok, %{}}, fn {k,f}, acc ->
-      decorate( k, safe_run( f), acc)
-    end)
   end
 end
