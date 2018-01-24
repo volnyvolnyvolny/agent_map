@@ -3,9 +3,9 @@ defmodule MultiAgent.Worker do
 
   alias MultiAgent.Callback
 
-  # return pid of process responsible for given key
+  # return pid of process, responsible for given key
   # and nil if no such key
-  defp find( global_state, key) do
+  def find( global_state, key) do
     if pid = global_state[ key] do
       {:ok, pid}
     else
@@ -13,19 +13,26 @@ defmodule MultiAgent.Worker do
     end
   end
 
-  # add new worker
-  defp assoc( global_state, pid, key) do
-    Map.put_new( global_state, key, pid)
+  # move key from worker1 to worker2
+  def move_key( global_state, worker1, worker2, key) do
+    IO.inspect(:TBD_move_key)
+    global_state
   end
 
-  # remove key
-  defp deassoc( global_state, key) do
+  # add new worker
+  def add_key( global_state, worker, key) do
+    Map.put_new( global_state, key, worker)
+  end
+
+  # delete key
+  def delete_key( worker, global_state, key) do
+    send worker, {:delete, key}
     Map.delete( global_state, key)
   end
 
 
-  defp execute( stack, opts) when is_list( actions) do
-    case Enum.flat_map( stack, &execute(&1, opts)) end do
+  defp execute( stack, opts) when is_list( stack) do
+    case Enum.flat_map( stack, &execute(&1, opts)) do
       [{:delete, key}] -> Process.delete( key)
       [{:put, key, state}] -> Process.put( key, new_state)
       [] -> :donothing
@@ -34,14 +41,6 @@ defmodule MultiAgent.Worker do
 
   defp execute({:get, from, {key, fun}},_opts) do
     state = Process.get( key, nil)
-    # ref = make_ref()
-    # case Process.get( key, ref) do
-    #   ref ->
-    #     raise {key, "Process does not know anything about given key!"}
-    #   state ->
-    #     result = Callback.run( fun, [state])
-    #     GenServer.reply( from, result)
-    # end
     GenServer.reply( from, Callback.run( fun, [state]))
     []
   end
@@ -65,15 +64,21 @@ defmodule MultiAgent.Worker do
     change
   end
 
+  defp execute({:delete, from, key},_opts) do
+    GenServer.reply( from, :ok)
+    [{:delete, key}]
+  end
+
   defp execute({:cast, {key, fun}},_opts) do
     state = Process.get( key, nil)
     [{:put, key, Callback.run( fun, [state])}]
   end
 
+
   # process holds keys and states in process dictionary
   # so they are accessible at any time outside of process
-  # (specifically via MultiAgent.get!/2,4)
-  defp loop( stack, opts) do
+  # (via MultiAgent specifically.get!/2,4)
+  def loop( stack, opts) do
     receive do
       {action, until} ->
 

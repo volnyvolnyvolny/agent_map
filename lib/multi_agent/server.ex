@@ -9,13 +9,15 @@ defmodule MultiAgent.Server do
   # initialize state: create new process or associate with
   # existing process
   # if state is already initialized — return error
-  defp new_state( global_state, {key, state}, opts \\ []) do
+  defp add_state( global_state, {key, state}, opts \\ []) do
     case Worker.find( global_state, key) do
       :error ->
-        pid = spawn_link( fn -> Worker.loop([], opts) end)
-        {:ok, {Worker.assoc( global_state, pid, key), pid}}
+        worker = spawn_link( fn -> Worker.loop([], opts) end)
+        global_state = Worker.add_key( global_state, worker, key)
+        send worker, {{:cast, {key, fn -> state end}}, :infinity}
+        {:ok, {global_state, worker}}
 
-      {:ok, _pid} -> {:error, {key, :already_exists}}
+      {:ok,_worker} -> {:error, {key, :already_exists}}
     end
   end
 
@@ -24,15 +26,15 @@ defmodule MultiAgent.Server do
   defp dup_check( funs) do
     keys = Keyword.keys funs
     case keys -- Enum.dedup( keys) do
-      []  -> {:ok, funs}
-      ks  -> {:error, Enum.map( ks, & {&1, :already_exists})}
+      [] -> {:ok, funs}
+      ks -> {:error, Enum.map( ks, & {&1, :already_exists})}
     end
   end
 
   def init({funs, async, timeout}) do
     with {:ok, funs} <- dup_check( funs),
          {:ok, map} <- Callback.safe_run( funs, async, timeout-10),
-         {:ok, global_state} <- Enum.reduce( map, %{}, & new_state( &2, &1)) do
+         {:ok, global_state} <- Enum.reduce( map, %{}, & add_state( &2, &1)) do
 
       {:ok, global_state}
     else
@@ -45,19 +47,18 @@ defmodule MultiAgent.Server do
     case Worker.find( state, key) do
       {:ok, pid} -> {state, pid}
 
-      :error ->
-         {:ok, {state, pid}} = new_state( state, {key, nil})
-         {state, pid}
+      :error -> {:ok, {state, pid}} = new_state( state, {key, nil})
+                {state, id}
     end
   end
 
 
-  def handle_call({:init, key, fun, callexpired}, from, state) do
-    case new_state( state, {key, nil}, callexpired: callexpired) do
-      {:ok, {state, _pid}} ->
+  def handle_call({:init, {key, fun}, opts}, from, state) do
+    case add_state( state, {key, nil}, callexpired: opts[:callexpired]) do
+      {:ok, {state,_worker}} ->
         handle_call({:update, key, fn _ -> fun.() end}, from, state)
 
-      {:error, err} -> {:stop, err}
+      {:error, reason} -> {:stop, reason}
     end
   end
 
@@ -105,10 +106,12 @@ defmodule MultiAgent.Server do
     {:noreply, global_state}
   end
 
-  def handle_call({action, key, fun}, from, state) when action in [:update, :get_and_update] do
+  def handle_call({action, {key, fun}, timeout}, from, state)
+  when action in [:update, :get_and_update] do
+
     {state, pid} = find_or_init( state, key)
 
-    send pid, {action, from, {key, fun}}
+    send pid, {{action, from, {key, fun}}, timeout}
     {:noreply, state}
   end
 
@@ -118,11 +121,11 @@ defmodule MultiAgent.Server do
 
 
 
-  def handle_cast({:cast, _fun, keys}, _state) when is_list( keys) do
+  def handle_cast({:update, {_fun, keys}}, _state) when is_list( keys) do
     {:stop, :TBD}
   end
 
-  def handle_cast({:cast, key, fun}, state) do
+  def handle_cast({:update, {key, fun}}, state) do
     {state, pid} = find_or_init( state, key)
 
     send pid, {:cast, {key, fun}}

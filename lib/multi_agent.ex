@@ -373,15 +373,16 @@ defmodule MultiAgent do
         :: {:ok, a}
          | {:error, :timeout}
          | {:error, {key, :already_exists | :cannot_execute | any}} when a: var
-  def init( multiagent, key, fun, opts \\ [timeout: 5000, callexpired: true]) do
-    GenServer.call( multiagent,
-                    {:init, key, fun, opts[:callexpired] || false},
-                    opts[:timeout] || 5000)
+  def init( multiagent, key, fun, opts \\ [timeout: 5000, callexpired: false]) do
+    opts = opts |> Keyword.put_new(:timeout, 5000)
+                |> Keyword.put_new(:callexpired, false)
+
+    GenServer.call( multiagent, {:init, {key, fun}, opts}, opts[:timeout])
   end
 
 
   # batch processing
-  defp batch_call( multiagent, funs_and_opts, atom) do
+  defp batch_call( action, multiagent, funs_and_opts) do
     {funs, opts} = separate( funs_and_opts)
 
     keys = Keyword.keys( funs)
@@ -391,9 +392,10 @@ defmodule MultiAgent do
       Task.start_link( Callback.run( fun, [state]))
     end
 
+    timeout = opts[:timeout] || 5000
     GenServer.call( multiagent,
-                    {atom, & Enum.zip( funs, &1) |> Enum.map( prun), keys},
-                    opts[:timeout] || 5000)
+                    {action, {(& Enum.zip( funs, &1) |> Enum.map( prun)), keys}, timeout},
+                    timeout)
   end
 
 
@@ -443,12 +445,12 @@ defmodule MultiAgent do
 
   @spec get( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent, {:get, fun, keys}, timeout)
+    GenServer.call( multiagent, {:get, {fun, keys}, timeout}, timeout)
   end
 
   @spec get( multiagent, key, fun_arg( state, a), timeout) :: a when a: var
   def get( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent, {:get, key, fun}, timeout)
+    GenServer.call( multiagent, {:get, {key, fun}, timeout}, timeout)
   end
 
   @doc """
@@ -471,7 +473,7 @@ defmodule MultiAgent do
   """
   @spec get( multiagent, [{key, fun_arg( state, any)} | {:timeout, timeout}]) :: [any]
   def get( multiagent, funs_and_timeout) do
-    batch_call( multiagent, funs_and_timeout, :get)
+    batch_call(:get, multiagent, funs_and_timeout)
   end
 
 
@@ -497,12 +499,12 @@ defmodule MultiAgent do
 
   @spec get!( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get!( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent, {:get!, fun, keys}, timeout)
+    GenServer.call( multiagent, {:get!, {fun, keys}, timeout}, timeout)
   end
 
   @spec get!( multiagent, key, fun_arg( state, a), timeout) :: a when a: any
   def get!( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent, {:get!, key, fun}, timeout)
+    GenServer.call( multiagent, {:get!, {key, fun}, timeout}, timeout)
   end
 
 
@@ -634,13 +636,13 @@ defmodule MultiAgent do
   @spec get_and_update( multiagent, fun_arg([state], {any, [state] | :pop}), [key], timeout)
         :: any
   def get_and_update( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent, {:get_and_update, fun, keys}, timeout)
+    GenServer.call( multiagent, {:get_and_update, {fun, keys}, timeout}, timeout)
   end
 
   @spec get_and_update( multiagent, key, fun_arg( state, {a, state} | :pop), timeout)
         :: a | state when a: var
   def get_and_update( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent, {:get_and_update, key, fun}, timeout)
+    GenServer.call( multiagent, {:get_and_update, {key, fun}, timeout}, timeout)
   end
 
   @doc """
@@ -664,7 +666,7 @@ defmodule MultiAgent do
   """
   @spec get_and_update( multiagent, [{key, fun_arg( state, {any, state} | :pop)} | {:timeout, timeout}]) :: [any | state]
   def get_and_update( multiagent, funs_and_timeout) do
-    batch_call( multiagent, funs_and_timeout, :get_and_update)
+    batch_call(:get_and_update, multiagent, funs_and_timeout)
   end
 
 
@@ -711,12 +713,12 @@ defmodule MultiAgent do
 
   @spec update( multiagent, fun_arg( [state], [state]), [key], timeout) :: :ok
   def update( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent, {:update, fun, keys}, timeout)
+    GenServer.call( multiagent, {:update, {fun, keys}, timeout}, timeout)
   end
 
   @spec update( multiagent, key, fun_arg( state, state), timeout) :: :ok
   def update( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent, {:update, key, fun}, timeout)
+    GenServer.call( multiagent, {:update, {key, fun}, timeout}, timeout)
   end
 
   @doc """
@@ -726,7 +728,7 @@ defmodule MultiAgent do
   """
   @spec update( multiagent, [{key, fun_arg( state, state)} | {:timeout, timeout}]) :: :ok
   def update( multiagent, funs_and_timeout) do
-    batch_call( multiagent, funs_and_timeout, :update)
+    batch_call(:update, multiagent, funs_and_timeout)
   end
 
 
@@ -744,12 +746,12 @@ defmodule MultiAgent do
   """
   @spec cast( multiagent, fun_arg( [state], [state]), [key]) :: :ok
   def cast( multiagent, fun, keys) when is_list( keys) do
-    GenServer.cast( multiagent, {:update, fun, keys})
+    GenServer.cast( multiagent, {:update, {fun, keys}})
   end
 
   @spec cast( multiagent, key, fun_arg( state, state)) :: :ok
   def cast( multiagent, key, fun) do
-    GenServer.cast( multiagent, {:update, key, fun})
+    GenServer.cast( multiagent, {:update, {key, fun}})
   end
 
   @doc """
@@ -767,7 +769,7 @@ defmodule MultiAgent do
     end
 
     GenServer.cast( multiagent,
-                    {:update, & Enum.zip( funs, &1) |> Enum.map( prun), keys})
+                    {:update, {& Enum.zip( funs, &1) |> Enum.map( prun), keys}})
   end
 
 
