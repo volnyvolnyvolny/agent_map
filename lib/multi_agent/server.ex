@@ -6,6 +6,15 @@ defmodule MultiAgent.Server do
   use GenServer
 
 
+  defp shard( ) do
+    receive do
+      {action, data, until} ->
+        
+      {:suicide?, {key, state}} ->
+
+    end
+  end
+
   # initialize state: create new process or associate with
   # existing process
   # if state is already initialized — return error

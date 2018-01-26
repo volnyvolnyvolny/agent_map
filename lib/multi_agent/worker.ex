@@ -3,60 +3,6 @@ defmodule MultiAgent.Worker do
 
   alias MultiAgent.Callback
 
-  # return pid of process, responsible for given key
-  # and nil if no such key
-  def find( global_state, key) do
-    if pid = global_state[ key] do
-      {:ok, pid}
-    else
-      :error
-    end
-  end
-
-  def find_or_init( global_state) do
-    case Worker.find_least_loaded( global_state) do
-      {:ok, worker} ->
-        if( Worker.empty_interval( global_state, worker) > 500) do
-          spawn_link( Worker, :loop, [[], opts])
-        else
-          worker
-        end
-      :error -> spawn_link( Worker, :loop, [[], opts])
-    end
-  end
-
-  def find_least_loaded( global_state) do
-    IO.inspect(:TBD_find_least_loaded)
-    case Map.values( global_state) do
-      [] -> :error
-      workers -> {:ok, Enum.min_by( workers,
-                                    & empty_interval( global_state, &1))}
-    end
-  end
-
-  # interval of time in millisecs when worker
-  # expected to have empty message queue
-  def empty_interval(_global_state,_worker), do: 50
-
-
-  # move key from worker1 to worker2
-  def move_key( global_state, _worker1, _worker2, _key) do
-    IO.inspect(:TBD_move_key)
-    global_state
-  end
-
-  # add new worker
-  def add_key( global_state, worker, key) do
-    Map.put_new( global_state, key, worker)
-  end
-
-  # delete key
-  def delete_key( worker, global_state, key) do
-    send worker, {:delete, key}
-    Map.delete( global_state, key)
-  end
-
-
   defp execute( stack, opts) when is_list( stack) do
     case Enum.flat_map( stack, &execute(&1, opts)) do
       [{:delete, key}] -> Process.delete( key)

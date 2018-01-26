@@ -224,6 +224,15 @@ defmodule MultiAgent do
   If the `:spawn_opt` option is present, its value will be passed as options
   to the underlying process as in `Process.spawn/4`.
 
+  If the `:shards_num` option is present, the corresponding number of shards
+  will be used. Sharding is used to avoid bottleneck of using GenServer as a
+  single router/execution manager. Be aware that: (1) at least one shard is
+  used; (2) it makes no sense to use more shards than the number of keys or any
+  high number; (3) every shard is an alive light process; (4) shard process work
+  is to fire `Task`s with `get` callbacks and to forward callbacks to the
+  processes that are in response for given key execution queue; (5) by default
+  it's set to 10; (6) shards num could be "hot changed".
+
   ## Return values
 
   If the server is successfully created and initialized, the function returns
@@ -257,7 +266,7 @@ defmodule MultiAgent do
       iex> MultiAgent.get( pid, :nosuchkey, & &1)
       nil
   """
-  @spec start_link( [{term, fun_arg( any)} | GenServer.option]) :: on_start
+  @spec start_link( [{term, fun_arg( any)} | GenServer.option | {:shards_num, pos_integer}]) :: on_start
   def start_link( funs_and_opts \\ [timeout: 5000]) do
     start( &GenServer.start_link/3, funs_and_opts)
   end
@@ -286,7 +295,7 @@ defmodule MultiAgent do
       iex> exception
       %RuntimeError{ message: "oops"}
   """
-  @spec start( [{term, fun_arg( any)} | GenServer.option]) :: on_start
+  @spec start( [{term, fun_arg( any)} | GenServer.option | {:shards_num, pos_integer}]) :: on_start
   def start( funs_and_opts \\ [timeout: 5000]) do
     start( &GenServer.start/3, funs_and_opts)
   end
@@ -386,11 +395,17 @@ defmodule MultiAgent do
     if action == :cast do
       GenServer.cast( multiagent, {:update, {fun, keys}})
     else
-      timeout = opts[:timeout] || 5000
-      GenServer.call( multiagent,
-                      {action, {fun, keys}, timeout},
-                      timeout)
+      single_call( action, multiagent, data, opts[:timeout] || 5000)
     end
+  end
+
+  defp single_call( action, multiagent, data, timeout) do
+    until = System.system_time()
+          + System.convert_time_unit( timeout, :millisecond, :native)
+
+    GenServer.call( multiagent,
+                    {action, {fun, keys}, until},
+                    timeout)
   end
 
 
@@ -440,16 +455,12 @@ defmodule MultiAgent do
 
   @spec get( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent,
-                    {:get, {fun, keys}, timeout},
-                    timeout)
+    single_call(:get, multiagent, {fun, keys}, timeout)
   end
 
   @spec get( multiagent, key, fun_arg( state, a), timeout) :: a when a: var
   def get( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent,
-                    {:get, {key, fun}, timeout},
-                    timeout)
+    single_call(:get, multiagent, {key, fun}, timeout)
   end
 
   @doc """
@@ -498,16 +509,12 @@ defmodule MultiAgent do
 
   @spec get!( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get!( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent,
-                    {:get!, {fun, keys}, timeout},
-                    timeout)
+    single_call(:get!, multiagent, {fun, keys}, timeout)
   end
 
   @spec get!( multiagent, key, fun_arg( state, a), timeout) :: a when a: any
   def get!( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent,
-                    {:get!, {key, fun}, timeout},
-                    timeout)
+    single_call(:get!, multiagent, {key, fun}, timeout)
   end
 
 
@@ -639,17 +646,13 @@ defmodule MultiAgent do
   @spec get_and_update( multiagent, fun_arg([state], {any, [state] | :pop}), [key], timeout)
         :: any
   def get_and_update( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent,
-                    {:get_and_update, {fun, keys}, timeout},
-                    timeout)
+    single_call(:get_and_update, multiagent, {fun, keys}, timeout)
   end
 
   @spec get_and_update( multiagent, key, fun_arg( state, {a, state} | :pop), timeout)
         :: a | state when a: var
   def get_and_update( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent,
-                    {:get_and_update, {key, fun}, timeout},
-                    timeout)
+    single_call(:get_and_update, multiagent, {key, fun}, timeout)
   end
 
   @doc """
@@ -720,12 +723,12 @@ defmodule MultiAgent do
 
   @spec update( multiagent, fun_arg( [state], [state]), [key], timeout) :: :ok
   def update( multiagent, fun, keys, timeout) when is_list( keys) do
-    GenServer.call( multiagent, {:update, {fun, keys}, timeout}, timeout)
+    single_call(:update, multiagent, {fun, keys}, timeout)
   end
 
   @spec update( multiagent, key, fun_arg( state, state), timeout) :: :ok
   def update( multiagent, key, fun, timeout) do
-    GenServer.call( multiagent, {:update, {key, fun}, timeout}, timeout)
+    single_call(:update, multiagent, {key, fun}, timeout)
   end
 
   @doc """
