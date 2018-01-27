@@ -139,6 +139,9 @@ defmodule MultiAgent do
   @typedoc "The multiagent state"
   @type state :: term
 
+  @typedoc "The multiagent \"extra\" GenServer state"
+  @type extra :: term
+
   @typedoc "Anonymous function, `{fun, args}` or MFA triplet"
   @type fun_arg( a, r) :: (a -> r) | {(... -> r), [a | any]} | {module, atom, [a | any]}
 
@@ -150,31 +153,42 @@ defmodule MultiAgent do
 
 
   @doc false
-  def child_spec( tuples) do
+  def child_spec( funs_and_opts) do
     %{
       id: MultiAgent,
-      start: {MultiAgent, :start_link, [tuples]}
+      start: {MultiAgent, :start_link, [funs_and_opts]}
     }
   end
+
+
+  # @doc """
+  # Extra state can be specified for `multiagent`.
+  # """
+  # def extra_state(), do: nil
+
+  # @doc """
+  # This callback would be executed each time state is change.
+  # It could be used for ex., for backing multiagent up with DETS.
+  # """
+  # @spec put_state( extra_state, key, state) :: :ok | :error
+  # def put_state(_extra_state,_key,_state), do: :ok
 
 
   @doc false
   defmacro __using__( opts) do
     quote location: :keep, bind_quoted: [opts: opts] do
-      spec = [
-        id: opts[:id] || __MODULE__,
-        start: Macro.escape( opts[:start]) || quote( do: {__MODULE__, :start_link, [funs]}),
-        restart: opts[:restart] || :permanent,
-        shutdown: opts[:shutdown] || 5000,
-        type: :worker
-      ]
-
       @doc false
-      def child_spec( funs) do
-        %{unquote_splicing( spec)}
+      def child_spec( funs_and_opts) do
+        default = %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [funs_and_opts]}
+        }
+
+        Supervisor.child_spec( default, unquote( Macro.escape( opts)))
       end
 
       defoverridable child_spec: 1
+      # defoverridable child_spec: 1, put_state: 3, extra_state: 0
     end
   end
 
@@ -192,9 +206,9 @@ defmodule MultiAgent do
   defp start( mf, funs_and_opts) do
     {funs, opts} = separate( funs_and_opts)
 
-    opts = opts |> Keyword.put_new(:timeout, 5000)
+    opts = Keyword.put_new( opts, :timeout, 5000)
 
-    apply( mf, [MultiAgent.Server, {funs, opts[:timeout] || 5000}, opts])
+    apply( mf, [MultiAgent.Server, {funs, opts[:timeout], nil}, opts])
   end
 
 
@@ -223,15 +237,6 @@ defmodule MultiAgent do
 
   If the `:spawn_opt` option is present, its value will be passed as options
   to the underlying process as in `Process.spawn/4`.
-
-  If the `:shards_num` option is present, the corresponding number of shards
-  will be used. Sharding is used to avoid bottleneck of using GenServer as a
-  single router/execution manager. Be aware that: (1) at least one shard is
-  used; (2) it makes no sense to use more shards than the number of keys or any
-  high number; (3) every shard is an alive light process; (4) shard process work
-  is to fire `Task`s with `get` callbacks and to forward callbacks to the
-  processes that are in response for given key execution queue; (5) by default
-  it's set to 10; (6) shards num could be "hot changed".
 
   ## Return values
 
@@ -266,7 +271,7 @@ defmodule MultiAgent do
       iex> MultiAgent.get( pid, :nosuchkey, & &1)
       nil
   """
-  @spec start_link( [{term, fun_arg( any)} | GenServer.option | {:shards_num, pos_integer}]) :: on_start
+  @spec start_link( [{term, fun_arg( any)} | GenServer.option]) :: on_start
   def start_link( funs_and_opts \\ [timeout: 5000]) do
     start( &GenServer.start_link/3, funs_and_opts)
   end
@@ -322,12 +327,13 @@ defmodule MultiAgent do
   return `{:error, :timeout}`. Also, the atom `:infinity` can be provided to
   make multiagent wait infinitely.
 
-  `:callexpired` option specifies should multiagent execute functions that are
+  `:call_expired` option specifies should multiagent execute functions that are
   expired. This happend when caller timeout is took place before function
   execution.
 
-  `:async` option specifies should multiagent execute `get` calls on the same
-  key in parallel. By default it is set to true, so
+  Multiagent can execute `get` calls on the same key in parallel. `max_threads`
+  option specifies number of threads per key used. By default two `get` calls on
+  the same state could be executed, so
 
       sleep100ms = fn _ -> :timer.sleep(100) end
       List.duplicate( fn -> MultiAgent.get( multiagent, :k, sleep100ms) end, 5)
@@ -343,6 +349,8 @@ defmodule MultiAgent do
   will be executed in around of 200 ms because `multiagent` can parallelize any
   sequence of `get/4` calls ending with `get_and_update/4` or `update/4` calls.
 
+  Use `max_threads: 1` to execute `get` calls in sequence.
+
   ## Examples
 
       iex> {:ok, pid} = MultiAgent.start_link()
@@ -354,11 +362,12 @@ defmodule MultiAgent do
       42
       iex> MultiAgent.init( pid, :k, fn -> 43 end)
       {:error, {:k, :already_exists}}
+      #
       iex> MultiAgent.init( pid, :_, fn -> :timer.sleep(300) end, timeout: 200)
       {:error, :timeout}
       iex> MultiAgent.init( pid, :k, fn -> :timer.sleep(300) end, timeout: 200)
       {:error, {:k, :already_exists}}
-      iex> MultiAgent.init( pid, :k2, fn -> 42 end, callexpired: false)
+      iex> MultiAgent.init( pid, :k2, fn -> 42 end, call_expired: false)
       {:ok, 42}
       iex> MultiAgent.cast( pid, :k2, & :timer.sleep(100) && &1) #blocks for 100 ms
       iex> MultiAgent.update( pid, :k, fn _ -> 0 end, timeout: 50)
@@ -366,15 +375,26 @@ defmodule MultiAgent do
       iex> MultiAgent.get( pid, :k, & &1) #update was not happend
       42
   """
-  @spec init( multiagent, key, fun_arg( a), keyword)
+  @spec init( multiagent, key, fun_arg( a), [ {:timeout, timeout}
+                                            | {:call_expired, boolean}
+                                            | {:max_threads, pos_integer}])
         :: {:ok, a}
-         | {:error, :timeout}
-         | {:error, {key, :already_exists | :cannot_execute | any}} when a: var
-  def init( multiagent, key, fun, opts \\ [timeout: 5000, callexpired: false]) do
+         | {:error, {key, :already_exists}} when a: var
+  def init( multiagent, key, fun, opts \\ [timeout: 5000, call_expired: false, max_threads: 2]) do
     opts = opts |> Keyword.put_new(:timeout, 5000)
-                |> Keyword.put_new(:callexpired, false)
+                |> Keyword.put_new(:call_expired, false)
+                |> Keyword.put_new(:max_threads, 2)
 
-    GenServer.call( multiagent, {:init, {key, fun}, opts}, opts[:timeout])
+    unless is_integer( opts[:max_threads])
+        && opts[:max_threads] < 1 do
+      raise "If specified, max_threads option should be an integer ≥ 1."
+    end
+
+    unless is_boolean( opts[:call_expired]) do
+      raise "If specified, call_expired option should be an boolean."
+    end
+
+    single_call(:init, multiagent, {key, fun, opts}, opts[:timeout])
   end
 
 
@@ -404,7 +424,7 @@ defmodule MultiAgent do
           + System.convert_time_unit( timeout, :millisecond, :native)
 
     GenServer.call( multiagent,
-                    {action, {fun, keys}, until},
+                    {action, data, until},
                     timeout)
   end
 
@@ -596,7 +616,7 @@ defmodule MultiAgent do
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
   caller exits. If this happened but callback is so far in the queue, and in
-  `init/4` call `:callexpired` flag is set to true, it will still be executed.
+  `init/4` call `:call_expired` flag is set to true, it will still be executed.
 
   ## Examples
 
@@ -703,7 +723,7 @@ defmodule MultiAgent do
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
   caller exits. If this happened but callback is so far in the queue, and in
-  `init/4` call `:callexpired` option was set to true (by def.), it will still
+  `init/4` call `:call_expired` option was set to true (by def.), it will still
   be executed.
 
   ## Examples

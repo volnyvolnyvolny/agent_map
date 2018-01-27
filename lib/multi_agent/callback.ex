@@ -42,6 +42,16 @@ defmodule MultiAgent.Callback do
   defp decorate( key, {:error, reason}, {:error, errs}), do: {:error, errs++[{key, reason}]}
   defp decorate( _, {:ok, _}, errors), do: errors
 
+
+  defp call( fun, {:state, state}, from) do
+    GenServer.reply( from, Callback.run( fun, [state]))
+  end
+
+  defp call( fun, nil, from) do
+    GenServer.reply( from, Callback.run( fun, [nil]))
+  end
+
+
   # run group of funs. Params are funs_with_ids and timeout 
   def safe_run( funs, timeout) do
     keys = Keyword.keys( funs)

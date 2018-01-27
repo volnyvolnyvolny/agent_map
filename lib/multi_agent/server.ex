@@ -6,30 +6,6 @@ defmodule MultiAgent.Server do
   use GenServer
 
 
-  defp shard( ) do
-    receive do
-      {action, data, until} ->
-        
-      {:suicide?, {key, state}} ->
-
-    end
-  end
-
-  # initialize state: create new process or associate with
-  # existing process
-  # if state is already initialized — return error
-  defp add_state( global_state, {key, state}, opts \\ []) do
-    case Worker.find( global_state, key) do
-      :error ->
-        worker = Worker.find_or_init( global_state)
-        global_state = Worker.add_key( global_state, worker, key)
-        send worker, {{:cast, {key, fn -> state end}}, :infinity}
-        {:ok, {global_state, worker}}
-
-      {:ok,_worker} -> {:error, {key, :already_exists}}
-    end
-  end
-
 
   # Common helpers for init
   defp dup_check( funs) do
@@ -49,34 +25,33 @@ defmodule MultiAgent.Server do
     init( funs, timeout-10, extra_state)
   end
 
+
+  # ->
   defp init( funs, timeout, extra_state) do
     with {:ok, funs} <- dup_check( funs),
-         {:ok, map} <- Callback.safe_run( funs, timeout),
-         {:ok, global_state} <- Enum.reduce( map, %{}, & add_state( &2, &1)) do
+         {:ok, results} <- Callback.safe_run( funs, timeout) do
 
-      {:ok, {global_state, extra_state}}
+      map = Enum.reduce( results, %{}, fn {key,state}, map ->
+        opts = []
+        Map.put_new( map, key, {{:state, state}, opts, opts[:max_threads]})
+      end)
+
+      {:ok, {map,extra_state}}
     else
       {:error, err} -> {:stop, err}
     end
   end
 
 
-  defp find_or_init( state, key) do
-    case Worker.find( state, key) do
-      {:ok, pid} -> {state, pid}
-
-      :error -> {:ok, {state, pid}} = new_state( state, {key, nil})
-                {state, id}
-    end
-  end
-
-
-  def handle_call({:init, {key, fun}, opts}, from, state) do
-    case add_state( state, {key, nil}, callexpired: opts[:callexpired]) do
-      {:ok, {state,_worker}} ->
-        handle_call({:update, key, fn _ -> fun.() end}, from, state)
-
-      {:error, reason} -> {:stop, reason}
+  def handle_call({:init, {key, fun, opts}, until}, from, {map, extra}=g_state) do
+    case state do
+      %{^key => _} ->
+        {:reply, {:error, {key, :already_exists}}, g_state}
+      _ ->
+        pid = spawn_link( Worker, :loop, [self(), opts]])
+        map = Map.put_new( map, key, {:pid, pid})
+        send pid, {:update, fun, until}
+        {:noreply, {map,extra}}
     end
   end
 
@@ -98,36 +73,61 @@ defmodule MultiAgent.Server do
   end
 
 
-  def handle_call({:get, key, fun}, from, global_state) do
-    case find_process( global_state, key) do
-      {:ok, pid} ->
-        send pid, {:get, from, {key, fun}}
-      :error ->
-        Task.start_link fn ->
-          GenServer.reply( from, Callback.run( fun, [nil]))
-        end
-    end
+  def handle_call({:get, {key,fun}, until}=tuple, from, {map, extra}=g_state) do
+    case map do
+      %{^key => {:pid, pid}} ->
+        send pid, {tuple, from}
+        {:noreply, g_state}
 
-    {:noreply, global_state}
+      %{^key => {state, opts, threads_num}} ->
+        if Worker.call? until, opts[:call_expired] do
+          state = if threads_num > 1 do
+                    server = self()
+                    Task.start_link( fn ->
+                      Callback.call( fun, state, from)
+                      send server, {:done, key}
+                    end)
+                    {state, opts, threads_num-1}
+                  else
+                    pid = spawn_link( Worker, :loop, [self(), state, opts, 1])
+                    send pid, {tuple, from}
+                    {:pid, pid}
+                  end
+
+          {:noreply, {%{map | key => state}, extra}}
+        else
+          {:noreply, g_state}
+        end
+
+      _ -> # no such state
+        temp_state = {nil, [call_expired: false, max_threads: 2], 2}
+        map = Map.put_new( map, key, temp_state)
+        handle_call( tuple, from, g_state)
+    end
   end
 
-  def handle_call({:get!, key, fun}, from, global_state) do
-    case find_process( global_state, key) do
-      {:ok, pid} ->
-        send pid, {:get, from, {key, fun}}
-      :error ->
-        Task.start_link fn ->
-          GenServer.reply( from, Callback.run( fun, [nil]))
-        end
-    end
+  # execute immediately
+  def handle_call({:get!, {key, fun}, until}, from, g_state) do
+    state = case map do
+              %{^key => {:pid, pid}} ->
+                Process.info(:dictionary)[:state]
+              _ ->
+                nil
+            end
 
-    {:noreply, global_state}
+    Task.start_link( Callback, :call, [fun, state, from])
+    {:noreply, g_state}
   end
 
-  def handle_call({action, {key, fun}, timeout}, from, state)
-  when action in [:update, :get_and_update] do
+  def handle_call({action, {key, fun}, timeout}=tuple, from, {map, extra}) do
+    case map do
+      %{^key => {:pid, pid}} ->
+        send pid, tuple
+        {:noreply, {map, extra}}
 
-    {state, pid} = find_or_init( state, key)
+      %{^key => {state, opts, threads_num}=tuple} ->
+
+        {state, pid} = find_or_init( state, key)
 
     send pid, {{action, from, {key, fun}}, timeout}
     {:noreply, state}

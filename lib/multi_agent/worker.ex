@@ -1,15 +1,7 @@
-defmodule MultiAgent.Worker do
+xdefmodule MultiAgent.Worker do
   @moduledoc false
 
   alias MultiAgent.Callback
-
-  defp execute( stack, opts) when is_list( stack) do
-    case Enum.flat_map( stack, &execute(&1, opts)) do
-      [{:delete, key}] -> Process.delete( key)
-      [{:put, key, state}] -> Process.put( key, state)
-      [] -> :skip
-    end
-  end
 
   defp execute({:get, from, {key, fun}},_opts) do
     state = Process.get( key, nil)
@@ -47,6 +39,15 @@ defmodule MultiAgent.Worker do
   end
 
 
+  defp call?(:infinity, _), do: true
+  defp call?( until, call_expired_opt) do
+    call_expired_opt || System.system_time < until
+  end
+
+
+  def loop( server, opts, threads_available \\ opts[:max_threads]) do
+  end
+
   # process holds keys and states in process dictionary
   # so they are accessible at any time outside of process
   # (via MultiAgent specifically.get!/2,4)
@@ -54,7 +55,7 @@ defmodule MultiAgent.Worker do
     receive do
       {action, until} ->
 
-        if opts[:callexpired]
+        if opts[:call_expired]
         || until == :infinity
         || System.system_time < until do
 
