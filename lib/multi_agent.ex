@@ -203,14 +203,12 @@ defmodule MultiAgent do
   end
 
 
-  defp start( mf, funs_and_opts) do
-    {funs, opts} = separate( funs_and_opts)
-
-    opts = Keyword.put_new( opts, :timeout, 5000)
-
-    apply( mf, [MultiAgent.Server, {funs, opts[:timeout], nil}, opts])
+  defp check_opts( opts, keys) do
+    keys = Keyword.keys( opts) -- keys
+    unless Enum.empty?( keys) do
+      raise "Unexpected opts: #{keys}."
+    end
   end
-
 
   @doc """
   Starts a multiagent linked to the current process with the given function.
@@ -273,7 +271,10 @@ defmodule MultiAgent do
   """
   @spec start_link( [{term, fun_arg( any)} | GenServer.option]) :: on_start
   def start_link( funs_and_opts \\ [timeout: 5000]) do
-    start( &GenServer.start_link/3, funs_and_opts)
+    {funs, opts} = separate( funs_and_opts)
+    timeout = opts[:timeout] || 5000
+    opts = Keyword.put( opts, :timeout, :infinity) # turn off global timeout
+    GenServer.start_link( MultiAgent.Server, {funs, timeout, nil}, opts)
   end
 
   @doc """
@@ -300,9 +301,12 @@ defmodule MultiAgent do
       iex> exception
       %RuntimeError{ message: "oops"}
   """
-  @spec start( [{term, fun_arg( any)} | GenServer.option | {:shards_num, pos_integer}]) :: on_start
+  @spec start( [{term, fun_arg( any)} | GenServer.option]) :: on_start
   def start( funs_and_opts \\ [timeout: 5000]) do
-    start( &GenServer.start/3, funs_and_opts)
+    {funs, opts} = separate( funs_and_opts)
+    timeout = opts[:timeout] || 5000
+    opts = Keyword.put( opts, :timeout, :infinity) # turn off global timeout
+    GenServer.start( MultiAgent.Server, {funs, timeout, nil}, opts)
   end
 
 
@@ -377,55 +381,46 @@ defmodule MultiAgent do
   """
   @spec init( multiagent, key, fun_arg( a), [ {:timeout, timeout}
                                             | {:call_expired, boolean}
-                                            | {:max_threads, pos_integer}])
+                                            | {:max_threads, pos_integer | :infinity}])
         :: {:ok, a}
          | {:error, {key, :already_exists}} when a: var
-  def init( multiagent, key, fun, opts \\ [timeout: 5000, call_expired: false, max_threads: 2]) do
-    opts = opts |> Keyword.put_new(:timeout, 5000)
-                |> Keyword.put_new(:call_expired, false)
-                |> Keyword.put_new(:max_threads, 2)
+  def init( multiagent, key, fun, opts \\ [timeout: 5000]) do
+    check_opts( opts, [:call_expired, :timeout, :max_threads])
 
-    unless is_integer( opts[:max_threads])
-        && opts[:max_threads] < 1 do
-      raise "If specified, max_threads option should be an integer ≥ 1."
-    end
-
-    unless is_boolean( opts[:call_expired]) do
-      raise "If specified, call_expired option should be an boolean."
-    end
-
-    single_call(:init, multiagent, {key, fun, opts}, opts[:timeout])
+    {timeout, opts} = Keyword.pop( opts, :timeout, 5000)
+    single_call(:init, multiagent, {key, fun, opts}, timeout)
   end
 
-
-  # batch processing
-  defp batch_call( action, multiagent, funs_and_opts) do
-    {funs, opts} = separate( funs_and_opts)
-
-    keys = Keyword.keys( funs)
-    funs = Keyword.values( funs)
-
-    fun = fn states ->
-      Enum.zip( funs, states) |>
-      Enum.map( fn {fun, state} ->
-        Task.start_link( Callback.run( fun, [state]))
-      end)
-    end
-
-    if action == :cast do
-      GenServer.cast( multiagent, {:update, {fun, keys}})
-    else
-      single_call( action, multiagent, data, opts[:timeout] || 5000)
-    end
-  end
 
   defp single_call( action, multiagent, data, timeout) do
-    until = System.system_time()
-          + System.convert_time_unit( timeout, :millisecond, :native)
+    until = System.system_time +
+            System.convert_time_unit( timeout, :millisecond, :native)
 
     GenServer.call( multiagent,
                     {action, data, until},
                     timeout)
+  end
+
+  # batch processing
+  defp batch_call( action, multiagent, funs_and_opts) do
+    {funs, opts} = separate( funs_and_opts)
+    check_opts( opts, [:timeout])
+
+    keys = Keyword.keys( funs)
+
+    fun = fn states ->
+      Keyword.values( funs)
+      |> Enum.zip( states)
+      |> Enum.map( fn {fun, state} ->
+           Task.start_link( Callback.run( fun, [state]))
+         end)
+    end
+
+    if action == :cast do
+      GenServer.cast( multiagent, {:update, {fun,keys}})
+    else
+      single_call( action, multiagent, {fun,keys}, opts[:timeout] || 5000)
+    end
   end
 
 
@@ -529,12 +524,12 @@ defmodule MultiAgent do
 
   @spec get!( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get!( multiagent, fun, keys, timeout) when is_list( keys) do
-    single_call(:get!, multiagent, {fun, keys}, timeout)
+    GenServer.call( multiagent, {{:get, :!}, {fun, keys}}, timeout)
   end
 
   @spec get!( multiagent, key, fun_arg( state, a), timeout) :: a when a: any
   def get!( multiagent, key, fun, timeout) do
-    single_call(:get!, multiagent, {key, fun}, timeout)
+    GenServer.call( multiagent, {{:get, :!}, {key, fun}}, timeout)
   end
 
 
@@ -776,12 +771,12 @@ defmodule MultiAgent do
   """
   @spec cast( multiagent, fun_arg( [state], [state]), [key]) :: :ok
   def cast( multiagent, fun, keys) when is_list( keys) do
-    GenServer.cast( multiagent, {:update, {fun, keys}})
+    GenServer.cast( multiagent, {:cast, {fun, keys}})
   end
 
   @spec cast( multiagent, key, fun_arg( state, state)) :: :ok
   def cast( multiagent, key, fun) do
-    GenServer.cast( multiagent, {:update, {key, fun}})
+    GenServer.cast( multiagent, {:cast, {key, fun}})
   end
 
   @doc """

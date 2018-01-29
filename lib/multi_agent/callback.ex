@@ -1,6 +1,12 @@
 defmodule MultiAgent.Callback do
   @moduledoc false
 
+  @compile {:inline, parse: 1}
+
+  def parse({:state, state}), do: state
+  def parse( nil), do: nil
+
+
   def safe_run( f) do
     try do
       {:ok, run( f)}
@@ -43,12 +49,9 @@ defmodule MultiAgent.Callback do
   defp decorate( _, {:ok, _}, errors), do: errors
 
 
-  defp call( fun, {:state, state}, from) do
-    GenServer.reply( from, Callback.run( fun, [state]))
-  end
-
-  defp call( fun, nil, from) do
-    GenServer.reply( from, Callback.run( fun, [nil]))
+  def call?(:infinity, _), do: true
+  def call?( until, call_expired) do
+    call_expired || System.system_time < until
   end
 
 
