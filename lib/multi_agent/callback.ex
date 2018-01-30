@@ -50,8 +50,8 @@ defmodule MultiAgent.Callback do
 
 
   def call?(:infinity, _), do: true
-  def call?( until, call_expired) do
-    call_expired || System.system_time < until
+  def call?( expired, late_call) do
+    late_call || System.system_time < expired
   end
 
 

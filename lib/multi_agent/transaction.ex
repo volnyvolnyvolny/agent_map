@@ -91,7 +91,7 @@ defmodule MultiAgent.Transaction do
   end
 
 
-  def prepair( {{:get, :!}, fun, keys}, from, map) do
+  defp prepair( {{:get, :!}, fun, keys}, from, map) do
     {known, workers} = separate( map, keys)
 
     get_state = &Process.info(&1, :dictionary)[:'$state']
@@ -99,22 +99,34 @@ defmodule MultiAgent.Transaction do
     {known, map}
   end
 
-  def prepair( {:get, fun, keys}, from, map) do
+  defp prepair( {:get, fun, keys}, from, map) do
   end
 
 
-  def prepair( {action, fun, keys}, from, map) do
+  defp prepair( {action, fun, keys}, from, map) do
     {known, workers} = separate( map, keys)
 
   end
 
-  def prepair( {action, fun, keys}, from, map) do
+  defp prepair( {action, fun, keys}, from, map) do
     {known, workers} = separate( map, keys)
-    
+  end
+
+  def run( msg, map) do
+    {known, map} = Transaction.prepair( msg, from, map)
+
+    msg = case action do
+            {action, :!} -> {action, fun, keys}
+            _ -> msg
+          end
+
+    Task.start_link( Transaction, :flow, [known, msg, from])
+
+    {:noreply, map}
   end
 
   # transaction loop (:get, :get!, :get_and_update, :update, :cast)
-  def loop( known, {action, fun, keys}, from) do
+  defp flow( known, {action, fun, keys}, from) do
     map = collect( known, Enum.uniq keys)
     states = Enum.map( keys, &state( map, &1))
 

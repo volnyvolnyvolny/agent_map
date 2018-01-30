@@ -40,20 +40,26 @@ defmodule MultiAgent.Worker do
 
 
   # get case if cannot create more threads
-  defp process({:get, fun, from}, threads_num) when threads_num > 1 do
-    worker = self()
-    Task.start_link( fn ->
-      execute(:get, fun, from)
-      unless threads_num == :infinity do
-        send worker, :done
-      end
-    end)
-    dec( threads_num)
+  defp process({:get, fun, from, expired}, threads_num) when threads_num > 1 do
+    late_call = Process.get(:'$late_call')
+    if Callback.call?( expired, late_call) do
+      worker = self()
+      Task.start_link( fn ->
+        execute(:get, fun, from)
+        unless threads_num == :infinity do
+          send worker, :done
+        end
+      end)
+      dec( threads_num)
+    end
   end
 
   # get_and_update, update
-  defp process({action, fun, from}, threads_num) do
-    execute( action, fun, from)
+  defp process({action, fun, from, expired}, threads_num) do
+    late_call = Process.get(:'$late_call')
+    if Callback.call?( expired, late_call) do
+      execute( action, fun, from)
+    end
     threads_num
   end
 
@@ -62,7 +68,7 @@ defmodule MultiAgent.Worker do
     threads_num
   end
 
-  defp process(:done, threads_num), do: inc( threads_num)
+  defp process(:done, threads_num), do: inc(threads_num)
 
   defp process(:done!, threads_num) do
     max_threads = Process.get(:'$max_threads')
@@ -75,11 +81,11 @@ defmodule MultiAgent.Worker do
   defp rand( to), do: rem( System.system_time, to)
 
   # main
-  def loop( server, key, {state, call_expired, threads_num}) do
+  def loop( server, key, {state, late_call, threads_num}) do
     if state = Callback.parse( state),
       do: Process.put(:'$state', state)
-    if call_expired,
-      do: Process.put(:'$call_expired', true)
+    if late_call,
+      do: Process.put(:'$late_call', true)
 
     Process.put(:'$key', key)
     Process.put(:'$max_threads', threads_num)

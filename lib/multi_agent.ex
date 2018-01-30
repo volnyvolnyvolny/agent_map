@@ -331,7 +331,7 @@ defmodule MultiAgent do
   return `{:error, :timeout}`. Also, the atom `:infinity` can be provided to
   make multiagent wait infinitely.
 
-  `:call_expired` option specifies should multiagent execute functions that are
+  `:late_call` option specifies should multiagent execute functions that are
   expired. This happend when caller timeout is took place before function
   execution.
 
@@ -371,7 +371,7 @@ defmodule MultiAgent do
       {:error, :timeout}
       iex> MultiAgent.init( pid, :k, fn -> :timer.sleep(300) end, timeout: 200)
       {:error, {:k, :already_exists}}
-      iex> MultiAgent.init( pid, :k2, fn -> 42 end, call_expired: false)
+      iex> MultiAgent.init( pid, :k2, fn -> 42 end, late_call: false)
       {:ok, 42}
       iex> MultiAgent.cast( pid, :k2, & :timer.sleep(100) && &1) #blocks for 100 ms
       iex> MultiAgent.update( pid, :k, fn _ -> 0 end, timeout: 50)
@@ -380,12 +380,12 @@ defmodule MultiAgent do
       42
   """
   @spec init( multiagent, key, fun_arg( a), [ {:timeout, timeout}
-                                            | {:call_expired, boolean}
+                                            | {:late_call, boolean}
                                             | {:max_threads, pos_integer | :infinity}])
         :: {:ok, a}
          | {:error, {key, :already_exists}} when a: var
   def init( multiagent, key, fun, opts \\ [timeout: 5000]) do
-    check_opts( opts, [:call_expired, :timeout, :max_threads])
+    check_opts( opts, [:late_call, :timeout, :max_threads])
 
     {timeout, opts} = Keyword.pop( opts, :timeout, 5000)
     single_call(:init, multiagent, {key, fun, opts}, timeout)
@@ -611,7 +611,7 @@ defmodule MultiAgent do
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
   caller exits. If this happened but callback is so far in the queue, and in
-  `init/4` call `:call_expired` flag is set to true, it will still be executed.
+  `init/4` call `:late_call` flag is set to true, it will still be executed.
 
   ## Examples
 
@@ -718,7 +718,7 @@ defmodule MultiAgent do
   returns the result value, or the atom `:infinity` to wait indefinitely. If no
   result is received within the specified time, the function call fails and the
   caller exits. If this happened but callback is so far in the queue, and in
-  `init/4` call `:call_expired` option was set to true (by def.), it will still
+  `init/4` call `:late_call` option was set to true (by def.), it will still
   be executed.
 
   ## Examples
