@@ -1,7 +1,7 @@
 defmodule MultiAgent.Server do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Worker}
+  alias MultiAgent.{Callback, Worker, Transaction}
 
   import Worker, only: [inc: 1, dec: 1]
   import Callback, only: [parse: 1, call?: 2]
@@ -75,21 +75,18 @@ defmodule MultiAgent.Server do
     end
   end
 
+  # transactions
+  def handle_call({action, fun, keys}=msg, from, {map,extra}) when is_list( keys) do
+    {known, map} = Transaction.prepair( msg, from, map)
 
-  def handle_call({:get, _fun, keys}, _from, _state) when is_list( keys) do
-    {:stop, :TBD}
-  end
+    msg = case action do
+            {action, :!} -> {action, fun, keys}
+            _ -> msg
+          end
 
-  def handle_call({{:get, :!}, _fun, keys}, _from, _state) when is_list( keys) do
-    {:stop, :TBD}
-  end
+    Task.start_link( Transaction, :loop, [known, msg, from])
 
-  def handle_call({:get_and_update, _fun, keys}, _from, _state) when is_list( keys) do
-    {:stop, :TBD}
-  end
-
-  def handle_call({:update, _fun, keys}, _from, _state) when is_list( keys) do
-    {:stop, :TBD}
+    {:noreply, {map,extra}}
   end
 
 
