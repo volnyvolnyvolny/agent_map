@@ -39,10 +39,14 @@ defmodule MultiAgent.Worker do
   end
 
 
-  # get case if cannot create more threads
-  defp process({:get, fun, from, expired}, threads_num) when threads_num > 1 do
+  defp call?( expires) do
     late_call = Process.get(:'$late_call')
-    if Callback.call?( expired, late_call) do
+    Callback.call?( expires, late_call)
+  end
+
+  # get case if cannot create more threads
+  defp process({:get, fun, from, expires}, threads_num) when threads_num > 1 do
+    if call?( expires) do
       worker = self()
       Task.start_link( fn ->
         execute(:get, fun, from)
@@ -55,11 +59,10 @@ defmodule MultiAgent.Worker do
   end
 
   # get_and_update, update
-  defp process({action, fun, from, expired}, threads_num) do
-    late_call = Process.get(:'$late_call')
-    if Callback.call?( expired, late_call) do
-      execute( action, fun, from)
-    end
+  defp process({action, fun, from, expires}, threads_num) do
+    if call?( expires),
+      do: execute( action, fun, from)
+
     threads_num
   end
 
@@ -76,6 +79,7 @@ defmodule MultiAgent.Worker do
 
     process(:done, threads_num)
   end
+
 
   # is OK for numbers < 1000
   defp rand( to), do: rem( System.system_time, to)
@@ -103,8 +107,8 @@ defmodule MultiAgent.Worker do
 
     # selective receive
     receive do
-      {:!, message} ->
-        loop( true, wait, process( message, threads_num))
+      {:!, msg} ->
+        loop( true, wait, process( msg, threads_num))
     after 0 ->
       loop(:sub, wait, threads_num)
     end
@@ -113,10 +117,10 @@ defmodule MultiAgent.Worker do
   def loop( s_receive, wait, threads_num) do
     s_receive = (s_receive == :sub)
     receive do
-      {:!, message} ->
-        loop( s_receive, wait, process( message, threads_num))
-      message ->
-        loop( s_receive, wait, process( message, threads_num))
+      {:!, msg} ->
+        loop( s_receive, wait, process( msg, threads_num))
+      msg ->
+        loop( s_receive, wait, process( msg, threads_num))
 
       after wait ->
         send Process.get(:'$gen_server_pid'), {self(), :suicide?}
@@ -129,5 +133,4 @@ defmodule MultiAgent.Worker do
         end
     end
   end
-
 end
