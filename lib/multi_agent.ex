@@ -1,5 +1,8 @@
 defmodule MultiAgent do
 
+  alias MultiAgent.Callback
+
+
   @moduledoc """
   MultiAgent is a simple abstraction around **group** of states. Often in Elixir
   there is a need to share or store group of states that must be accessed from
@@ -149,7 +152,8 @@ defmodule MultiAgent do
   @type fun_arg( r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
 
-  alias MultiAgent.Callback
+  @enforce_keys [:link]
+  defstruct @enforce_keys
 
 
   @doc false
@@ -159,19 +163,6 @@ defmodule MultiAgent do
       start: {MultiAgent, :start_link, [funs_and_opts]}
     }
   end
-
-
-  # @doc """
-  # Extra state can be specified for `multiagent`.
-  # """
-  # def extra_state(), do: nil
-
-  # @doc """
-  # This callback would be executed each time state is change.
-  # It could be used for ex., for backing multiagent up with DETS.
-  # """
-  # @spec put_state( extra_state, key, state) :: :ok | :error
-  # def put_state(_extra_state,_key,_state), do: :ok
 
 
   @doc false
@@ -188,7 +179,6 @@ defmodule MultiAgent do
       end
 
       defoverridable child_spec: 1
-      # defoverridable child_spec: 1, put_state: 3, extra_state: 0
     end
   end
 
@@ -196,19 +186,74 @@ defmodule MultiAgent do
 
   # common for start_link and start
   defp separate( funs_and_opts) do
-    {opts, funs} = Enum.reverse( funs_and_opts)
-                   |> Enum.split_while( fn {_,v} -> not Callback.valid?( v) end)
+    {opts, funs} =
+      Enum.reverse( funs_and_opts) |>
+      Enum.split_while( fn {_,v} ->
+        not Callback.valid?( v)
+      end)
 
     {Enum.reverse( funs), opts}
   end
 
 
   defp check_opts( opts, keys) do
-    keys = Keyword.keys( opts) -- keys
-    unless Enum.empty?( keys) do
+    keys = Keyword.keys(opts)--keys
+    unless Enum.empty?(keys) do
       raise "Unexpected opts: #{keys}."
     end
   end
+
+
+  @doc """
+  Starts a `MultiAgent` via `start_link/1` function. `new/1` returns
+  `MultiAgent` **struct** that contains pid of the `MultiAgent`.
+
+  As the only argument, states keyword can be provided.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new( a: 42, b: 24)
+      iex> mag[:a]
+      42
+      iex> Enum.keys( mag)
+      [:a, :b]
+  """
+  def new( states) when is_list( states) do
+    states = Enum.map( states, fn {k,state} ->
+      {k, fn -> state end}
+    end)
+
+    {:ok, mag} = MultiAgent.start_link( states)
+    new( mag)
+  end
+
+
+  @doc """
+  Returns pid contained in the struct.
+
+  ## Examples
+
+      iex> {:ok, pid} = MultiAgent.start_link()
+      iex> ^pid = MultiAgent.pid( MultiAgent.new( pid))
+      true
+  """
+  def pid(%MultiAgent{pid: mag}), do: mag
+
+
+  @doc """
+  This is a simple syntax sugar defined as `%MultiAgent{pid: mag}`.
+
+  ## Examples
+
+      iex> {:ok, pid} = MultiAgent.start_link()
+      iex> mag = MultiAgent.new( pid)
+      iex> MultiAgent.init( mag, a: fn -> 1 end)
+      {:ok, 1}
+      iex> mag[:a]
+      1
+  """
+  def new( mag), do: %MultiAgent{pid: mag}
+
 
   @doc """
   Starts a multiagent linked to the current process with the given function.
