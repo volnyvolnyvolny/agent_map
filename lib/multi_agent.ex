@@ -446,28 +446,45 @@ defmodule MultiAgent do
                     timeout)
   end
 
-  # batch processing
-  defp batch_call( action, multiagent, funs_and_opts) do
-    {funs, opts} = separate( funs_and_opts)
-    check_opts( opts, [:timeout])
 
-    keys = Keyword.keys( funs)
+  @type action :: :get  | :get_and_update  | :update |
+                  :get! | :get_and_update! | :update!
+
+  @doc """
+  Syntax sugar for batch processing.
+
+  ## Examples
+
+  iex> {:ok, pid} = MultiAgent.start_link()
+  iex> MultiAgent.batch( pid, :get_and_update, alice: & &1, bob: & &1)
+
+  iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+  [nil, nil]
+  iex> MultiAgent.update( pid, alice: fn nil -> 42 end,
+  ...>                         bob:   fn nil -> 24 end)
+  :ok
+  iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+  [42, 24]
+  iex> MultiAgent.update( pid, alice: & &1-10, bob: & &1+10)
+  iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
+  [32, 34]
+  """
+  @spec batch( multiagent, action, timeout, [{key, fun_arg( state, any)} | {:timeout, timeout}]) :: [any | state]
+  def batch( multiagent, action, timeout \\ 5000, funs) do
+    keys = Keyword.keys( funs
+    values = Keyword.values( funs)
 
     fun = fn states ->
-      Keyword.values( funs)
-      |> Enum.zip( states)
-      |> Enum.map( fn {fun, state} ->
-           Task.start_link( Callback.run( fun, [state]))
-         end)
+      Enum.zip( values, states) |>
+      Enum.map( fn {fun, state} ->
+        Task.start_link( Callback.run( fun, [state]))
+      end)
     end
 
-    if action == :cast do
-      GenServer.cast( multiagent, {:update, {fun,keys}})
-    else
-      single_call( action, multiagent, {fun,keys}, opts[:timeout] || 5000)
-    end
+    single_call( action, multiagent, {fun,keys}, timeout)
   end
 
+  fast_get_and_update
 
   @doc """
   Gets the multiagent state with given key. The callback `fun` will be sent to
@@ -515,13 +532,14 @@ defmodule MultiAgent do
 
   @spec get( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get( multiagent, fun, keys, timeout) when is_list( keys) do
-    single_call(:get, multiagent, {fun, keys}, timeout)
+    GenServer.call( multiagent, {:get, fun, keys}, timeout)
   end
 
   @spec get( multiagent, key, fun_arg( state, a), timeout) :: a when a: var
   def get( multiagent, key, fun, timeout) do
     single_call(:get, multiagent, {key, fun}, timeout)
   end
+
 
   @doc """
   Version of `get/4` for batch processing. Be aware, that states for all keys
@@ -542,7 +560,7 @@ defmodule MultiAgent do
       [32, 34]
   """
   @spec get( multiagent, [{key, fun_arg( state, any)} | {:timeout, timeout}]) :: [any]
-  def get( multiagent, funs_and_timeout) do
+  def get( multiagent, timeout, funs_and_timeout) do
     batch_call(:get, multiagent, funs_and_timeout)
   end
 
@@ -567,7 +585,7 @@ defmodule MultiAgent do
   """
   def get!( multiagent, _, _, timeout \\ 5000)
 
-  @spec get!( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
+  @spec get_!( multiagent, fun_arg( [state], a), [key], timeout) :: a when a: var
   def get!( multiagent, fun, keys, timeout) when is_list( keys) do
     GenServer.call( multiagent, {{:get, :!}, {fun, keys}}, timeout)
   end
@@ -706,37 +724,13 @@ defmodule MultiAgent do
   @spec get_and_update( multiagent, fun_arg([state], {any, [state] | :pop}), [key], timeout)
         :: any
   def get_and_update( multiagent, fun, keys, timeout) when is_list( keys) do
-    single_call(:get_and_update, multiagent, {fun, keys}, timeout)
+    GenServer.call( multiagent, {:get_and_update, fun, keys}, timeout)
   end
 
   @spec get_and_update( multiagent, key, fun_arg( state, {a, state} | :pop), timeout)
         :: a | state when a: var
   def get_and_update( multiagent, key, fun, timeout) do
     single_call(:get_and_update, multiagent, {key, fun}, timeout)
-  end
-
-  @doc """
-  Version of `get_and_update/4` for use in batch processing. Be aware, that
-  states for all keys are locked until callback is executed (see
-  `get_and_update/4` for details).
-
-  ## Examples
-
-      iex> {:ok, pid} = MultiAgent.start_link()
-      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
-      [nil, nil]
-      iex> MultiAgent.update( pid, alice: fn nil -> 42 end,
-      ...>                         bob:   fn nil -> 24 end)
-      :ok
-      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
-      [42, 24]
-      iex> MultiAgent.update( pid, alice: & &1-10, bob: & &1+10)
-      iex> MultiAgent.get( pid, alice: & &1, bob: & &1)
-      [32, 34]
-  """
-  @spec get_and_update( multiagent, [{key, fun_arg( state, {any, state} | :pop)} | {:timeout, timeout}]) :: [any | state]
-  def get_and_update( multiagent, funs_and_timeout) do
-    batch_call(:get_and_update, multiagent, funs_and_timeout)
   end
 
 
@@ -783,22 +777,12 @@ defmodule MultiAgent do
 
   @spec update( multiagent, fun_arg( [state], [state]), [key], timeout) :: :ok
   def update( multiagent, fun, keys, timeout) when is_list( keys) do
-    single_call(:update, multiagent, {fun, keys}, timeout)
+    GenServer.call( multiagent, {:update, fun, keys}, timeout)
   end
 
   @spec update( multiagent, key, fun_arg( state, state), timeout) :: :ok
   def update( multiagent, key, fun, timeout) do
     single_call(:update, multiagent, {key, fun}, timeout)
-  end
-
-  @doc """
-  Version of `update/4` for use in batch processing. Be aware, that states for
-  all keys are locked until callback is executed. See `get_and_update/4` for
-  details and `get/2` for examples.
-  """
-  @spec update( multiagent, [{key, fun_arg( state, state)} | {:timeout, timeout}]) :: :ok
-  def update( multiagent, funs_and_timeout) do
-    batch_call(:update, multiagent, funs_and_timeout)
   end
 
 
@@ -824,15 +808,6 @@ defmodule MultiAgent do
     GenServer.cast( multiagent, {:cast, {key, fun}})
   end
 
-  @doc """
-  Version of `cast/3` for use in batch processing. Be aware, that states for all
-  involved keys are locked while callback is executed. See `update/2` for
-  details.
-  """
-  @spec cast( multiagent, [{key, fun_arg( state, state)}]) :: :ok
-  def cast( multiagent, funs) do
-    batch_call(:cast, multiagent, funs)
-  end
 
   @doc """
   Synchronously stops the multiagent with the given `reason`.

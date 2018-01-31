@@ -3,31 +3,123 @@ defmodule MultiAgent.Transaction do
 
   @compile {:inline, state: 2}
 
-  # schema:
-  # prepair → ask → collect → answer
+
+  import Enum, only: [uniq: 1]
+
+
+  # server:      prepair → ask → noreply
+  # transaction:               → collect → answer → reply
 
 
   # divide values to known and holded by workers
-  defp separate( map, keys) do
-    keys = Enum.uniq( keys)
+  defp divide( map, keys) do
+    keys = uniq keys
     map = Map.take( map, keys)
 
-    {workers, known}
-      = Enum.split_with( map, fn {_,state} ->
-          match?({:pid,_}, state)
-        end)
-
-    known = Enum.map( known, fn {key, {state,_,_}} ->
-              {key, parse( state)}
-            end)
-
     # nil's for unknown keys
-    known = Enum.into( keys--Map.keys( map), known, & {&1,nil})
-    workers = Enum.map workers, fn {:pid, pid} -> pid end
+    known = keys--Map.keys( map)
+            |> Enum.into(%{}, & {&1,nil})
 
-    {known, workers}
+    Enum.reduce( map, {known,%{}}, fn {key, state}, {ks,ws} ->
+      case state do
+        {:pid, pid} ->
+          {ks, Map.put( ws, key, pid)}
+        {state,_,_} ->
+          {Map.put( ks, key, parse( state)), ws}
+      end
+    end
   end
 
+  defp prepair({{:get, :!}, fun, keys, from}, map) do
+    {known, workers} = divide( map, keys)
+
+    # took states from workers dicts
+    known = Enum.into( workers, known, fn worker ->
+              dict = Process.info( worker, :dictionary)
+              {dict[:'$key'], {:server, dict[:'$state']}}
+            end)
+
+    {{known, %{}}, map} # know everything
+  end
+
+  defp prepair({:get, fun, keys, from}, map) do
+    {divide( map, keys), map}
+  end
+
+  defp prepair({action, fun, keys, from}, map) do
+    {known, workers} = separate( map, keys)
+
+    workers
+      = Enum.into( known, workers, fn {key,tuple} ->
+          {key, spawn_link( Worker, :loop, [self(), key, tuple])}
+        end)
+
+    {{known, workers}, map}
+  end
+
+
+  def callback( :get,_tr, state), do: state
+  def callback( act, tr, state) when act in [:get_and_update,
+                                             :get_and_update!] do
+    send tr, {self(), state}
+    receive do
+      {:state, state} -> {nil, state}
+      :id -> {nil, state}
+      :drop -> :pop
+    end
+  end
+
+  def callback( act, tr, state) when act in [:update, :update!] do
+    send tr, {self(), state}
+    receive do
+      {:state, state} -> state
+    end
+  end
+
+
+  defp ask({:get, :!},_workers,_transaction), do: ignore
+  defp ask(:get, workers, transaction) do
+    for worker <- workers do
+      send worker, {:get, & &1, trans_pid, :infinity}
+    end
+  end
+
+  defp ask({action, :!}, workers, trans) do
+    for worker <- workers do
+      send worker, {:!, {action, &callback( trans, &1), trans, :infinity}}
+    end
+  end
+
+  defp ask( action, workers, trans) do
+    for worker <- workers do
+      send worker, {action, &callback( trans, &1), trans, :infinity}
+    end
+  end
+
+
+  defp state( known, key) do
+    case known[key] do
+      {:server, state} -> state
+      {_from, state} -> state
+    end
+  end
+
+  defp collect( known, keys) do
+    loop = fn from, state ->
+             case keys--Map.keys( known) do
+               [] -> known
+               _ ->
+                 key = Process.info( from, :dictionary)[:'$key']
+                 known = Map.put( known, key, {from, state})
+                 collect( known, keys)
+             end
+           end
+
+    receive do
+      {_ref, {from, state}} -> loop.( from, state)
+      {from, state} -> loop.( from, state)
+    end
+  end
 
   defp reply( map, keys, :pop) do
     keys = Enum.uniq keys
@@ -75,111 +167,12 @@ defmodule MultiAgent.Transaction do
     :ok
   end
 
-
-  defp state( known, key) do
-    case known[key] do
-      {state} -> state
-      {_from, state} -> state
-    end
-  end
-
-
-  defp prepair({{:get, :!}, fun, keys, from}, map) do
-    {known, workers} = separate( map, keys)
-
-    # took state from workers dictionaries
-    known = Enum.into( workers, known, fn worker ->
-              {Process.info( worker, :dictionary)[:'$key'],
-               Process.info( worker, :dictionary)[:'$state']}
-            end)
-
-    {{known, %{}}, map}
-  end
-
-  defp prepair({action, fun, keys, from}, map) do
-    {known, workers} = separate( map, keys)
-
-    for <-
-  end
-
-  defp prepair({:get, fun, keys, from}, map) do
-    {known, workers} = separate( map, keys)
-
-
-    # took state from workers dictionaries
-    known = Enum.into( workers, known, fn worker ->
-              {Process.info( worker, :dictionary)[:'$key'],
-               Process.info( worker, :dictionary)[:'$state']}
-            end)
-
-    {{known, %{}}, map}
-  end
-
-
-  defp prepair( {action, fun, keys, from}, map) do
-    {known, workers} = separate( map, keys)
-
-  end
-
-  defp prepair( {action, fun, keys, from}, map) do
-    {known, workers} = separate( map, keys)
-  end
-
-
-  defp callback( transaction, state) do
-    send transaction, {self(), state}
-    receive do
-      {:state, state} -> {nil, state}
-       :id -> {nil, state}
-       :drop -> :pop
-    end
-  end
-
-
-  defp ask({:get, :!},_workers,_transaction), do: ignore
-  defp ask(:get, workers, transaction) do
-    for worker <- workers do
-      send worker, {:get, & &1, trans_pid, :infinity}
-    end
-  end
-
-  defp ask({action, :!}, workers, trans) do
-    for worker <- workers do
-      send worker, {:!, {action, &callback( trans, &1), trans, :infinity}}
-    end
-  end
-
-  defp ask( action, workers, trans) do
-    for worker <- workers do
-      send worker, {action, &callback( trans, &1), trans, :infinity}
-    end
-  end
-
-
-  defp collect( known, keys) do
-    loop = fn from, state ->
-             case keys--Map.keys( known) do
-               [] -> known
-               _ ->
-                 key = Process.info( from, :dictionary)[:'$key']
-                 known = Map.put( known, key, {from, state})
-                 collect( known, keys)
-             end
-           end
-
-    receive do
-      {_ref, {from, state}} -> loop.( from, state)
-      {from, state} -> loop.( from, state)
-    end
-  end
-
-
   defp action( {action,_fun,_keys,_from}), do: action
   defp action( {action,_fun,_keys}), do: action
 
   def run( msg, map) do
-    {{known, workers}, map} = prepair( msg, map)
-    t = Task.start_link( Transaction, :flow, [known, msg, from])
+
+    fire( action( msg, known, workers))
     ask( action( msg), workers, t)
   end
 
