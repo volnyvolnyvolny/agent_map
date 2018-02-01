@@ -1,9 +1,6 @@
 defmodule MultiAgent.Transaction do
   @moduledoc false
 
-  @compile {:inline, state: 2}
-
-
   import Enum, only: [uniq: 1]
 
 
@@ -27,7 +24,7 @@ defmodule MultiAgent.Transaction do
         {state,_,_} ->
           {Map.put( ks, key, parse( state)), ws}
       end
-    end
+    end)
   end
 
   defp prepair({{:get, :!}, fun, keys, from}, map) do
@@ -77,26 +74,6 @@ defmodule MultiAgent.Transaction do
   end
 
 
-  defp ask({:get, :!},_workers,_transaction), do: ignore
-  defp ask(:get, workers, transaction) do
-    for worker <- workers do
-      send worker, {:get, & &1, trans_pid, :infinity}
-    end
-  end
-
-  defp ask({action, :!}, workers, trans) do
-    for worker <- workers do
-      send worker, {:!, {action, &callback( trans, &1), trans, :infinity}}
-    end
-  end
-
-  defp ask( action, workers, trans) do
-    for worker <- workers do
-      send worker, {action, &callback( trans, &1), trans, :infinity}
-    end
-  end
-
-
   defp state( known, key) do
     case known[key] do
       {:server, state} -> state
@@ -104,20 +81,18 @@ defmodule MultiAgent.Transaction do
     end
   end
 
-  defp collect( known, keys) do
-    loop = fn from, state ->
-             case keys--Map.keys( known) do
-               [] -> known
-               _ ->
-                 key = Process.info( from, :dictionary)[:'$key']
-                 known = Map.put( known, key, {from, state})
-                 collect( known, keys)
-             end
-           end
 
+  defp collect( known, []), do: known
+  defp collect( known, keys) do
     receive do
-      {_ref, {from, state}} -> loop.( from, state)
-      {from, state} -> loop.( from, state)
+      msg ->
+        {from, state} = case msg do
+                          {_ref, msg} -> msg
+                          msg -> msg
+                        end
+        key = Process.info( from, :dictionary)[:'$key']
+        known = Map.put( known, key, {from, state})
+        collect( known, keys--[key])
     end
   end
 
@@ -161,34 +136,57 @@ defmodule MultiAgent.Transaction do
     get
   end
 
-  defp answer(:update, map, keys, results) do
+  defp reply(:cast, {fun,keys}, workers, results) do
     replies = Enum.map results, & {:new_state, &1}
     reply( map, keys, replies)
     :ok
   end
 
-  defp action( {action,_fun,_keys,_from}), do: action
-  defp action( {action,_fun,_keys}), do: action
 
-  def run( msg, map) do
-
-    fire( action( msg, known, workers))
-    ask( action( msg), workers, t)
-  end
-
-  # transaction loop (:get, :get!, :get_and_update, :update, :cast)
-  defp flow( known, {action, fun, keys}, from) do
+  defp body( keys, fun, known) do
     known = collect( known, Enum.uniq keys)
-    states = Enum.map( keys, &state( known, &1))
-    results = Callback.run( fun, [states])
-
-    case action do
-      :get ->
-        GenServer.reply( from, results)
-      act when act in [:get_and_update, :update] ->
-        GenServer.reply( from, answer( act, map, keys, results))
-      :cast ->
-        answer(:update, map, keys, results)
-    end
+    states = Enum.map( keys, &known[&1])
+    Callback.run fun, [states]
   end
+
+
+  defp interpret(:get_and_update, states, :pop), do: states
+  defp interpret(:get_and_update,_states, {get,_}), do: get
+  defp interpret(:get_and_update, states, results) when is_list( results) do
+    unless length states == length results, do:
+      raise "get_and_update callback is malformed! " <>
+            "States and results lengths are not equal. See docs."
+
+    Enum.unzip( results) |> elem(0)
+  end
+
+
+  defp reply(:get, from, results), do: GenServer.reply from, results
+  defp reply(:get_and_update, from, {get,_}), do: GenServer.reply get
+  defp reply(:get_and_update, from, :pop) do
+    GenServer.OB
+  end
+  defp reply(:update, from,_results), do: GenServer.reply from, :ok
+
+
+
+  def flow({:cast, {fun,keys}}, {known,workers}) do
+    notify :cast, workers, body( keys, fun, known)
+  end
+
+  def flow({:get, {fun,keys}, from}, {known,_workers}) do
+    GenServer.reply( from, body( known, keys, fun))
+  end
+
+  def flow({:update, fks, from}, info) do
+    flow {:cast, fks}, info
+    GenServer.reply( from, :ok)
+  end
+
+  def flow({:get_and_update, fks, from}, info) do
+    results = body( keys, fun, known)
+    notify :get_and_update, workers, results
+    GenServer.reply( from, :ok)
+  end
+
 end

@@ -73,7 +73,7 @@ defmodule MultiAgent.Worker do
 
   defp process(:done, threads_num), do: inc(threads_num)
 
-  defp process(:done!, threads_num) do
+  defp process(:done_on_server, threads_num) do
     max_threads = Process.get(:'$max_threads')
     Process.put(:'$max_threads', max_threads+1)
 
