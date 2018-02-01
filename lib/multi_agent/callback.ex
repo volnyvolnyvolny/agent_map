@@ -55,12 +55,10 @@ defmodule MultiAgent.Callback do
   end
 
 
-  # run group of funs. Params are funs_with_ids and timeout 
+  # run group of funs. Params are funs_with_ids and timeout
   def safe_run( funs, timeout) do
-    keys = Keyword.keys( funs)
-
     Keyword.values( funs)
-    |> Enum.map( & Task.async( fn -> safe_run(&1) end))
+    |> Enum.map( &Task.async( fn -> safe_run(&1) end))
     |> Task.yield_many( timeout)
     |> Enum.map( fn {task, res} ->
          res || Task.shutdown( task, :brutal_kill)
@@ -70,7 +68,7 @@ defmodule MultiAgent.Callback do
          nil -> {:error, :timeout};
          exit -> {:error, exit}
        end)
-    |> Enum.zip( keys)
+    |> Enum.zip( Keyword.keys( funs))
     |> Enum.reduce( {:ok, %{}}, fn {r, k}, acc ->
          decorate( k, r, acc)
        end)
