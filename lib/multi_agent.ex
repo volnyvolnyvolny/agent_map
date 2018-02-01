@@ -855,6 +855,7 @@ defmodule MultiAgent do
   """
   @spec stop( multiagent, reason :: term, timeout) :: :ok
   def stop( multiagent, reason \\ :normal, timeout \\ :infinity) do
+    multiagent = pid( multiagent)
     GenServer.stop( multiagent, reason, timeout)
   end
 
