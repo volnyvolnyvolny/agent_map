@@ -74,13 +74,6 @@ defmodule MultiAgent.Transaction do
   end
 
 
-  defp state( known, key) do
-    case known[key] do
-      {:server, state} -> state
-      {_from, state} -> state
-    end
-  end
-
 
   defp collect( known, []), do: known
   defp collect( known, keys) do
@@ -171,22 +164,39 @@ defmodule MultiAgent.Transaction do
 
 
   def flow({:cast, {fun,keys}}, {known,workers}) do
-    notify :cast, workers, body( keys, fun, known)
-  end
+    {states,results} = body keys, fun, known
+    unless length states == length results do
+      raise "get_and_update callback is malformed! " <>
+            "States and results lengths are not equal. See docs."
+    end
 
-  def flow({:get, {fun,keys}, from}, {known,_workers}) do
-    GenServer.reply( from, body( known, keys, fun))
+    case  do
+      :drop -> 
+        for {worker,state}  <- Enum.zip( workers, results) do
+          send worker, {:new_state, state}
+        end
+    end
+    for {worker,state}  <- Enum.zip( workers, results) do
+      send worker, {:new_state, state}
+    end
   end
 
   def flow({:update, fks, from}, info) do
     flow {:cast, fks}, info
-    GenServer.reply( from, :ok)
+    GenServer.reply from, :ok
+  end
+
+  def flow({:get, {_fun,keys}, from}, {known,_workers}) do
+    {_,results} = body keys, fun, known
+    GenServer.reply from, result
   end
 
   def flow({:get_and_update, fks, from}, info) do
-    results = body( keys, fun, known)
-    notify :get_and_update, workers, results
-    GenServer.reply( from, :ok)
+    {states,results} = body( keys, fun, known)
+    case results do
+      {get,_} -> get
+      :pop -> state
+    end
   end
 
 end

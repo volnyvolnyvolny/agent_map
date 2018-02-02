@@ -71,6 +71,8 @@ defmodule MultiAgent.Worker do
     threads_num
   end
 
+  defp process(:die, threads_num), do: inc(threads_num)
+
   defp process(:done, threads_num), do: inc(threads_num)
 
   defp process(:done_on_server, threads_num) do
