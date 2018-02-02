@@ -71,7 +71,10 @@ defmodule MultiAgent.Worker do
     threads_num
   end
 
-  defp process(:die, threads_num), do: inc(threads_num)
+  defp process(:die, threads_num) do
+    Process.delete(:'$state')
+    threads_num
+  end
 
   defp process(:done, threads_num), do: inc(threads_num)
 

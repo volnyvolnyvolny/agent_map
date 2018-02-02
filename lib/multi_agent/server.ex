@@ -9,7 +9,7 @@ defmodule MultiAgent.Server do
   import Callback, only: [parse: 1]
 
   import Enum, only: [uniq: 1]
-  import Map, only: [put: 3, has_key?: 2]
+  import Map, only: [put: 3, has_key?: 2, delete: 2, get: 3]
 
   use GenServer
 
@@ -17,112 +17,96 @@ defmodule MultiAgent.Server do
   defp new_state( state \\ nil), do: {state, false, 5}
 
 
-  def init({funs, timeout}) do
-    with keys = Keyword.keys funs,
-         [] <- keys--uniq( keys),
-         {:ok, results} <- Callback.safe_run( funs, timeout) do
+  defp callback(:get, transaction, state) do
+    send t, {self(), state}
+  end
 
-      Enum.reduce( results, {:ok, %{}}, fn {key,s}, {:ok, map} ->
-        {:ok, put( map, key, new_state({:state,s}))}
-      end)
-    else
-      dup ->
-        {:stop, for key <- dup do {key, :already_exists} end}
-      {:error, reason} ->
-        {:stop, reason}
+  defp callback(:get_and_update, transaction, state) do
+    callback(:get, transaction, state)
+    callback(:update, transaction, state)
+  end
+
+  defp callback(:update, transaction, state) do
+    receive do
+      {:state, state} -> {nil, state}
+      :id -> {nil, state}
+      :drop -> :pop
     end
   end
+
 
 
   defp run_transaction( msg, map) do
     {{known, workers}, map} = Transaction.prepair msg, map
 
-    t = Task.start_link( Transaction, :flow, [msg, {known, workers}])
+    case elem msg, 0 do
+      {:get, :!} ->
+        t = Task.start_link( Transaction, :flow, [msg, {known, workers}])
+
+      {:get_and_update | :update | cast, :!} ->
+        callback = 
+          :get ->
+        callback = fn state ->
+          send t, {self(), state}
+          receive do
+            {:state, state} -> {nil, state}
+            :id -> {nil, state}
+            :drop -> :pop
+          end
+        end
+    
 
     Enum.reduce workers, %{}, fn worker, map ->
       msg = if act in [:cast, :cast!] do
               {act, key, &Transaction.callback( act, t, &1)}
             else
               {act, key, &Transaction.callback( act, t, &1), :infinity}
+        end
+
+        :get_and_update | :update | cast ->
+          callback = fn state ->
+            send t, {self(), state}
+            receive do
+              {:state, state} -> {nil, state}
+              :id -> {nil, state}
+              :drop -> :pop
             end
+          end
+        {:cast, :!} -> :ignore
+
+        :get ->
+           handle msg, 
+        :get_and_update ->
+        :update ->
+        :cast ->
+      end
+
+      def callback( :get,_tr, state), do: state
+      def callback( act, tr, state) when act in [:get_and_update,
+                                                 :get_and_update!] do
+      end
+
+      def callback( act, tr, state) when act in [:update, :update!] do
+        send tr, {self(), state}
+        receive do
+          {:state, state} -> state
+        end
+      end
+
       handle( msg act,)
     end
   end
 
 
+  # convert message used on server
+  # to the one expected on worker
+  defp format({{:cast,:!}, {_key,fun}}), do: {:!, {:cast, fun}}
+  defp format({:cast, {_key,fun}}), do: {:cast, fun}
+  defp format({{act,:!}, {_key,fun}, from, exp}), do: {:!, {act, fun, from, exp}}
+  defp format({act, {_key,fun}, from, exp}), do: {act, fun, from, exp}
+
   # →
-  defp handle( msg, key, map) do
-    state = Map.get( map, key, new_state())
-    {:noreply, %{map | key => handle( msg, state)}}
-  end
-
-  # :get, can create more threads (t_num > 1),
-  # so, spawn tasks directly from server.
-  defp handle({:get, {key,f}, from, _}, {s, late_call, t_num}) when t_num > 1 do
-    server = self()
-    Task.start_link( fn ->
-      state = parse( s)
-      GenServer.reply( from, Callback.run( f, [state]))
-
-      unless t_num == :infinity do
-        send server, {:done_on_server, key}
-      end
-    end)
-
-    {state, late_call, dec(t_num)}
-  end
-
-
-  # handle out of order calls
-  defp handle({{action,:!}, kf, from, expires}, tuple) do
-    handle({:!, {action, kf, from, expires}}, tuple)
-  end
-
-  defp handle({{:cast,:!}, kf}, tuple) do
-    handle({:!, {:cast, kf}}, tuple)
-  end
-
-
-  # forward message to existing worker
-  defp handle( msg, {:pid, worker}) do
-    {:pid, send( worker, msg) && worker}
-  end
-
-  # create worker and send him the message
-  defp handle({_act, {key,_fun},_from,_expires}=msg, tuple) do
-    worker = spawn_link( Worker, :loop, [self(), key, tuple])
-    handle msg, {:pid, worker}
-  end
-
-  defp handle({:cast, {key,_fun}}=msg, tuple) do
-    worker = spawn_link( Worker, :loop, [self(), key, tuple])
-    handle msg, {:pid, worker}
-  end
-
-
-
-  # init is a Map.put analog
-  def handle_call({:init, {key,f,opts}, expires}, from, map) do
-    if Map.has_key?( map, key) do
-      {:reply, {:error, {key, :already_exists}}, map}
-    else
-      fun = fn _ -> Callback.run( f) end
-      late_call = opts[:late_call] || false
-      threads_num = opts[:max_threads] || 5
-      map = put( map, key, {nil, late_call, threads_num})
-
-      handle {:update, {key,fun}, from, expires}, key, map
-    end
-  end
-
-  # transactions
-  def handle_call({act, {fun, keys}}=msg, from, map) when is_list( keys) do
-    msg = {act, {fun, keys}, from}
-    {:noreply, run_transaction( msg, map)}
-  end
-
-  # execute immediately
-  def handle_call({{:get, :!}, {key,fun}}, from, map) do
+  defp handle({{:get,:!}, {key,fun}, from}, map) do
     state = case map do
               %{^key => {:pid, worker}} ->
                 Process.info( worker, :dictionary)[:'$state']
@@ -138,12 +122,100 @@ defmodule MultiAgent.Server do
     {:noreply, map}
   end
 
+  defp handle({:get, {key,f}, from, _}=msg, map) do
+    case get map, key, new_state do
 
-  def handle_call({act, {key,f}, exp}=msg, from, map) do
-    msg = {act, {key,f}, from, exp}
-    handle msg, key, map
+      {:pid, worker} ->
+        send worker, format msg
+        {:noreply, map}
+
+      {state, late_call, t_num} when t_num > 1 ->
+
+        server = self
+        Task.start_link( fn ->
+          GenServer.reply from, Callback.run( f, [parse state])
+
+          unless t_num == :infinity do
+            send server, {:done_on_server, key}
+          end
+        end)
+
+        {:noreply, put( map, key, {state, late_call, dec(t_num)})}
+
+      tuple -> # max_threads forbids to spawn more Tasks
+        worker = spawn_link( Worker, :loop, [self(), key, tuple])
+
+        send worker, format msg
+        {:noreply, put( map, key, {:pid, worker})}
+    end
   end
 
+  defp handle( msg, map) do
+    {key,_} = elem msg, 1
+    msg = format msg
+
+    case get map, key, new_state do
+      {:pid, worker} ->
+        send worker, msg
+        {:noreply, map}
+
+      tuple ->
+        worker = spawn_link( Worker, :loop, [self, key, tuple])
+        send worker, msg
+        {:noreply, put( map, key, {:pid, worker})}
+    end
+  end
+
+  ##
+  ## GenServer callbacks
+  ##
+
+  def init({funs, timeout}) do
+    with keys = Keyword.keys funs,
+         [] <- keys--uniq( keys),
+         {:ok, results} <- Callback.safe_run( funs, timeout) do
+
+      Enum.reduce( results, {:ok, %{}}, fn {key,s}, {:ok, map} ->
+        {:ok, put( map, key, new_state {:state,s})}
+      end)
+    else
+      dup ->
+        {:stop, for key <- dup do {key, :already_exists} end}
+      {:error, reason} ->
+        {:stop, reason}
+    end
+  end
+
+
+  # init is a Map.put analog
+  def handle_call({:init, {key,f,opts}, expires}, from, map) do
+    if Map.has_key?( map, key) do
+      {:reply, {:error, {key, :already_exists}}, map}
+    else
+      fun = fn _ -> Callback.run( f) end
+      late_call = opts[:late_call] || false
+      threads_num = opts[:max_threads] || 5
+      map = put( map, key, {nil, late_call, threads_num})
+
+      handle {:update, {key,fun}, from, expires}, map
+    end
+  end
+
+  # transactions
+  def handle_call({act, {fun,keys}}=msg, from, map) when is_list( keys) do
+    msg = {act, {fun,keys}, from}
+    {:noreply, run_transaction( msg, map)}
+  end
+
+  # execute immediately
+  def handle_call({{:get,:!}, data}, from, map) do
+    handle {{:get,:!}, data, from}, map
+  end
+
+
+  def handle_call({act, data, exp}=msg, from, map) do
+    handle {act, data, from, exp}, map
+  end
 
   def handle_call(:keys, from, map) do
     keys = keys( map)
@@ -151,23 +223,15 @@ defmodule MultiAgent.Server do
     {:reply, keys, map}
   end
 
-  def handle_call( msg, from, map) do
-    super msg, from, map
-  end
+  def handle_call( msg, from, map), do: super msg, from, map
 
 
-
-  def handle_cast({act, {fun, keys}}=msg, map) when is_list( keys) do
+  def handle_cast({_,{_,keys}}=msg, map) when is_list( keys) do
     {:noreply, run_transaction( msg, map)}
   end
 
-  def handle_cast({act, {key,fun}}=msg, map) do
-    handle msg, key, map
-  end
-
-  def handle_cast( msg, state) do
-    super msg, state
-  end
+  def handle_cast( msg, map), do: handle msg, map
+  def handle_cast( msg, state), do: super msg, state
 
 
 #  defguardp is_state_changing( act) when act in [:get, :get_and_update, :update, :cast, :done_on_server]
@@ -196,6 +260,9 @@ defmodule MultiAgent.Server do
             %{^key => {:pid, worker}} ->
               send worker, {:!, :done_on_server}
               map
+
+            %{^key => {nil, late_call, 4}} ->
+              delete map, key
 
             %{^key => {state, late_call, t_num}} ->
               %{map | key => {state, late_call, inc(t_num)}}
@@ -229,10 +296,14 @@ defmodule MultiAgent.Server do
 
       send worker, :die!
 
-      max_threads = dict[:'$max_threads']
-      tuple = {state, late_call, max_threads-length( queue)}
-
-      {:noreply, %{map | key => tuple}}
+      case state do
+        {nil,_,_} ->
+          {:noreply, delete map, key}
+        _ ->
+          max_threads = dict[:'$max_threads']
+          tuple = {state, late_call, max_threads-length( queue)}
+          {:noreply, %{map | key => tuple}}
+      end
     else
       send worker, :continue
       {:noreply, map}

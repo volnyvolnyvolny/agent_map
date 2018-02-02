@@ -9,70 +9,16 @@ defmodule MultiAgent.Transaction do
 
 
   # divide values to known and holded by workers
-  defp divide( map, keys) do
+  def divide( map, keys) do
     keys = uniq keys
     map = Map.take( map, keys)
 
-    # nil's for unknown keys
-    known = keys--Map.keys( map)
-            |> Enum.into(%{}, & {&1,nil})
+    workers = for {:pid, worker} <- map, do: worker
+    known = for {key, {state,_,_}} <- map, into: %{}, do: {key, parse state}
+    nils = for key <- keys--Map.keys( map), into: %{}, do: {key, nil}
 
-    Enum.reduce( map, {known,%{}}, fn {key, state}, {ks,ws} ->
-      case state do
-        {:pid, pid} ->
-          {ks, Map.put( ws, key, pid)}
-        {state,_,_} ->
-          {Map.put( ks, key, parse( state)), ws}
-      end
-    end)
+    {Map.merge( known, nils), workers}
   end
-
-  defp prepair({{:get, :!}, fun, keys, from}, map) do
-    {known, workers} = divide( map, keys)
-
-    # took states from workers dicts
-    known = Enum.into( workers, known, fn worker ->
-              dict = Process.info( worker, :dictionary)
-              {dict[:'$key'], {:server, dict[:'$state']}}
-            end)
-
-    {{known, %{}}, map} # know everything
-  end
-
-  defp prepair({:get, fun, keys, from}, map) do
-    {divide( map, keys), map}
-  end
-
-  defp prepair({action, fun, keys, from}, map) do
-    {known, workers} = separate( map, keys)
-
-    workers
-      = Enum.into( known, workers, fn {key,tuple} ->
-          {key, spawn_link( Worker, :loop, [self(), key, tuple])}
-        end)
-
-    {{known, workers}, map}
-  end
-
-
-  def callback( :get,_tr, state), do: state
-  def callback( act, tr, state) when act in [:get_and_update,
-                                             :get_and_update!] do
-    send tr, {self(), state}
-    receive do
-      {:state, state} -> {nil, state}
-      :id -> {nil, state}
-      :drop -> :pop
-    end
-  end
-
-  def callback( act, tr, state) when act in [:update, :update!] do
-    send tr, {self(), state}
-    receive do
-      {:state, state} -> state
-    end
-  end
-
 
 
   defp collect( known, []), do: known
@@ -89,96 +35,184 @@ defmodule MultiAgent.Transaction do
     end
   end
 
-  defp reply( map, keys, :pop) do
-    keys = Enum.uniq keys
-    reply_workers( map, keys, List.duplicate(:drop_state, length keys))
-  end
 
-  defp reply( map, keys, replies) do
-    replies = Enum.zip( keys, replies)
-              |> Enum.uniq_by( fn {k,_} -> k end)
+  def run({{:get,:!}, {fun,keys}, from}, map) do
+    {known, workers} = divide map, keys
 
-    for {key, reply} <- replies do
-      {worker,_} = map[key]
-      send worker, reply
+    # took states from workers dicts
+    known = Enum.into( workers, known, fn worker ->
+      dict = Process.info( worker, :dictionary)
+      {dict[:'$key'], {:server, dict[:'$state']}}
+    end)
+
+    Task.start_link fn ->
+      states = Enum.map keys, &known[&1]
+      GenServer.reply from, Callback.run fun, [states]
     end
+    map
   end
 
 
-  defp answer(:get_and_update, map, keys, {get, replies}) do
-    reply( map, keys, replies)
-    get
-  end
+  def run({:get, {fun,keys}, from}=msg, map) do
+    {known, workers} = divide map, keys
 
-  defp answer(:get_and_update, map, keys, :pop) do
-    answer(:get_and_update, map, keys, List.duplicate(:pop, length keys))
-  end
-
-  defp answer(:get_and_update, map, keys, results) do
-    results = Enum.zip keys, results
-    {get, replies} = for {key,result} <- results do
-                       case result do
-                         :pop -> {map[key], :drop}
-                         :id -> {map[key], :id}
-                         {get,state} -> {get, {:state, state}}
-                       end
-                     end
-                     |> List.unzip()
-
-    reply( map, keys, replies)
-    get
-  end
-
-  defp reply(:cast, {fun,keys}, workers, results) do
-    replies = Enum.map results, & {:new_state, &1}
-    reply( map, keys, replies)
-    :ok
-  end
-
-
-  defp body( keys, fun, known) do
-    known = collect( known, Enum.uniq keys)
-    states = Enum.map( keys, &known[&1])
-    Callback.run fun, [states]
-  end
-
-
-  defp interpret(:get_and_update, states, :pop), do: states
-  defp interpret(:get_and_update,_states, {get,_}), do: get
-  defp interpret(:get_and_update, states, results) when is_list( results) do
-    unless length states == length results, do:
-      raise "get_and_update callback is malformed! " <>
-            "States and results lengths are not equal. See docs."
-
-    Enum.unzip( results) |> elem(0)
-  end
-
-
-  defp reply(:get, from, results), do: GenServer.reply from, results
-  defp reply(:get_and_update, from, {get,_}), do: GenServer.reply get
-  defp reply(:get_and_update, from, :pop) do
-    GenServer.OB
-  end
-  defp reply(:update, from,_results), do: GenServer.reply from, :ok
-
-
-
-  def flow({:cast, {fun,keys}}, {known,workers}) do
-    {states,results} = body keys, fun, known
-    unless length states == length results do
-      raise "get_and_update callback is malformed! " <>
-            "States and results lengths are not equal. See docs."
+    t = Task.start_link fn ->
+      known = collect known, Enum.uniq keys
+      states = Enum.map keys, &known[&1]
+      GenServer.reply from, Callback.run fun, [states]
     end
 
-    case  do
-      :drop -> 
-        for {worker,state}  <- Enum.zip( workers, results) do
-          send worker, {:new_state, state}
+    for worker <- workers do
+      dict = Process.info worker, :dictionary
+      send worker, {:get, {dict[:'$key'], & &1}, t, :infinity}
+    end
+    map
+  end
+
+
+  def run({{action,:!}, data, from}=msg, map) do
+    run msg, map, {action, :!}
+  end
+
+  def run({action,_,_}=msg, map) do
+    run msg, map, {action, nil}
+  end
+
+  def run({_, {fun,keys}, from}, map, {act,urgent}) when act in [:update, :cast] do
+    unless keys == Enum.uniq keys do
+      raise """
+            Expected uniq keys for changing transactions (update,
+            get_and_update or cast).
+            """
+            |> String.replace("\n", " ")
+    end
+
+    {known, workers} = divide map, keys
+
+    t = Task.start_link fn ->
+      known = collect known, Enum.uniq keys
+      states = Enum.map keys, &known[&1]
+      case Callback.run fun, [states] do
+        :pop ->
+          for worker <- workers, do: send worker, :die
+
+        results when length results == length keys ->
+          Enum.zip keys, results |>
+          Enum.uniq_by( fn {key,_} -> end)
+
+        _ -> raise """
+                   Transaction callback (#{act}) is malformed!
+                   Expected to be returned :pop or results list with
+                   length equal to the length of states. See docs."
+                   """
+                   |> String.replace("\n", " ")
+      end
+
+      if act == :update, do: GenServer.reply( from, :ok)
+    end
+
+
+    for worker <- workers do
+      callback = fn state ->
+        send t, {self, state}
+        receive do
+          new_state -> new_state
         end
+      end
+
+      send worker, {:cast, & &1, t, :infinity}
     end
-    for {worker,state}  <- Enum.zip( workers, results) do
-      send worker, {:new_state, state}
+
+
+    for {key,state} <- known do
+      callback = fn _ ->
+        receive do
+          new_state -> new_state
+        end
+      end
+
+      worker = spawn_link( Worker, :loop, [self, key, map[key]])
+      if urgent do
+        send worker, {:!, {:cast, {key, callback}}}
+      else
+        send worker, {:cast, {key, callback}}
+      end
+      {key, {:pid, worker}}
     end
+    |> Enum.into( map)
+  end
+
+
+  def run({_, {fun,keys}, from}, map, {:get_and_update,urgent}) do
+    unless keys == Enum.uniq keys do
+      raise """
+            Expected uniq keys for changing transactions (update,
+            get_and_update or cast).
+            """
+            |> String.replace("\n", " ")
+    end
+
+    {known, workers} = divide map, keys
+
+    t = Task.start_link fn ->
+      known = collect known, Enum.uniq keys
+      states = Enum.map keys, &known[&1]
+      case Callback.run fun, [states] do
+        :pop ->
+          for worker <- workers, do: send worker, :die
+
+        results when length results == length keys ->
+          Enum.zip keys, results |>
+          Enum.uniq_by( fn {key,_} -> end)
+
+        _ -> raise """
+                   Transaction callback (#{act}) is malformed!
+                   Expected to be returned :pop or results list with
+                   length equal to the length of states. See docs."
+                   """
+                   |> String.replace("\n", " ")
+      end
+
+
+
+      if act == :update, do: GenServer.reply( from, :ok)
+    end
+
+
+    for worker <- workers do
+      callback = fn state ->
+        send t, {self, state}
+        receive do
+          new_state -> new_state
+        end
+      end
+
+      send worker, {:cast, & &1, t, :infinity}
+    end
+
+
+    for {key,state} <- known do
+      callback = fn _ ->
+        receive do
+          new_state -> new_state
+        end
+      end
+
+      worker = spawn_link( Worker, :loop, [self, key, map[key]])
+      if urgent do
+        send worker, {:!, {:cast, {key, callback}}}
+      else
+        send worker, {:cast, {key, callback}}
+      end
+      {key, {:pid, worker}}
+    end
+    |> Enum.into( map)
+  end
+
+  def run({{:get,:!}, {fun,keys}, from}, known, workers) do
+  end
+
+  def flow({:cast, {fun,keys}}, known, workers) do
   end
 
   def flow({:update, fks, from}, info) do
