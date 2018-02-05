@@ -1,14 +1,21 @@
 defimpl Enumerable, for: MultiAgent do
 
-  defp pid(%MultiAgent{pid: mag}), do: mag
+  defp pid(%MultiAgent{link: mag}), do: mag
 
   def count( mag) do
     {:ok, GenServer.call( pid( mag), :count)}
   end
 
-  def member?( mag, elem) do
-    {:ok, GenServer.call( pid( mag), elem)}
+
+  def member?( mag, {key,state}) do
+    result = match? {:ok, ^state},
+                    MultiAgent.fetch( mag, key)
+    {:ok, result}
   end
+
+  def member?(_mag, _), do: {:ok, false}
+
+  def reduce(_a,_b,_c), do: IO.inspect(:TODO_REDUCE)
 
 
   # def reduce(_,       {:halt, acc}, _fun),   do: {:halted, acc}
@@ -17,7 +24,7 @@ defimpl Enumerable, for: MultiAgent do
   # def reduce([h | t], {:cont, acc}, fun),    do: reduce(t, fun.(h, acc), fun)
 
 
-  def slice( mag) do
+  def slice(_mag) do
     # map = GenServer.call( pid( mag), :map_copy)
     # slicing_fun = fn start, length ->
     #   Enum.reduce map, [], fn

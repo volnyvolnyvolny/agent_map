@@ -99,7 +99,7 @@ defmodule MultiAgent.Worker do
 
 
   # main
-  def loop( server, key, nil), do: loop server, key, new_state
+  def loop( server, key, nil), do: loop server, key, new_state()
 
   def loop( server, key, {state, late_call, threads_num}) do
     if state = Callback.parse( state),

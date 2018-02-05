@@ -1,6 +1,7 @@
 defmodule MultiAgent do
 
   alias MultiAgent.Callback
+  alias MultiAgent.Server
 
 
   @moduledoc """
@@ -185,7 +186,7 @@ defmodule MultiAgent do
 
   ## HELPERS ##
 
-  defp pid(%MultiAgent{pid: mag}), do: mag
+  defp pid(%__MODULE__{link: mag}), do: mag
   defp pid( mag), do: mag
 
 
@@ -294,14 +295,14 @@ defmodule MultiAgent do
       {key, fn -> state end}
     end
 
-    {:ok, mag} = MultiAgent.start_link states
+    {:ok, mag} = start_link states
     new mag
   end
   def new( enum), do: new( Map.new enum)
 
 
   @doc """
-  This is a simple syntax sugar defined as `%MultiAgent{pid: mag}`.
+  This is a simple syntax sugar defined as `%MultiAgent{link: mag}`.
 
   ## Examples
 
@@ -312,8 +313,8 @@ defmodule MultiAgent do
       iex> mag[:a]
       1
   """
-  def new(%MultiAgent{}=mag), do: mag
-  def new( mag), do: %MultiAgent{pid: GenServer.whereis( mag)}
+  def new(%__MODULE__{}=mag), do: mag
+  def new( mag), do: %__MODULE__{link: GenServer.whereis( mag)}
 
 
   @doc """
@@ -396,7 +397,7 @@ defmodule MultiAgent do
     {funs, opts} = separate( funs_and_opts)
     timeout = opts[:timeout] || 5000
     opts = Keyword.put( opts, :timeout, :infinity) # turn off global timeout
-    GenServer.start_link( MultiAgent.Server, {funs, timeout, nil}, opts)
+    GenServer.start_link Server, {funs, timeout, nil}, opts
   end
 
 
@@ -429,7 +430,7 @@ defmodule MultiAgent do
     {funs, opts} = separate( funs_and_opts)
     timeout = opts[:timeout] || 5000
     opts = Keyword.put( opts, :timeout, :infinity) # turn off global timeout
-    GenServer.start( MultiAgent.Server, {funs, timeout, nil}, opts)
+    GenServer.start Server, {funs, timeout, nil}, opts
   end
 
 
