@@ -1,7 +1,7 @@
 defmodule MultiAgent.Worker do
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1}
+  @compile {:inline, rand: 1, dec: 1, inc: 1, new_state: 1}
 
   alias MultiAgent.Callback
 
@@ -11,6 +11,9 @@ defmodule MultiAgent.Worker do
   def dec(x), do: x
   def inc(:infinity), do: :infinity
   def inc(x), do: x
+
+
+  def new_state( state \\ nil), do: {state, false, 5}
 
 
   defp execute(:get, fun, from) do
@@ -38,10 +41,18 @@ defmodule MultiAgent.Worker do
     Process.put(:'$state', Callback.run( fun, [state]))
   end
 
+  defp execute(:t, fun) do
+    state = Process.get :'$state'
+    case Callback.run fun, [state] do
+      :drop_state -> Process.delete :'$state'
+      :id -> :ignore
+      {:new_state, state} -> Process.put :'$state', state
+    end
+  end
 
   defp call?( expires) do
-    late_call = Process.get(:'$late_call')
-    Callback.call?( expires, late_call)
+    late_call = Process.get :'$late_call'
+    Callback.call? expires, late_call
   end
 
   # get case if cannot create more threads
@@ -49,7 +60,7 @@ defmodule MultiAgent.Worker do
     if call?( expires) do
       worker = self()
       Task.start_link( fn ->
-        execute(:get, fun, from)
+        execute :get, fun, from
         unless threads_num == :infinity do
           send worker, :done
         end
@@ -60,62 +71,62 @@ defmodule MultiAgent.Worker do
 
   # get_and_update, update
   defp process({action, fun, from, expires}, threads_num) do
-    if call?( expires),
-      do: execute( action, fun, from)
+    if call? expires do
+      execute action, fun, from
+    end
 
     threads_num
   end
 
-  defp process({:cast, fun}, threads_num) do
-    execute(:cast, fun)
+  defp process({action, fun}, threads_num) do
+    execute action, fun
     threads_num
   end
 
-  defp process(:die, threads_num) do
-    Process.delete(:'$state')
-    threads_num
-  end
 
   defp process(:done, threads_num), do: inc(threads_num)
 
   defp process(:done_on_server, threads_num) do
-    max_threads = Process.get(:'$max_threads')
-    Process.put(:'$max_threads', max_threads+1)
+    max_threads = Process.get :'$max_threads'
+    Process.put :'$max_threads', max_threads+1
 
-    process(:done, threads_num)
+    process :done, threads_num
   end
 
 
   # is OK for numbers < 1000
-  defp rand( to), do: rem( System.system_time, to)
+  defp rand( to), do: rem System.system_time, to
+
 
   # main
+  def loop( server, key, nil), do: loop server, key, new_state
+
   def loop( server, key, {state, late_call, threads_num}) do
     if state = Callback.parse( state),
-      do: Process.put(:'$state', state)
+      do: Process.put :'$state', state
     if late_call,
       do: Process.put(:'$late_call', true)
 
-    Process.put(:'$key', key)
-    Process.put(:'$max_threads', threads_num)
-    Process.put(:'$gen_server_pid', server)
+    Process.put :'$key', key
+    Process.put :'$max_threads', threads_num
+    Process.put :'$gen_server_pid', server
 
-    loop( true, @wait+rand(25), threads_num)
+    loop true, @wait+rand(25), threads_num
   end
 
 
   def loop( true, wait, threads_num) do
     if Process.info( self(), :message_queue_len) > 100 do
       # turn off selective receive
-      loop( false, wait, threads_num)
+      loop false, wait, threads_num
     end
 
     # selective receive
     receive do
       {:!, msg} ->
-        loop( true, wait, process( msg, threads_num))
+        loop true, wait, process( msg, threads_num)
     after 0 ->
-      loop(:sub, wait, threads_num)
+      loop :sub, wait, threads_num
     end
   end
 
@@ -123,9 +134,9 @@ defmodule MultiAgent.Worker do
     s_receive = (s_receive == :sub)
     receive do
       {:!, msg} ->
-        loop( s_receive, wait, process( msg, threads_num))
+        loop s_receive, wait, process( msg, threads_num)
       msg ->
-        loop( s_receive, wait, process( msg, threads_num))
+        loop s_receive, wait, process( msg, threads_num)
 
       after wait ->
         send Process.get(:'$gen_server_pid'), {self(), :suicide?}
@@ -133,7 +144,7 @@ defmodule MultiAgent.Worker do
           :continue ->
             # 1. next time wait a little bit longer (a few ms)
             # 2. use selective receive (maybe, again)
-            loop( true, wait+rand(5), threads_num)
+            loop true, wait+rand(5), threads_num
           :die! -> :bye
         end
     end

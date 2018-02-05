@@ -260,6 +260,18 @@ defmodule MultiAgent do
     end
   end
 
+  @doc """
+  Returns a new empty multiagent.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new
+      iex> Enum.empty? mag
+      true
+  """
+  @spec new :: multiagent
+  def new, do: new(%{})
+
 
   @doc """
   Starts a `MultiAgent` via `start_link/1` function. `new/1` returns
@@ -272,17 +284,20 @@ defmodule MultiAgent do
       iex> mag = MultiAgent.new( a: 42, b: 24)
       iex> mag[:a]
       42
-      iex> Enum.keys( mag)
+      iex> MultiAgent.keys mag
       [:a, :b]
   """
-  def new( states) when is_list( states) do
-    states = Enum.map( states, fn {k,state} ->
-      {k, fn -> state end}
-    end)
+  @spec new( Enumerable.t()) :: multiagent
+  def new( enumerable)
+  def new( %{} = states) when is_map( states) do
+    states = for {key, state} <- states do
+      {key, fn -> state end}
+    end
 
-    {:ok, mag} = MultiAgent.start_link( states)
-    new( mag)
+    {:ok, mag} = MultiAgent.start_link states
+    new mag
   end
+  def new( enum), do: new( Map.new enum)
 
 
   @doc """
@@ -299,6 +314,22 @@ defmodule MultiAgent do
   """
   def new(%MultiAgent{}=mag), do: mag
   def new( mag), do: %MultiAgent{pid: GenServer.whereis( mag)}
+
+
+  @doc """
+  Creates a multiagent from an `enumerable` via the given transformation
+  function. Duplicated keys are removed; the latest one prevails.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new([:a, :b], fn x -> {x, x} end)
+      iex> MultiAgent.take mag, [:a, :b]
+      %{a: :a, b: :b}
+  """
+  @spec new( Enumerable.t(), (term -> {key, value})) :: multiagent
+  def new( enumerable, transform) do
+    new Map.new( enumerable, transform)
+  end
 
 
   @doc """
@@ -880,7 +911,128 @@ defmodule MultiAgent do
   """
   @spec stop( multiagent, reason :: term, timeout) :: :ok
   def stop( multiagent, reason \\ :normal, timeout \\ :infinity) do
-    GenServer.stop( pid( multiagent), reason, timeout)
+    GenServer.stop pid( multiagent), reason, timeout
+  end
+
+
+  @doc """
+  Fetches the value for a specific `key` in the given `multiagent`.
+
+  If `multiagent` contains the given `key` with value value, then `{:ok, value}`
+  is returned. If `map` doesn’t contain `key`, `:error` is returned.
+
+  Examples
+
+      iex> mag = MultiAgent.new(a: 1)
+      iex> MultiAgent.fetch( mag, :a)
+      {:ok, 1}
+      iex> MultiAgent.fetch( mag, :b)
+      :error
+  """
+  @spec fetch( multiagent, key) :: {:ok, state} | :error
+  def fetch( multiagent, key) do
+    GenServer.call pid( multiagent), {:fetch, key}
+  end
+
+  @doc """
+  Returns whether the given `key` exists in the given `multimap`.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new( a: 1)
+      iex> MultiAgent.has_key?( mag, :a)
+      true
+      iex> MultiAgent.has_key?( mag, :b)
+      false
+  """
+  @spec has_key?( multiagent, key) :: boolean
+  def has_key?( multiagent, key) do
+    GenServer.call( pid( multiagent), {:has_key?, key})
+  end
+
+
+  @doc """
+  Fetches the value for a specific `key` in the given `multiagent`, erroring out
+  if `multiagent` doesn't contain `key`. If `multiagent` contains the given
+  `key`, the corresponding value is returned. If `multiagent` doesn't contain
+  `key`, a `KeyError` exception is raised.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new( a: 1)
+      iex> MultiAgent.fetch!( mag, :a)
+      1
+      iex> MultiAgent.fetch!( mag, :b)
+      ** (KeyError) key not found in multiagent
+  """
+  @spec fetch!( multiagent, key) :: state | no_return
+  def fetch!( multiagent, key) do
+    case GenServer.call pid( multiagent), {:fetch, key} do
+      {:ok, state} -> state
+      :error -> raise KeyError, message: "key not found in multiagent"
+    end
+  end
+
+
+  @doc """
+
+  Returns a `Map` with all the key-value pairs in `multiagent` where the key is
+  in `keys`. If `keys` contains keys that are not in `multimap`, they're simply
+  ignored.
+
+  ## Examples
+      iex> mag = MultiAgent.new( a: 1, b: 2, c: 3)
+      iex> MultiAgent.take( mag, [:a, :c, :e])
+      %{a: 1, c: 3}
+  """
+  @spec take( multiagent, Enumerable.t()) :: map
+  def take( multiagent, keys) do
+    GenServer.call pid( multiagent), {:take, keys}
+  end
+
+
+  @doc """
+  Deletes the entry in `multiagent` for a specific `key`. If the `key` does not
+  exist, returns `multiagent` unchanged.
+
+  Syntax sugar to `get_and_update( multiagent, key, fn _ -> :pop end, :!)`.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new( a: 1, b: 2)
+      iex> MultiAgent.delete mag, :a
+      iex> MultiAgent.take mag, [:a, :b]
+      %{b: 2}
+      iex> MultiAgent.delete mag, :a
+      iex> MultiAgent.take mag, [:a, :b]
+      %{b: 2}
+  """
+  @spec delete( multiagent, key) :: multiagent
+  def delete( multiagent, key) do
+    get_and_update( multiagent, key, fn _ -> :pop end, :!)
+    multiagent
+  end
+
+
+  @doc """
+  Drops the given `keys` from `multiagent`. If `keys` contains keys that are not
+  in `multiagent`, they're simply ignored.
+
+  Syntax sugar to transaction call
+
+      get_and_update( multiagent, fn _ -> :pop end, keys, :!)
+
+  ## Examples
+
+      iex> mag = MultiAgent.new( a: 1, b: 2, c: 3)
+      iex> MultiAgent.drop mag, [:b, :d]
+      iex> MultiAgent.keys mag
+      [:a, :c]
+  """
+  @spec drop( multiagent, Enumerable.t()) :: multiagent
+  def drop( multiagent, keys) do
+    get_and_update( multiagent, fn _ -> :pop end, keys, :!)
+    multiagent
   end
 
 end
