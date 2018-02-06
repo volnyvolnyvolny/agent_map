@@ -1,21 +1,27 @@
 defmodule MultiAgent.Transaction do
   @moduledoc false
 
+  alias MultiAgent.Callback
+
+
   import Enum, only: [uniq: 1]
-  import Map, only: [take: 2, keys: 1, put: 3]
+  import Map, only: [keys: 1]
   import Callback, only: [parse: 1]
 
 
   def divide( map, keys) do
-    keys = uniq keys
-    Enum.reduce keys, {%{}, %{}}, fn key, {known, workers} ->
-      case map[key] do
-        nil -> {put( known, key, nil), workers}
-        {state,_,_} -> {put( known, key, parse state), workers}
-        {:pid, worker} -> {known, put( workers, key, worker)}
+    Enum.reduce uniq(keys), {%{}, %{}}, fn key, {known, workers} ->
+      case map do
+        %{^key => {state,_,_}} ->
+          {known |> Map.put(key, parse state), workers}
+        %{^key => {:pid, worker}} ->
+          {known, workers |> Map.put(key, worker)}
+        _ ->
+          {known |> Map.put(key, nil), workers}
       end
     end
   end
+
 
   defp collect( known, keys), do: _collect( known, (uniq keys)--keys known)
 
@@ -23,17 +29,15 @@ defmodule MultiAgent.Transaction do
   defp _collect( known, keys) do
     receive do
       msg ->
-        msg = case msg do
-                {_ref, msg} -> msg
-                msg         -> msg
-              end
-
-        {from, state} = msg
+        {from, state} = case msg do
+          {_ref, msg} -> msg
+          msg         -> msg
+        end
 
         {:dictionary, dict} =
           Process.info( from, :dictionary)
         key = dict[:'$key']
-        known = put known, key, state
+        known = Map.put known, key, state
        _collect( known, keys--[key])
     end
   end
@@ -45,50 +49,49 @@ defmodule MultiAgent.Transaction do
     end
   end
 
-  defp send_rec( t, state) do
-    send t, {self, state}
-    rec
-  end
 
-
-
-  def run({{:get,:!}, {fun,keys}, from}=msg, map) do
-    {known, workers} = divide map, uniq( keys)
+  def run({:!, {:get, {_,keys},_}}=msg, map) do
+    {known, workers} = divide map, uniq keys
 
     known =
       for {key, worker} <- workers, into: known do
         {:dictionary, dict} =
-          Process.info( worker, :dictionary)
+           Process.info worker, :dictionary
+
         {key, dict[:'$state']}
       end
 
-    Task.start_link fn -> process msg, known end
+    Task.start_link fn ->
+      process msg, known
+    end
     map
   end
 
-
-  def run({:get, {fun,keys}, from}=msg, map) do
+  def run({:get, {_,keys}, _}=msg, map) do
     {known, workers} = divide map, keys
 
-    t = Task.start_link fn -> process msg, known end
+    tr = Task.start_link fn ->
+      process msg, known
+    end
 
     for {_key, worker} <- workers do
-      send worker, {:get, & &1, t, :infinity}
+      send worker, {:get, & &1, tr, :infinity}
     end
     map
   end
 
 
-  def run({{action,:!}, data, from}=msg, map) do
+  def run({:!, msg}=msg, map) do
     run msg, map, :!
   end
 
-  def run({action,_,_}=msg, map) do
+  def run( msg, map) do
     run msg, map, nil
   end
 
+  def run( msg, map, urgent) do
+    {_, keys} = elem msg, 1
 
-  def run({_, {_,keys},_from}=msg, map, urgent) do
     unless keys == uniq keys do
       raise """
             Expected uniq keys for changing transactions (update,
@@ -101,36 +104,36 @@ defmodule MultiAgent.Transaction do
 
     rec_workers =
       for key <- keys( known), into: workers do
-        worker = spawn_link Worker, :loop, [self, key, map[key]]
-        send worker, {:t, fn _ -> rec end}
+        worker = spawn_link Worker, :loop, [self(), key, map[key]]
+        send worker, {:t, fn _ -> rec() end}
         {key, worker}
       end
 
-    t = Task.start_link fn ->
+    tr = Task.start_link fn ->
       process msg, known, rec_workers
     end
 
-    for worker <- workers do
-      if urgent do
-        send worker, {:!, {:t, &send_rec( t, &1)}}
-      else
-        send worker, {:t, &send_rec( t, &1)}
-      end
+    send_rec = fn state ->
+      send tr, {self(), state}
+      rec()
     end
+
+    for w <- workers, !urgent, do: send w, {:t, send_rec}
+    for w <- workers,  urgent, do: send w, {:!, {:t, send_rec}}
+    map
   end
 
 
-  def process({{:get,:!}, {fun,keys}, from}, known) do
-    states = Enum.map keys, &known[&1]
+  def process({:!, {:get, {fun,keys}, from}}, known) do
+    states = for key <- keys, do: known[key]
     GenServer.reply from, Callback.run( fun, [states])
   end
 
-  def process({:get, {fun,keys}, from}, known) do
-    known = collect known, keys
-    process {{:get,:!}, {fun,keys}, from}, known
+  def process({:get, {_,keys}, _}=msg, known) do
+    process {:!, msg}, collect( known, keys)
   end
 
-  def process({a, {fun,keys}}, known, workers) when a in [:cast, {:cast,:!}] do
+  def process({:cast, {fun,keys}}, known, workers) do
     known = collect known, keys
     states = for key <- keys, do: known[key]
 
@@ -140,25 +143,22 @@ defmodule MultiAgent.Transaction do
           send worker, :drop_state
         end
 
-      results when length results == length keys ->
+      results when length( results) == length( keys) ->
         for {key, state} <- Enum.zip keys, results do
           send workers[key], {:new_state, state}
         end
 
-      _ -> raise """
-                 Transaction callback is malformed!
-                 Expected to be returned :pop or a list with a
-                 new state for every key involved. See docs."
-                 """
-                 |> String.replace("\n", " ")
+      _ ->
+        raise """
+              Transaction callback is malformed!
+              Expected to be returned :pop or a list with a
+              new state for every key involved. See docs for hint."
+              """
+              |> String.replace("\n", " ")
     end
   end
 
   # drop urgent sign
-  def process({{act,:!}, data, from}, known, workers) do
-    process({act, data, from}, known, workers)
-  end
-
   def process({:update, {fun,keys}, from}, known, workers) do
     process {:cast, {fun,keys}}, known, workers
     GenServer.reply from, :ok
@@ -173,23 +173,23 @@ defmodule MultiAgent.Transaction do
         for {_,worker} <- workers, do: send worker, :drop_state
         states
 
-      {get, states} when length states = length keys ->
-        for {key, state} <- Enum.zip keys, results do
+      {get, states} when length( states) == length( keys) ->
+        for {key, state} <- Enum.zip keys, states do
           send workers[key], {:new_state, state}
         end
         get
 
-      results when length results == length keys ->
+      results when length( results) == length( keys) ->
         for {key, state, result} <- Enum.zip [keys, states, results] do
           case result do
             {get, state} ->
-              send worker[key], {:new_state, state}
+              send workers[key], {:new_state, state}
               get
             :pop ->
-              send worker[key], :drop_state
+              send workers[key], :drop_state
               state
             :id ->
-              send worker[key], :id
+              send workers[key], :id
               state
           end
         end
@@ -202,7 +202,7 @@ defmodule MultiAgent.Transaction do
                  """
                  |> String.replace("\n", " ")
     end
-    |> GenServer.reply( from, &1).()
+    |> (&GenServer.reply from, &1).()
   end
 
 end

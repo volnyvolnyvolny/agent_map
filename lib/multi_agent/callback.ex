@@ -23,16 +23,13 @@ defmodule MultiAgent.Callback do
   # {Module, fun, args}? The second argument is the arity of result
   # function after arguments apply.
   def valid?( fun, arity \\ 0)
-
-  def valid?( {module, fun, args}, arity) when is_atom( module) do
-    valid?( {fun, args}, arity)
+  def valid?({module, fun, args}, arity) when is_atom( module) do
+    valid? {fun, args}, arity
   end
-
-  def valid?( {fun, args}, arity) when is_list( args) do
-    valid?( fun, length( args)+arity)
+  def valid?({fun, args}, arity) when is_list( args) do
+    valid? fun, length( args)+arity
   end
-
-  def valid?( fun, arity), do: is_function( fun, arity)
+  def valid?( fun, arity), do: is_function fun, arity
 
 
   # Run `fun_arg`.
@@ -47,12 +44,6 @@ defmodule MultiAgent.Callback do
   defp decorate( key, {:error, reason}, {:ok, _}), do: {:error, [{key, reason}]}
   defp decorate( key, {:error, reason}, {:error, errs}), do: {:error, errs++[{key, reason}]}
   defp decorate( _, {:ok, _}, errors), do: errors
-
-
-  def call?(:infinity, _), do: true
-  def call?( expired, late_call) do
-    late_call || System.system_time < expired
-  end
 
 
   # run group of funs. Params are funs_with_ids and timeout
