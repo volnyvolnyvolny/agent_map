@@ -1,7 +1,7 @@
 defmodule MultiAgent.Server do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Worker, Transaction}
+  alias MultiAgent.{Callback, Worker, Transaction, Req}
 
   import Worker, only: [inc: 1, dec: 1]
   import Callback, only: [parse: 1]
@@ -17,12 +17,6 @@ defmodule MultiAgent.Server do
     {key,_} = elem msg, 1
     key
   end
-
-
-  defp form( {:!, msg}, from), do: {:!, form( msg, from)}
-  defp form( {fun, keys}, from), do: {fun, keys, from}
-#  defp form( {act, data}, from), do: {act, data, from}
-  defp form( {act, data, exp_or_default}, from), do: {act, data, from, exp_or_default}
 
 
   defp fetch( map, key) do
@@ -46,66 +40,6 @@ defmodule MultiAgent.Server do
     end
   end
 
-
-  # →
-  defp handle({:!, {:get, {key,fun}, from}}, map) do
-    Task.start_link fn ->
-      GenServer.reply from, Callback.run( fun, [get( map, key)])
-    end
-
-    {:noreply, map}
-  end
-
-  defp handle({:get, {key,fun}, from, _}=msg, map) do
-    case map[key] do
-
-      {:pid, worker} ->
-        send worker, msg
-        {:noreply, map}
-
-      {state,_late_call, t_num}=tuple when t_num > 1 -> # no need to check expires value
-        server = self()
-        Task.start_link fn ->
-          GenServer.reply from, Callback.run( fun, [parse state])
-
-          unless t_num == :infinity do
-            send server, {:done_on_server, key}
-          end
-        end
-
-        {:noreply, put( map, key, dec(tuple))}
-
-      nil -> # no such key
-        server = self()
-        Task.start_link( fn ->
-          GenServer.reply from, Callback.run( fun, [nil])
-          send server, {:done_on_server, key}
-        end)
-
-        {:noreply, put( map, key, Worker.new_state())}
-
-      {_,_,_}=tuple -> # max_threads forbids to spawn more Task's
-        worker = spawn_link Worker, :loop, [self(), key, tuple]
-        send worker, msg
-
-        {:noreply, put( map, key, {:pid, worker})}
-    end
-  end
-
-  defp handle( msg, map) do
-    key = key( msg)
-
-    case map[key] do
-      {:pid, worker} ->
-        send worker, msg
-        {:noreply, map}
-
-      tuple ->
-        worker = spawn_link Worker, :loop, [self(), key, tuple]
-        send worker, msg
-        {:noreply, put( map, key, {:pid, worker})}
-    end
-  end
 
   ##
   ## GenServer callbacks
@@ -177,22 +111,35 @@ defmodule MultiAgent.Server do
 
 
   # init is a Map.put analog
-  def handle_call({:init, {key,f,opts}, expires}, from, map) do
+  def handle_call(%Req{:action => :init}=req, from, map) do
+    {key, fun, opts} = req.data
+
     if Map.has_key? map, key do
       {:reply, {:error, {key, :already_exists}}, map}
     else
-      fun = fn _ -> Callback.run( f) end
-      msg = form {:update, {key,fun}, expires}, from
+      fun = fn _ -> Callback.run( fun) end
+      req = %Req{:action => :update,
+                 :data => {key, fun},
+                 :expires => req.expires,
+                 :from => from}
 
       late_call = opts[:late_call] || false
       threads_num = opts[:max_threads] || 5
       map = put map, key, {nil, late_call, threads_num}
 
-      handle msg, map
+      Req.handle req, map
     end
   end
 
   # transaction
+  def handle_call(%Req{}=req, from, map) do
+    Req.handle %{req | :from => from}
+  end
+
+  def handle_call(%Req{:data => {_f,keys}}=req, from, map) when is_list( keys) do
+    Req.handle %{req | :from => from}
+  end
+
   def handle_call({_act, {_fun,keys}}=msg, from, map) when is_list( keys) do
     {:noreply, Transaction.run( form( msg, from), map)}
   end

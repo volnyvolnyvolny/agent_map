@@ -29,43 +29,6 @@ defmodule MultiAgent.Worker do
   # is OK for numbers < 1000
   defp rand( to), do: rem System.system_time, to
 
-  #
-  # EXECUTE ACTION
-  #
-
-  defp execute(:get, fun, from) do
-    state = Process.get :'$state'
-    GenServer.reply from, Callback.run( fun, [state])
-  end
-
-  defp execute(:get_and_update, fun, from) do
-    case Callback.run fun, [Process.get :'$state'] do
-      {get, state} ->
-        Process.put :'$state', state
-        GenServer.reply from, get
-      :pop ->
-        GenServer.reply from, Process.delete :'$state'
-    end
-  end
-
-  defp execute(:update, fun, from) do
-    execute :cast, fun
-    GenServer.reply from, :ok
-  end
-
-  defp execute(:cast, fun) do
-    state = Process.get :'$state'
-    Process.put :'$state', Callback.run( fun, [state])
-  end
-
-  # transaction
-  defp execute(:t, fun) do
-    case Callback.run fun, [Process.get :'$state'] do
-      :drop_state -> Process.delete :'$state'
-      :id -> :ignore
-      {:new_state, state} -> Process.put :'$state', state
-    end
-  end
 
   #
   # PROCESS MSG
@@ -77,24 +40,57 @@ defmodule MultiAgent.Worker do
       t_limit = Process.get :'$threads_limit'
       if t_limit > 1 do
         worker = self()
+        state = Process.get :'$state'
+
         Task.start_link fn ->
-          execute :get, fun, from
+          result = Callback.run fun, [state]
+          GenServer.reply from, result
           unless t_limit == :infinity do
             send worker, :done
           end
         end
         dec :'$threads_limit'
+
       else
-        execute :get, fun, from
+        state = Process.get :'$state'
+        result = Callback.run fun, [state]
+        GenServer.reply from, result
       end
     end
   end
 
-  # get_and_update, update
-  defp process({action, fun, from, exp}) do
-    if call?(exp), do: execute( action, fun, from)
+  defp process({:get_and_update, fun, from, expires}) do
+    if call? expires do
+      case Callback.run fun, [Process.get :'$state'] do
+        {get, state} ->
+          Process.put :'$state', state
+          GenServer.reply from, get
+        :pop ->
+          GenServer.reply from, Process.delete :'$state'
+      end
+    end
   end
-  defp process({action, fun}), do: execute action, fun
+
+  defp process({:update, fun, from, expires}) do
+    if call? expires do
+      process {:cast, fun}
+      GenServer.reply from, :ok
+    end
+  end
+
+  defp process({:cast, fun}) do
+    state = Process.get :'$state'
+    Process.put :'$state', Callback.run( fun, [state])
+  end
+
+  # transaction handler
+  defp process({:t, fun}) do
+    case Callback.run fun, [Process.get :'$state'] do
+      :drop_state -> Process.delete :'$state'
+      :id -> :ignore
+      {:new_state, state} -> Process.put :'$state', state
+    end
+  end
 
   defp process(:done), do: inc :'$threads_limit'
   defp process(:done_on_server) do
