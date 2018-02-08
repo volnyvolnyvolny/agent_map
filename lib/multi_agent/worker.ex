@@ -84,13 +84,26 @@ defmodule MultiAgent.Worker do
   end
 
   # transaction handler
-  defp process({:t, fun}) do
-    case Callback.run fun, [Process.get :'$state'] do
+  # only send current state
+  defp process({:t_send, from}) do
+    send from, {self(), Process.get :'$state'}
+  end
+
+  # receive the new state (maybe)
+  defp process({:t_get, from}) do
+    receive do
       :drop_state -> Process.delete :'$state'
       :id -> :ignore
       {:new_state, state} -> Process.put :'$state', state
     end
   end
+
+  # send and receive
+  defp process({:t_send_and_get, from}) do
+    process {:t_send, from}
+    process {:t_get, from}
+  end
+
 
   defp process(:done), do: inc :'$threads_limit'
   defp process(:done_on_server) do
@@ -103,9 +116,9 @@ defmodule MultiAgent.Worker do
   def loop( server, key, nil), do: loop server, key, new_state()
   def loop( server, key, {state, late_call, threads_limit}) do
     if state = Callback.parse( state),
-      do: Process.put :'$state', state
+      do: Process.put(:'$state', state)
     if late_call,
-      do: Process.put :'$late_call', true
+      do: Process.put(:'$late_call', true)
 
     Process.put :'$key', key
     Process.put :'$max_threads', threads_limit
@@ -114,8 +127,8 @@ defmodule MultiAgent.Worker do
     Process.put :'$wait', @wait+rand(25)
     Process.put :'$selective_receive', true
 
-    # wait, threads_limit, selective_receive are process keys,
-    # so they are easy inspectable from outside of the process
+    # :'$wait', :'$threads_limit', :'$selective_receive' are process
+    # keys, so they are easy to inspect from outside of the process
     loop() # →
   end
 
@@ -154,10 +167,10 @@ defmodule MultiAgent.Worker do
         send Process.get(:'$gen_server'), {self(), :mayidie?}
         receive do
           :continue ->
-            Process.put :'$selective_receive', true
             # 1. next time wait a little bit longer (a few ms)
             Process.put :'$wait', wait+rand 5
             # 2. use selective receive (maybe, again)
+            Process.put :'$selective_receive', true
             loop true
 
           :die! -> :bye

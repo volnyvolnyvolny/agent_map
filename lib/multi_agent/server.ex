@@ -102,9 +102,9 @@ defmodule MultiAgent.Server do
 
   def handle_call({:!, {:get, key, default}},_from, map) do
     state = case fetch map, key do
-              {:ok, state} -> state
-              :error -> default
-            end
+      {:ok, state} -> state
+      :error -> default
+    end
 
     {:reply, state, map}
   end
@@ -131,51 +131,22 @@ defmodule MultiAgent.Server do
     end
   end
 
-  # transaction
-  def handle_call(%Req{}=req, from, map) do
+  def handle_call( req, from, map) do
     Req.handle %{req | :from => from}
   end
 
-  def handle_call(%Req{:data => {_f,keys}}=req, from, map) when is_list( keys) do
-    Req.handle %{req | :from => from}
-  end
-
-  def handle_call({_act, {_fun,keys}}=msg, from, map) when is_list( keys) do
-    {:noreply, Transaction.run( form( msg, from), map)}
-  end
-
-  def handle_call({:!, {_, {_,keys}}}=msg, from, map) when is_list( keys) do
-    {:noreply, Transaction.run( form( msg, from), map)}
-  end
-
-  # execute immediately
-  def handle_call( msg, from, map) do
-    handle form( msg, from), map
+  def handle_cast( req, from, map) do
+    Req.handle req
   end
 
 
-  def handle_cast({_,{_,keys}}=msg, map) when is_list( keys) do
-    {:noreply, Transaction.run( msg, map)}
+  defp changing_state?( key, {:'$gen_cast', req}), do: changing_state? key, req
+  defp changing_state?( key, {:'$gen_call', _, req}), do: changing_state? key, req
+  defp changing_state?( key, %Req{data: {_,keys}}=req) when is_list( keys) do
+    changing_state? req.action
+    && key in keys
   end
-
-  def handle_cast({_,{_,keys}}=msg, map) when is_list( keys) do
-    {:noreply, Transaction.run( msg, map)}
-  end
-
-  def handle_cast( msg, map), do: handle msg, map
-
-
-  defp changing_state?( key, {:'$gen_cast', msg}), do: changing_state? key, msg
-  defp changing_state?( key, {:'$gen_call', _, msg}), do: changing_state? key, msg
-
-  defp changing_state?( key, {act, {_,[key|_]}}), do: changing_state? act
-  defp changing_state?( key, {act, {fun,[_|keys]}}), do: changing_state? key, {act, {fun,keys}}
-  defp changing_state?( key, {act, {key,_}}), do: changing_state? act
-  defp changing_state?( key, {act, {key,_},_}), do: changing_state? act
-  defp changing_state?(_key,_msg), do: false
-
-
-  defp changing_state?({action, :!}), do: changing_state? action
+  defp changing_state?( key, %Req{data: {key,_}}=req), do: changing_state? req.action
 
   defp changing_state?({:!, msg}), do: changing_state? msg
   defp changing_state?({action,_,_,_}), do: changing_state? action

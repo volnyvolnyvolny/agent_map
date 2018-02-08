@@ -1,7 +1,7 @@
 defmodule MultiAgent.Transaction do
   @moduledoc false
 
-  alias MultiAgent.Callback
+  alias MultiAgent.{Callback, Req}
 
 
   import Enum, only: [uniq: 1]
@@ -43,54 +43,40 @@ defmodule MultiAgent.Transaction do
   end
 
 
-  defp rec do
-    receive do
-      msg -> msg
-    end
-  end
+  #
+  # on server
+  #
 
+  def run(%Req{action: :get, !: true}=req, map) do
+    {known, workers} = divide map, keys
 
-  def run({:!, {:get, {_,keys},_}}=msg, map) do
-    {known, workers} = divide map, uniq keys
-
-    known =
-      for {key, worker} <- workers, into: known do
-        {:dictionary, dict} =
-           Process.info worker, :dictionary
-
-        {key, dict[:'$state']}
-      end
+    known = for {key, w} <- workers, into: known do
+              {:dictionary, dict}
+                = Process.info w, :dictionary
+              {key, dict[:'$state']}
+            end
 
     Task.start_link fn ->
-      process msg, known
+      process req, known
     end
     map
   end
 
-  def run({:get, {_,keys}, _}=msg, map) do
+  def run(%Req{action: :get}=req, map) do
     {known, workers} = divide map, keys
 
     tr = Task.start_link fn ->
-      process msg, known
+      process req, known
     end
 
-    for {_key, worker} <- workers do
-      send worker, {:get, & &1, tr, :infinity}
+    for {_, worker} <- workers do
+      send worker, {:t_send, tr}
     end
     map
   end
 
-
-  def run({:!, msg}=msg, map) do
-    run msg, map, :!
-  end
-
-  def run( msg, map) do
-    run msg, map, nil
-  end
-
-  def run( msg, map, urgent) do
-    {_, keys} = elem msg, 1
+  def run( req, map) do
+    {_, keys} = req.data
 
     unless keys == uniq keys do
       raise """
@@ -105,35 +91,42 @@ defmodule MultiAgent.Transaction do
     rec_workers =
       for key <- keys( known), into: workers do
         worker = spawn_link Worker, :loop, [self(), key, map[key]]
-        send worker, {:t, fn _ -> rec() end}
+        send worker, :t_get
         {key, worker}
       end
 
     tr = Task.start_link fn ->
-      process msg, known, rec_workers
+      process req, known, rec_workers
     end
 
-    send_rec = fn state ->
-      send tr, {self(), state}
-      rec()
+    for w <- workers do
+      if req.urgent do
+        send w, {:!, {:t_send_and_get, tr}}
+      else
+        send w, {:t_send_and_get, tr}
+      end
     end
-
-    for w <- workers, !urgent, do: send w, {:t, send_rec}
-    for w <- workers,  urgent, do: send w, {:!, {:t, send_rec}}
     map
   end
 
 
-  def process({:!, {:get, {fun,keys}, from}}, known) do
+  #
+  # on separate process
+  #
+
+  def process(%Req{action: :get, !: true}=req, known) do
+    {fun, keys} = req.data
     states = for key <- keys, do: known[key]
     GenServer.reply from, Callback.run( fun, [states])
   end
 
-  def process({:get, {_,keys}, _}=msg, known) do
-    process {:!, msg}, collect( known, keys)
+  def process(%Req{action: :get}=req, known) do
+    {_, keys} = req.data
+    process %{req | :! => true}, collect( known, keys)
   end
 
-  def process({:cast, {fun,keys}}, known, workers) do
+  def process(%Req{action: :cast}=req, known, workers) do
+    {fun, keys} = req.data
     known = collect known, keys
     states = for key <- keys, do: known[key]
 
@@ -158,19 +151,20 @@ defmodule MultiAgent.Transaction do
     end
   end
 
-  # drop urgent sign
-  def process({:update, {fun,keys}, from}, known, workers) do
-    process {:cast, {fun,keys}}, known, workers
-    GenServer.reply from, :ok
+  def process(%Req{action: :update}=req, known, workers) do
+    process %{req | :action => :cast}, known, workers
+    GenServer.reply req.from, :ok
   end
 
-  def process({:get_and_update, {fun,keys}, from}, known, workers) do
+  def process(%Req{action: :get_and_update}=req, known, workers) do
+    {fun, keys} = req.data
     known = collect known, keys
     states = for key <- keys, do: known[key]
 
     case Callback.run fun, [states] do
       :pop ->
-        for {_,worker} <- workers, do: send worker, :drop_state
+        for {_,worker} <- workers,
+          do: send( worker, :drop_state)
         states
 
       {get, states} when length( states) == length( keys) ->
@@ -202,7 +196,7 @@ defmodule MultiAgent.Transaction do
                  """
                  |> String.replace("\n", " ")
     end
-    |> (&GenServer.reply from, &1).()
+    |> (&GenServer.reply req.from, &1).()
   end
 
 end
