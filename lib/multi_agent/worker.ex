@@ -90,7 +90,7 @@ defmodule MultiAgent.Worker do
   end
 
   # receive the new state (maybe)
-  defp process({:t_get, from}) do
+  defp process(:t_get) do
     receive do
       :drop_state -> Process.delete :'$state'
       :id -> :ignore

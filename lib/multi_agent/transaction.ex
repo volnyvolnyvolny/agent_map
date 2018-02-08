@@ -48,6 +48,7 @@ defmodule MultiAgent.Transaction do
   #
 
   def run(%Req{action: :get, !: true}=req, map) do
+    {_, keys} = req.data
     {known, workers} = divide map, keys
 
     known = for {key, w} <- workers, into: known do
@@ -63,6 +64,7 @@ defmodule MultiAgent.Transaction do
   end
 
   def run(%Req{action: :get}=req, map) do
+    {_,keys} = req.data
     {known, workers} = divide map, keys
 
     tr = Task.start_link fn ->
@@ -117,7 +119,7 @@ defmodule MultiAgent.Transaction do
   def process(%Req{action: :get, !: true}=req, known) do
     {fun, keys} = req.data
     states = for key <- keys, do: known[key]
-    GenServer.reply from, Callback.run( fun, [states])
+    GenServer.reply req.from, Callback.run( fun, [states])
   end
 
   def process(%Req{action: :get}=req, known) do

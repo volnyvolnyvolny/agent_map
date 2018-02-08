@@ -2,16 +2,17 @@ defmodule MultiAgent.Req do
   @moduledoc false
 
   alias MultiAgent.Callback
+#  alias MultiAgent.Req
 
   import Map, only: [put: 3, get: 2]
   import Callback, only: [parse: 1]
 
 
-  @defstruct [:action,  # :get, :get_and_update, :update, :cast, …
-              :data,
-              :from,
-              :expires, # date to which timeout is active
-              !: false] # is not urgent by default
+  defstruct [:action,  # :get, :get_and_update, :update, :cast, …
+             :data,
+             :from,
+             :expires, # date to which timeout is active
+             !: false] # is not urgent by default
 
 
   defp to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | :! => false}}

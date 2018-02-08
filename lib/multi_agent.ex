@@ -1,6 +1,6 @@
 defmodule MultiAgent do
 
-  alias MultiAgent.{Callback, Server}
+  alias MultiAgent.{Callback, Server, Req}
 
 
   @moduledoc """
@@ -197,35 +197,30 @@ defmodule MultiAgent do
   defp call( action, multiagent, data, timeout, urgent \\ nil)
 
   defp call(:get, mag, data, timeout, :!) do
-    GenServer.call pid( mag), {:!, {:get, data}}, timeout
+    GenServer.call pid( mag), %Req{!: true, action: :get, data: data}, timeout
   end
 
   defp call(:cast, mag, data, _, urgent) do
-    if urgent do
-      GenServer.cast pid( mag), {:!, {:cast, data}}
-    else
-      GenServer.cast pid( mag), {:cast, data}
-    end
+    GenServer.cast pid( mag), %Req{!: urgent, action: :cast, data: data}
   end
 
   defp call( action, mag, data, timeout, urgent) do
     expires = System.system_time +
               System.convert_time_unit( timeout, :millisecond, :native)
 
-    if urgent do
-      GenServer.call pid( mag), {:!, {action, data, expires}}, timeout
-    else
-      GenServer.call pid( mag), {action, data, expires}, timeout
-    end
+    GenServer.call pid( mag), %Req{!: urgent,
+                                   action: action,
+                                   data: data,
+                                   expires: expires}, timeout
   end
 
 
   defp batch( action, mag, funs, timeout, urgent) do
     results =
-      Keyword.values( funs)
-      |> Enum.map( &Task.async( fn ->
-           call( action, mag, &1, timeout, urgent)
-         end))
+      Keyword.values funs
+      |> Enum.map( &Task.async fn ->
+           call action, mag, &1, timeout, urgent
+         end)
       |> Task.yield_many( timeout)
       |> Enum.map( fn {task, res} ->
            case res || Task.shutdown( task, :brutal_kill) do
@@ -245,7 +240,7 @@ defmodule MultiAgent do
   # common for start_link and start
   defp separate( funs_and_opts) do
     {opts, funs} =
-      Enum.reverse( funs_and_opts) |>
+      Enum.reverse funs_and_opts |>
       Enum.split_while( fn {_,v} ->
         not Callback.valid?( v)
       end)
@@ -256,7 +251,7 @@ defmodule MultiAgent do
 
   defp check_opts( opts, keys) do
     keys = Keyword.keys(opts)--keys
-    unless Enum.empty?(keys) do
+    unless Enum.empty? keys do
       raise "Unexpected opts: #{keys}."
     end
   end
@@ -584,7 +579,7 @@ defmodule MultiAgent do
 
   # 5
   def get( multiagent, :!, fun, keys, timeout) when is_list( keys) do
-    GenServer.call multiagent, {:!, {:get, {fun, keys}}}, timeout
+    GenServer.call multiagent, %Req{!: true, action: get, data: {fun,keys}}, timeout
   end
   def get( multiagent, :!, key, fun, timeout) do
     call :get, multiagent, {key, fun}, timeout, :!

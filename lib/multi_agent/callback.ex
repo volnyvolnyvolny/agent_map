@@ -19,6 +19,9 @@ defmodule MultiAgent.Callback do
   end
 
 
+  defguard is_fun( f, n) when is_function(f, n) or
+                              is_function( elem(f, 0)) and is_list( elem(f, 1)) or
+                              is_atom( elem(f, 0)) and is_atom( elem(f, 1)) and is_list( elem(f, 2))
   # is function given in form of anonymous fun, {fun,args} or
   # {Module, fun, args}? The second argument is the arity of result
   # function after arguments apply.
