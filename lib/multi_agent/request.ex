@@ -1,15 +1,16 @@
 defmodule MultiAgent.Req do
   @moduledoc false
 
-  alias MultiAgent.Callback
-#  alias MultiAgent.Req
+  alias MultiAgent.{Callback, Worker, Transaction}
+
+  import Worker, only: [dec: 1]
+  import Callback, only: [parse: 1]
 
   import Map, only: [put: 3, get: 2]
-  import Callback, only: [parse: 1]
 
 
   defstruct [:action,  # :get, :get_and_update, :update, :cast, …
-             :data,
+             :data,    # {key, fun}, {fun, keys}, {key, fun, opts}
              :from,
              :expires, # date to which timeout is active
              !: false] # is not urgent by default
@@ -19,6 +20,21 @@ defmodule MultiAgent.Req do
   defp to_msg(%Req{from: nil}=req), do: {req.action, req.data}
   defp to_msg(%Req{expires: nil}=req), do: {req.action, req.data, req.from}
   defp to_msg( req), do: {req.action, req.data, req.from, req.expires}
+
+
+  def lookup( key, {:'$gen_call', _, req}), do: lookup key, req
+  def lookup( key, {:'$gen_cast', req}), do: lookup key, req
+  def lookup( key, %Req{data: {key,_}}=req) do
+    if req.action in [:get_and_update, :update, :cast], do: :update, else: 1
+  end
+  def lookup( key, %Req{data: {_,keys}}=req) when is_list( keys) do
+    if req.action in [:get_and_update, :update, :cast] do
+      :update
+    else
+      if key in keys, do: 1, else: 0
+    end
+  end
+  def lookup(_key,_req), do: 0
 
 
   # →

@@ -1,6 +1,14 @@
 defmodule MultiAgent do
 
+  @enforce_keys [:link]
+  defstruct @enforce_keys
+
+  @behaviour Access
+
   alias MultiAgent.{Callback, Server, Req}
+
+  import Callback, only: :macros
+#  require Callback
 
 
   @moduledoc """
@@ -152,10 +160,6 @@ defmodule MultiAgent do
   @type fun_arg( r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
 
-  @enforce_keys [:link]
-  defstruct @enforce_keys
-
-  @behaviour Access
 
 
   @doc false
@@ -193,35 +197,26 @@ defmodule MultiAgent do
 
   defguardp is_timeout(t) when t == :infinity or is_integer( t) and t >= 0
 
-
-  defp call( action, multiagent, data, timeout, urgent \\ nil)
-
-  defp call(:get, mag, data, timeout, :!) do
-    GenServer.call pid( mag), %Req{!: true, action: :get, data: data}, timeout
+  defp expires( timeout) do
+    System.system_time +
+    System.convert_time_unit( timeout, :millisecond, :native)
   end
 
-  defp call(:cast, mag, data, _, urgent) do
-    GenServer.cast pid( mag), %Req{!: urgent, action: :cast, data: data}
-  end
-
-  defp call( action, mag, data, timeout, urgent) do
-    expires = System.system_time +
-              System.convert_time_unit( timeout, :millisecond, :native)
-
-    GenServer.call pid( mag), %Req{!: urgent,
-                                   action: action,
-                                   data: data,
-                                   expires: expires}, timeout
-  end
-
-
-  defp batch( action, mag, funs, timeout, urgent) do
+  defp batch( mag, req, timeout) do
     results =
-      Keyword.values funs
+      Keyword.values req.data
       |> Enum.map( &Task.async fn ->
-           call action, mag, &1, timeout, urgent
+           req = %{req | data: &1}
+           case req do
+             %{action: :get, !: true} ->
+               GenServer.call mag, req, timeout
+             %{action: :cast} ->
+               GenServer.cast mag, req, timeout
+             _ ->
+               GenServer.call mag, %{req | expires: expires(timeout)}, timeout
+           end
          end)
-      |> Task.yield_many( timeout)
+      |> Task.yield_many(timeout)
       |> Enum.map( fn {task, res} ->
            case res || Task.shutdown( task, :brutal_kill) do
              {:ok, result} -> result
@@ -230,7 +225,7 @@ defmodule MultiAgent do
            end
          end)
 
-    if action in [:update, :cast], do: :ok, else: results
+    if req.action in [:update, :cast], do: :ok, else: results
   end
 
 
@@ -510,6 +505,10 @@ defmodule MultiAgent do
   end
 
 
+  defp fun?(fun, arity) when is_fun(fun, arity), do: true
+  defp fun?(_, _), do: false
+
+
   @doc """
   Gets the multiagent state with given key. The callback `fun` will be sent to
   the `multiagent`, which will add it to the execution queue for the given key.
@@ -575,74 +574,76 @@ defmodule MultiAgent do
       43
   """
   @spec get( multiagent, :!, fun_arg([state], a), [key], timeout) :: a when a: var
-  @spec get( multiagent, :!, key, fun_arg( state, a), timeout) :: a when a: var
+  @spec get( multiagent, :!, key, fun_arg(state, a), timeout) :: a when a: var
 
   # 5
-  def get( multiagent, :!, fun, keys, timeout) when is_list( keys) do
-    GenServer.call multiagent, %Req{!: true, action: get, data: {fun,keys}}, timeout
+  def get( multiagent, :!, fun, keys, timeout) when is_fun(fun, 1) and is_list(keys) do
+    mag = pid multiagent
+    GenServer.call mag, %Req{!: true, action: :get, data: {fun,keys}}, timeout
   end
-  def get( multiagent, :!, key, fun, timeout) do
-    call :get, multiagent, {key, fun}, timeout, :!
+  def get( multiagent, :!, key, fun, timeout) when is_fun(fun, 1) do
+    mag = pid multiagent
+    GenServer.call mag, %Req{!: true, action: :get, data: {key,fun}}, timeout
   end
 
 
   @doc """
   See `get/5`.
   """
-  @spec get( multiagent, :!, timeout, [{key, fun_arg( state, any)}]) :: [any]
+  @spec get( multiagent, :!, timeout, [{key, fun_arg(state, any)}]) :: [any]
   @spec get( multiagent, :!, fun_arg([state], a), [key]) :: a when a: var
-  @spec get( multiagent, :!, key, fun_arg( state, a)) :: a when a: var
+  @spec get( multiagent, :!, key, fun_arg(state, a)) :: a when a: var
 
   @spec get( multiagent, fun_arg([state], a), [key], timeout) :: a when a: var
-  @spec get( multiagent, key, fun_arg( state, a), timeout) :: a when a: var
+  @spec get( multiagent, key, fun_arg(state, a), timeout) :: a when a: var
 
   # 4
-  def get( multiagent, :!, timeout, funs) when is_timeout( timeout) and is_list( funs) do
-    batch :get, multiagent, funs, timeout, :!
+  def get( multiagent, :!, timeout, funs) when is_timeout(timeout) and is_list(funs) do
+    batch multiagent, %Req{!: true, action: :get, data: funs}, timeout
   end
-  def get( multiagent, :!, fun, keys) when is_list( keys) do
+  def get( multiagent, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
     get multiagent, :!, fun, keys, 5000
   end
-  def get( multiagent, :!, key, fun) do
+  def get( multiagent, :!, key, fun) when is_fun(fun,1) do
     get multiagent, :!, key, fun, 5000
   end
 
-  def get( multiagent, fun, keys, timeout) when is_list( keys) and is_timeout( timeout) do
-    call :get, multiagent, {fun, keys}, timeout, nil
+  def get( multiagent, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
+    mag = pid multiagent
+    GenServer.call mag, %Req{action: :get, data: {fun,keys}}, timeout
   end
-  def get( multiagent, key, fun, timeout) when is_timeout( timeout) do
-    call :get, multiagent, {key, fun}, timeout, nil
+  def get( multiagent, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
+    mag = pid multiagent
+    GenServer.call mag, %Req{action: :get, data: {key,fun}}, timeout
   end
 
   @spec get( multiagent, fun_arg([state], a), [key]) :: a when a: var
-  @spec get( multiagent, key, fun_arg( state, a)) :: a when a: var
-  @spec get( multiagent, :!, [{key, fun_arg( state, any)}]) :: [any]
-  @spec get( multiagent, timeout, [{key, fun_arg( state, any)}]) :: [any]
-  @spec get( multiagent, key, fun_arg( state, a) | a) :: state | a when a: var
+  @spec get( multiagent, key, fun_arg(state, a)) :: a when a: var
+  @spec get( multiagent, :!, [{key, fun_arg(state, any)}]) :: [any]
+  @spec get( multiagent, timeout, [{key, fun_arg(state, any)}]) :: [any]
+  @spec get( multiagent, key, fun_arg(state, a) | a) :: state | a when a: var
 
   # 3
   def get( multiagent, key, default)
 
-  def get( multiagent, :!, funs) when is_list( funs) do
+  def get( multiagent, :!, funs) when is_list(funs) do
     get multiagent, :!, 5000, funs
   end
-  def get( multiagent, timeout, funs) when is_timeout( timeout) and is_list( funs) do
-    batch :get, multiagent, funs, timeout, nil
+  def get( multiagent, timeout, funs) when is_timeout(timeout) and is_list(funs) do
+    batch multiagent, %Req{action: :get, data: funs}, timeout
   end
 
-  def get( multiagent, fun, keys) when is_list( keys) do
-    call :get, multiagent, {fun, keys}, 5000, nil
+  def get( multiagent, fun, keys) when is_fun(fun,1) and is_list(keys) do
+    get multiagent, fun, keys, 5000
   end
 
-  def get( multiagent, key, fun_or_default) do
-    if Callback.valid? fun_or_default, 1 do
-      fun = fun_or_default # ambiguity fix
-      call :get, multiagent, {key, fun}, 5000, nil
-    else
-      # Say hi to Access behaviour!
-      default = fun_or_default # ambiguity fix
-      GenServer.call multiagent, {:!, {:get, key, default}}
-    end
+  def get( multiagent, key, fun) when is_fun(fun,1) do
+    get multiagent, key, fun, 5000
+  end
+
+  # Say hi to Access behaviour!
+  def get( multiagent, key, default) do
+    GenServer.call multiagent, {:!, {:get, key, default}}
   end
 
 
@@ -665,13 +666,13 @@ defmodule MultiAgent do
       iex> MultiAgent.get( mag, alice: & &1, bob: & &1)
       [32, 34]
   """
-  @spec get( multiagent, [{key, fun_arg( state, any)}]) :: [any]
-  def get( multiagent, funs) when is_list( funs) do
-    if Enum.any? funs, & !Callback.valid?(&1, 1) do
+  @spec get( multiagent, [{key, fun_arg(state, any)}]) :: [any]
+  def get( multiagent, funs) when is_list(funs) do
+    if Enum.any? funs, fn {_k,f} -> !fun?(f,1) end do
       key = funs # ambiguity fix
       get multiagent, key, nil
     else
-      batch :get, multiagent, funs, 5000, nil
+      get multiagent, 5000, funs
     end
   end
 
@@ -797,21 +798,50 @@ defmodule MultiAgent do
       iex> get( mag, & &1, keys)
       [24, :_, nil, nil]
   """
-  @spec get_and_update( multiagent, :!, fun_arg([state], [{any, state} | :pop | :id]), [key], timeout)
-        :: [any | state]
-  @spec get_and_update( multiagent, :!, fun_arg([state], :pop), [key], timeout, :! | nil)
-        :: [state]
-  @spec get_and_update( multiagent, fun_arg([state], {any, [state] | :pop}), [key], timeout, :! | nil)
-        :: any
-  @spec get_and_update( multiagent, key, fun_arg( state, {a, state} | :pop), timeout, :!)
-        :: a | state when a: var
+  #5
+  @spec get_and_update( multiagent, :!, fun_arg([state], [{any, state} | :pop | :id]), [key], timeout) :: [any | state]
 
-  def get_and_update( multiagent, :!, fun, keys, timeout) when is_list( keys) and is_timeout( timeout) do
-    call :get_and_update, multiagent, {fun, keys}, timeout, urgent
+  @spec get_and_update( multiagent, :!, fun_arg([state], {any, [state] | :pop}), [key], timeout) :: any
+
+  @spec get_and_update( multiagent, :!, fun_arg([state], :pop), [key], timeout) :: [state]
+
+
+  def get_and_update( multiagent, :!, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
+    GenServer.call multiagent, %Req{!: true,
+                                    action: :get_and_update,
+                                    data: {fun,keys},
+                                    expires: expires(timeout)}, timeout
   end
 
-  def get_and_update( multiagent, key, fun, timeout, urgent) do
-    call :get_and_update, multiagent, {key, fun}, timeout, urgent
+  @spec get_and_update( multiagent, :!, key, fun_arg(state, {a, state} | :pop), timeout)
+        :: a | state when a: var
+  def get_and_update( multiagent, :!, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
+    GenServer.call multiagent, %Req{!: true,
+                                    action: :get_and_update,
+                                    data: {key,fun},
+                                    expires: expires(timeout)}, timeout
+  end
+
+  #4
+  @spec get_and_update( multiagent, fun_arg([state], [{any, state} | :pop | :id]), [key], timeout) :: [any | state]
+  @spec get_and_update( multiagent, fun_arg([state], {any, [state] | :pop}), [key], timeout) :: any
+  @spec get_and_update( multiagent, fun_arg([state], :pop), [key], timeout) :: [state]
+
+
+  def get_and_update( multiagent, :!, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
+    GenServer.call multiagent, %Req{!: true,
+                                    action: :get_and_update,
+                                    data: {fun,keys},
+                                    expires: expires(timeout)}, timeout
+  end
+
+  @spec get_and_update( multiagent, :!, key, fun_arg(state, {a, state} | :pop), timeout)
+        :: a | state when a: var
+  def get_and_update( multiagent, :!, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
+    GenServer.call multiagent, %Req{!: true,
+                                    action: :get_and_update,
+                                    data: {key,fun},
+                                    expires: expires(timeout)}, timeout
   end
 
 
@@ -820,13 +850,30 @@ defmodule MultiAgent do
   `get_and_update/5`, urgent (`:!`) mark can be provided to make out of turn
   call. Works the same as `get/4`, `update/4`.
   """
-  @spec get_and_update( multiagent, timeout, :! | nil, [{key, fun_arg( state, :pop | {any, state})}])
+  @spec get_and_update( multiagent, :!, timeout, [{key, fun_arg( state, :pop | {any, state})}])
         :: [state | any]
   def get_and_update( multiagent, timeout, urgent, funs) do
     {timeout, urgent} = fix timeout, urgent
     batch :get, multiagent, timeout, urgent, funs
   end
 
+  @spec get_and_update( multiagent, :!, [{key, fun_arg( state, :pop | {any, state})}])
+  :: [state | any]
+  def get_and_update( multiagent, :!, funs) do
+    get_and_update multiagent, :!, 5000, funs
+  end
+
+  @spec get_and_update( multiagent, timeout, [{key, fun_arg( state, :pop | {any, state})}])
+  :: [state | any]
+  def get_and_update( multiagent, timeout, funs) when is_timeout(timeout) and is_list(funs) do
+    batch multiagent, %Req{action: get_and_update, data: funs}, timeout
+  end
+
+  @spec get_and_update( multiagent, [{key, fun_arg( state, :pop | {any, state})}])
+  :: [state | any]
+  def get_and_update( multiagent, funs) do
+    get_and_update multiagent, 5000, funs
+  end
 
   # @doc """
   # Updates multiagent state with given key. The callback `fun` will be sent to

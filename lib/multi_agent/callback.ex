@@ -19,28 +19,17 @@ defmodule MultiAgent.Callback do
   end
 
 
-  defguard is_fun( f, n) when is_function(f, n) or
-                              is_function( elem(f, 0)) and is_list( elem(f, 1)) or
-                              is_atom( elem(f, 0)) and is_atom( elem(f, 1)) and is_list( elem(f, 2))
-  # is function given in form of anonymous fun, {fun,args} or
-  # {Module, fun, args}? The second argument is the arity of result
-  # function after arguments apply.
-  def valid?( fun, arity \\ 0)
-  def valid?({module, fun, args}, arity) when is_atom( module) do
-    valid? {fun, args}, arity
-  end
-  def valid?({fun, args}, arity) when is_list( args) do
-    valid? fun, length( args)+arity
-  end
-  def valid?( fun, arity), do: is_function fun, arity
-
+  defguard is_fun( f, arity) when
+    is_function(f, arity) or
+    is_function(elem(f,0), arity+length(elem(f,1))) or
+    is_atom(elem(f, 0)) and is_atom(elem(f, 1)) and is_list(elem(f, 2))
 
   # Run `fun_arg`.
-  def run( fun, state \\ [])
+  def run( fun, extra_args \\ [])
 
-  def run( {m, f, args}, state), do: apply m, f, state++[args]
-  def run( {f, args}, state), do: apply f, state++[args]
-  def run( fun, state), do: apply( fun, state)
+  def run( {m, f, args}, extra_args), do: apply m, f, extra_args++args
+  def run( {f, args}, extra_args), do: run f, (extra_args++args)
+  def run( fun, args), do: apply fun, args
 
 
   defp decorate( key, {:ok, result}, {:ok, map}), do: {:ok, Map.put( map, key, result)}
