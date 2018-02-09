@@ -61,12 +61,14 @@ defmodule MultiAgent.Worker do
 
   defp process({:get_and_update, fun, from, expires}) do
     if call? expires do
-      case Callback.run fun, [Process.get :'$state'] do
+      state = Process.get :'$state'
+      case Callback.run fun, [state] do
         {get, state} ->
-          Process.put :'$state', state
+          process {:new_state, state}
           GenServer.reply from, get
         :pop ->
-          GenServer.reply from, Process.delete :'$state'
+          process :drop_state
+          GenServer.reply from, state
       end
     end
   end
@@ -83,6 +85,11 @@ defmodule MultiAgent.Worker do
     Process.put :'$state', Callback.run( fun, [state])
   end
 
+  defp process(:drop_state), do: Process.delete :'$state'
+  defp process({:new_state, state}), do: Process.put :'$state', state
+  defp process(:id), do: :ignore
+
+
   # transaction handler
   # only send current state
   defp process({:t_send, from}) do
@@ -92,9 +99,7 @@ defmodule MultiAgent.Worker do
   # receive the new state (maybe)
   defp process(:t_get) do
     receive do
-      :drop_state -> Process.delete :'$state'
-      :id -> :ignore
-      {:new_state, state} -> Process.put :'$state', state
+      msg -> process msg
     end
   end
 

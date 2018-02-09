@@ -51,7 +51,6 @@ defmodule MultiAgent.Req do
     {:noreply, map}
   end
 
-
   def handle(%Req{action: :get}=req, map) do
     {key,fun} = req.data
 

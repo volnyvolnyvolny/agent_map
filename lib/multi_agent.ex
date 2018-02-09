@@ -8,7 +8,6 @@ defmodule MultiAgent do
   alias MultiAgent.{Callback, Server, Req}
 
   import Callback, only: :macros
-#  require Callback
 
 
   @moduledoc """
@@ -18,16 +17,16 @@ defmodule MultiAgent do
   are two main solutions: (1) use a group of `Agent`s; or (2) a
   `GenServer`/`Agent` that hold states in some key-value storage and provides
   concurrent access for different states. The `MultiAgent` module follows the
-  latter approach. It stores states in a `Map` and when a changing callback
-  comes in (via `update` or `get_and_update` functions), special temporary
-  process (worker) that stores queue is created — `MultiAgent` respects order in
-  which callbacks arrived. Moreover, `MultiAgent` supports changing a group of
-  states simultaniously via built-in mechanism.
+  latter approach. It stores states in a `Map` and when a changing state
+  callback comes in (see `update`, `get_and_update`, `cast` and derivative),
+  special temporary process (called "worker") that stores queue is created.
+  `MultiAgent` respects order in which callbacks arrives and supports
+  transactions — operations that simultaniously change group of states.
 
   Module provides a basic server implementation that allows states to be
   retrieved and updated via an API similar to the one of `Agent` and `Map`
-  modules. Special struct can be made via `new/1` function to use `Enum` module
-  and `[]` operator.
+  modules. Special struct can be made via `new/1` function. That allows to use
+  `Enum` module and `[]` operator.
 
   ## Examples
 
@@ -70,9 +69,8 @@ defmodule MultiAgent do
         end
 
         @doc "Deletes given project task, returning state"
-        def take( project, task) do
-          {state,_} = MultiAgent.pop __MODULE__, {project, task}
-          state
+        def pop( project, task) do
+          MultiAgent.pop __MODULE__, {project, task}
         end
       end
 
@@ -152,9 +150,6 @@ defmodule MultiAgent do
 
   @typedoc "The multiagent state"
   @type state :: term
-
-  @typedoc "The multiagent \"extra\" GenServer state"
-  @type extra :: term
 
   @typedoc "Anonymous function, `{fun, args}` or MFA triplet"
   @type fun_arg( a, r) :: (a -> r) | {(... -> r), [a | any]} | {module, atom, [a | any]}
@@ -1223,7 +1218,7 @@ defmodule MultiAgent do
   @spec pop( multiagent, key, any) :: state | any
   def pop( multiagent, key, default \\ nil) do
     mag = pid multiagent
-    GenServer.call mag, {:!, {:pop, :key, :default}}
+    GenServer.call mag, {:!, {:pop, key, default}}
   end
 
 

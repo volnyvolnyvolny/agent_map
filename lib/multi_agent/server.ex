@@ -89,13 +89,13 @@ defmodule MultiAgent.Server do
     {:reply, res, map}
   end
 
-  def handle_call({:!, {:pop, key, default}}, _from, map) do
-    case fetch map, key do
-      {:ok, state} ->
-        MultiAgent.delete multiagent, key
-        {:reply, state, map}
-      :error ->
-        {:reply, default, map}
+  def handle_call({:pop, key, default}, from, map) do
+    if has_key? map, key do
+      Req.handle %Req{action: :get_and_update,
+                      data: {key, fn _ -> :pop end},
+                      from: from}, map
+    else
+      {:reply, default, map}
     end
   end
 
@@ -193,11 +193,11 @@ defmodule MultiAgent.Server do
     # this call happend and :mayidie? was sent.
     # Server queue could contain requests that will
     # recreate worker, so why let him die?
-    with true <- dict[:'$max_threads'] > length( queue),
+    with true <- dict[:'$max_threads'] > length(queue),
          false <- Enum.any?( queue, &update_or_cast?/1),
          num = count(key, future),
          false <- num == :update,
-         true <- dict[:'$max_threads'] > num + length queue do
+         true <- dict[:'$max_threads'] > num + length(queue) do
 
       state = dict[:'$state']
       late_call = dict[:'$late_call']
