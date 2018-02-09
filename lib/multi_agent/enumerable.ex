@@ -19,7 +19,7 @@ defimpl Enumerable, for: MultiAgent do
     {:ok, map_size(map), &Enumerable.List.slice(:maps.to_list(map), &1, &2)}
   end
 
-  def reduce( map, acc, fun) do
+  def reduce( mag, acc, fun) do
     map = take mag, keys mag
     reduce_list(:maps.to_list(map), acc, fun)
   end
