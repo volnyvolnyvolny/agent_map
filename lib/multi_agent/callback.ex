@@ -8,14 +8,12 @@ defmodule MultiAgent.Callback do
 
 
   def safe_run( f) do
-    try do
-      {:ok, run( f)}
-    rescue
-      [BadFunctionError, BadArityError] -> {:error, :cannot_call}
-      exception -> {:error, {exception, :erlang.get_stacktrace()}}
-    catch
-      :exit, reason -> {:error, {:exit, reason}}
-    end
+    {:ok, run( f)}
+  rescue
+    [BadFunctionError, BadArityError] -> {:error, :cannot_call}
+    exception -> {:error, {exception, :erlang.get_stacktrace()}}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 
 

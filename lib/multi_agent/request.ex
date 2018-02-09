@@ -1,7 +1,7 @@
 defmodule MultiAgent.Req do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Worker, Transaction}
+  alias MultiAgent.{Callback, Worker, Transaction, Req}
 
   import Worker, only: [dec: 1]
   import Callback, only: [parse: 1]
@@ -38,11 +38,11 @@ defmodule MultiAgent.Req do
 
 
   # →
-  defp handle(%Req{data: {_fun, keys}}=req, map) when is_list(keys) do
+  def handle(%Req{data: {_fun, keys}}=req, map) when is_list(keys) do
     {:noreply, Transaction.run( req, map)}
   end
 
-  defp handle(%Req{action: :get, !: true}=req, map) do
+  def handle(%Req{action: :get, !: true}=req, map) do
     {key, fun} = req.data
     Task.start_link fn ->
       GenServer.reply req.from, Callback.run( fun, [get( map, key)])
@@ -52,7 +52,7 @@ defmodule MultiAgent.Req do
   end
 
 
-  defp handle(%Req{action: :get}=req, map) do
+  def handle(%Req{action: :get}=req, map) do
     {key,fun} = req.data
 
     case map[key] do
@@ -90,8 +90,8 @@ defmodule MultiAgent.Req do
     end
   end
 
-  defp handle( req, map) do
-    {key,fun} = req.data
+  def handle( req, map) do
+    {key,_} = req.data
 
     case map[key] do
       {:pid, worker} ->

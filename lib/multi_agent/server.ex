@@ -112,7 +112,6 @@ defmodule MultiAgent.Server do
       fun = fn _ -> Callback.run( fun) end
       req = %Req{:action => :update,
                  :data => {key, fun},
-                 :expires => req.expires,
                  :from => from}
 
       late_call = opts[:late_call] || false

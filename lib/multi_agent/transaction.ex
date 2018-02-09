@@ -83,7 +83,8 @@ defmodule MultiAgent.Transaction do
     unless keys == uniq keys do
       raise """
             Expected uniq keys for changing transactions (update,
-            get_and_update, cast).
+            get_and_update, cast). Got: #{inspect keys}, so look
+            at #{inspect(keys--uniq keys)}.
             """
             |> String.replace("\n", " ")
     end
@@ -133,21 +134,21 @@ defmodule MultiAgent.Transaction do
     states = for key <- keys, do: known[key]
 
     case Callback.run fun, [states] do
-      :pop ->
-        for worker <- workers do
-          send worker, :drop_state
-        end
+      :drop ->
+        for key <- keys,
+          do: send( workers[key], :drop_state)
 
-      results when length( results) == length( keys) ->
+      results when length(results) == length(keys) ->
         for {key, state} <- Enum.zip keys, results do
           send workers[key], {:new_state, state}
         end
 
-      _ ->
+      err ->
         raise """
               Transaction callback is malformed!
               Expected to be returned :pop or a list with a
-              new state for every key involved. See docs for hint."
+              new state for every key involved. Got: #{inspect err}.
+              See docs for hint."
               """
               |> String.replace("\n", " ")
     end
@@ -165,17 +166,22 @@ defmodule MultiAgent.Transaction do
 
     case Callback.run fun, [states] do
       :pop ->
-        for {_,worker} <- workers,
-          do: send( worker, :drop_state)
+        for key <- keys,
+          do: send( workers[key], :drop_state)
         states
 
-      {get, states} when length( states) == length( keys) ->
+      {get, :drop} ->
+        for key <- keys,
+          do: send( workers[key], :drop_state)
+        get
+
+      {get, states} when length(states) == length(keys) ->
         for {key, state} <- Enum.zip keys, states do
           send workers[key], {:new_state, state}
         end
         get
 
-      results when length( results) == length( keys) ->
+      results when length(results) == length(keys) ->
         for {key, state, result} <- Enum.zip [keys, states, results] do
           case result do
             {get, state} ->
@@ -190,13 +196,14 @@ defmodule MultiAgent.Transaction do
           end
         end
 
-      _ -> raise """
-                 Transaction callback is malformed!
-                 Expected to be returned :pop, a list with a
-                 new state for every key involved or a pair
-                 {returned value, new states}. See docs."
-                 """
-                 |> String.replace("\n", " ")
+      err -> raise """
+                   Transaction callback is malformed!
+                   Expected to be returned :pop, a list with a
+                   new state for every key involved or a pair
+                   {returned value, new states}. Got: #{inspect err}.
+                   See docs."
+                   """
+                   |> String.replace("\n", " ")
     end
     |> (&GenServer.reply req.from, &1).()
   end
