@@ -89,6 +89,16 @@ defmodule MultiAgent.Server do
     {:reply, res, map}
   end
 
+  def handle_call({:!, {:pop, key, default}}, _from, map) do
+    case fetch map, key do
+      {:ok, state} ->
+        MultiAgent.delete multiagent, key
+        {:reply, state, map}
+      :error ->
+        {:reply, default, map}
+    end
+  end
+
   def handle_call({:!, {:get, key, default}},_from, map) do
     state = case fetch map, key do
       {:ok, state} -> state
