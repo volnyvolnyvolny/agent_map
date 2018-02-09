@@ -16,10 +16,11 @@ defmodule MultiAgent.Req do
              !: false] # is not urgent by default
 
 
-  defp to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | :! => false}}
-  defp to_msg(%Req{from: nil}=req), do: {req.action, req.data}
-  defp to_msg(%Req{expires: nil}=req), do: {req.action, req.data, req.from}
-  defp to_msg( req), do: {req.action, req.data, req.from, req.expires}
+  defp to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | !: false}}
+  defp to_msg(%Req{action: :cast, data: {_,fun}}), do: {:cast, fun}
+  defp to_msg(%Req{data: {_,fun}}=req) do
+    {req.action, fun, req.from, req.expires}
+  end
 
 
   def lookup( key, {:'$gen_call', _, req}), do: lookup key, req

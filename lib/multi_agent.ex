@@ -202,7 +202,7 @@ defmodule MultiAgent do
 
   defp batch( mag, req, timeout \\ nil) do
     results =
-      Keyword.values req.data
+      Keyword.values( req.data)
       |> Enum.map( &Task.async fn ->
            req = %{req | data: &1}
            case req do
@@ -233,7 +233,7 @@ defmodule MultiAgent do
   # common for start_link and start
   defp separate( funs_and_opts) do
     {opts, funs} =
-      Enum.reverse funs_and_opts |>
+      Enum.reverse( funs_and_opts) |>
       Enum.split_while( fn {_,v} -> not fun?(v,0) end)
 
     {Enum.reverse( funs), opts}
@@ -243,7 +243,7 @@ defmodule MultiAgent do
   defp check_opts( opts, keys) do
     keys = Keyword.keys(opts)--keys
     unless Enum.empty? keys do
-      raise "Unexpected opts: #{keys}."
+      raise "Unexpected opts: #{inspect(keys)}."
     end
   end
 
@@ -270,7 +270,7 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> mag = MultiAgent.new( a: 42, b: 24)
+      iex> mag = MultiAgent.new a: 42, b: 24
       iex> mag[:a]
       42
       iex> MultiAgent.keys mag
@@ -278,7 +278,7 @@ defmodule MultiAgent do
 
       iex> {:ok, pid} = MultiAgent.start_link()
       iex> mag = MultiAgent.new pid
-      iex> MultiAgent.init( mag, a: fn -> 1 end)
+      iex> MultiAgent.init mag, a: fn -> 1 end
       {:ok, 1}
       iex> mag[:a]
       1
@@ -306,7 +306,7 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> mag = MultiAgent.new([:a, :b], fn x -> {x, x} end)
+      iex> mag = MultiAgent.new [:a, :b], fn x -> {x, x} end
       iex> MultiAgent.take mag, [:a, :b]
       %{a: :a, b: :b}
   """
@@ -369,18 +369,18 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
-      iex> MultiAgent.get( pid, :key, & &1)
+      iex> {:ok, pid} = MultiAgent.start_link key: fn -> 42 end
+      iex> MultiAgent.get pid, :key, & &1
       42
-      iex> MultiAgent.get( pid, :nosuchkey, & &1)
+      iex> MultiAgent.get pid, :nosuchkey, & &1
       nil
   """
-  @spec start_link( [{term, fun_arg( any)} | GenServer.option]) :: on_start
+  @spec start_link( [{key, fun_arg( any)} | GenServer.option]) :: on_start
   def start_link( funs_and_opts \\ [timeout: 5000]) do
     {funs, opts} = separate funs_and_opts
     timeout = opts[:timeout] || 5000
     opts = Keyword.put opts, :timeout, :infinity # turn off global timeout
-    GenServer.start_link Server, {funs, timeout, nil}, opts
+    GenServer.start_link Server, {funs, timeout}, opts
   end
 
 
@@ -391,29 +391,29 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> MultiAgent.start( one: 42,
-      ...>                   two: fn -> :timer.sleep(150) end,
-      ...>                   three: fn -> :timer.sleep(:infinity) end,
-      ...>                   timeout: 100)
+      iex> MultiAgent.start one: 42,
+      ...>                  two: fn -> :timer.sleep(150) end,
+      ...>                  three: fn -> :timer.sleep(:infinity) end,
+      ...>                  timeout: 100
       {:error, [one: :cannot_call, two: :timeout, three: :timeout]}
 
-      iex> MultiAgent.start( one: :foo,
-      ...>                   two: :bar,
-      ...>                   three: fn -> :timer.sleep(:infinity) end,
-      ...>                   timeout: 100)
+      iex> MultiAgent.start one: :foo,
+      ...>                  two: :bar,
+      ...>                  three: fn -> :timer.sleep(:infinity) end,
+      ...>                  timeout: 100
       {:error, [key1: :already_exists]}
 
-      iex> err = MultiAgent.start( one: 76, two: fn -> raise "oops" end)
+      iex> err = MultiAgent.start one: 76, two: fn -> raise "oops" end
       iex> {:error, [one: :cannot_call, two: {exception, _stacktrace}]} = err
       iex> exception
       %RuntimeError{ message: "oops"}
   """
-  @spec start( [{term, fun_arg( any)} | GenServer.option]) :: on_start
+  @spec start( [{key, fun_arg( any)} | GenServer.option]) :: on_start
   def start( funs_and_opts \\ [timeout: 5000]) do
     {funs, opts} = separate funs_and_opts
     timeout = opts[:timeout] || 5000
     opts = Keyword.put opts, :timeout, :infinity # turn off global timeout
-    GenServer.start Server, {funs, timeout, nil}, opts
+    GenServer.start Server, {funs, timeout}, opts
   end
 
 
@@ -454,9 +454,9 @@ defmodule MultiAgent do
 
   will be executed in around of 100 ms, not 500. Be aware, that this call:
 
-      Task.start( fn -> get( multiagent, :k, sleep100ms) end)
-      get_and_update( multiagent, :k, sleep100ms)
-      get_and_update( multiagent, :k, sleep100ms)
+      Task.start fn -> get( multiagent, :k, sleep100ms) end
+      get_and_update multiagent, :k, sleep100ms
+      get_and_update multiagent, :k, sleep100ms
 
   will be executed in around of 200 ms because `multiagent` can parallelize any
   sequence of `get/4` calls ending with `get_and_update/4` or `update/4` calls.
@@ -467,25 +467,25 @@ defmodule MultiAgent do
   ## Examples
 
       iex> mag = MultiAgent.new()
-      iex> MultiAgent.get( mag, :k, & &1)
+      iex> MultiAgent.get mag, :k, & &1
       nil
-      iex> MultiAgent.init( mag, :k, fn -> 42 end)
+      iex> MultiAgent.init mag, :k, fn -> 42 end
       {:ok, 42}
-      iex> MultiAgent.get( mag, :k, & &1)
+      iex> MultiAgent.get mag, :k, & &1
       42
-      iex> MultiAgent.init( mag, :k, fn -> 43 end)
+      iex> MultiAgent.init mag, :k, fn -> 43 end
       {:error, {:k, :already_exists}}
       #
-      iex> MultiAgent.init( mag, :_, fn -> :timer.sleep(300) end, timeout: 200)
+      iex> MultiAgent.init mag, :_, fn -> :timer.sleep(300) end, timeout: 200
       {:error, :timeout}
-      iex> MultiAgent.init( mag, :k, fn -> :timer.sleep(300) end, timeout: 200)
+      iex> MultiAgent.init mag, :k, fn -> :timer.sleep(300) end, timeout: 200
       {:error, {:k, :already_exists}}
-      iex> MultiAgent.init( mag, :k2, fn -> 42 end, late_call: false)
+      iex> MultiAgent.init mag, :k2, fn -> 42 end, late_call: false
       {:ok, 42}
-      iex> MultiAgent.cast( mag, :k2, & :timer.sleep(100) && &1) #blocks for 100 ms
-      iex> MultiAgent.update( mag, :k, fn _ -> 0 end, timeout: 50)
+      iex> MultiAgent.cast mag, :k2, & :timer.sleep(100) && &1 #blocks for 100 ms
+      iex> MultiAgent.update mag, :k, fn _ -> 0 end, timeout: 50
       {:error, :timeout}
-      iex> MultiAgent.get( mag, :k, & &1) #update was not happend
+      iex> MultiAgent.get mag, :k, & &1 #update was not happend
       42
   """
   @spec init( multiagent, key, fun_arg( a), [ {:timeout, timeout}
@@ -497,8 +497,8 @@ defmodule MultiAgent do
     check_opts opts, [:late_call, :timeout, :max_threads]
     {timeout, opts} = Keyword.pop opts, :timeout, 5000
 
-    mag = pid multiagent
     req = %Req{action: :init, data: {key, fun, opts}}
+    mag = pid multiagent
     GenServer.call mag, req, timeout
   end
 
@@ -516,7 +516,7 @@ defmodule MultiAgent do
 
   Also, list of keys could be passed to make aggregate function calls:
 
-      get( accounts, &Enum.sum/1, [:alice, :bob])
+      get accounts, &Enum.sum/1, [:alice, :bob]
 
   `timeout` is an integer greater than zero which specifies how many
   milliseconds are allowed before the multiagent executes the callback and
@@ -528,25 +528,25 @@ defmodule MultiAgent do
   ## Examples
 
       iex> mag = MultiAgent.new()
-      iex> MultiAgent.get( mag, :alice, & &1)
+      iex> MultiAgent.get mag, :alice, & &1
       nil
-      iex> MultiAgent.init( mag, :alice, fn -> 42 end)
+      iex> MultiAgent.init mag, :alice, fn -> 42 end
       42
-      iex> MultiAgent.get( mag, :alice, & &1)
+      iex> MultiAgent.get mag, :alice, & &1
       42
-      iex> MultiAgent.get( mag, :alice, & &1+1)
+      iex> MultiAgent.get mag, :alice, & &1+1
       43
       #
       # aggregate calls:
       #
-      iex> MultiAgent.init( mag, :bob, fn -> 43 end)
+      iex> MultiAgent.init mag, :bob, fn -> 43 end
       43
-      iex> MultiAgent.get( mag, &Enum.sum/1, [:alice, :bob])
+      iex> MultiAgent.get mag, &Enum.sum/1, [:alice, :bob]
       85
       # order matters:
-      iex> MultiAgent.get( mag, {&Enum.reduce/3, [0, &-/2]}, [:alice, :bob])
+      iex> MultiAgent.get mag, {&Enum.reduce/3, [0, &-/2]}, [:alice, :bob]
       1
-      iex> MultiAgent.get( mag, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice])
+      iex> MultiAgent.get mag, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice]
       -1
 
   ## Urgent (`:!`)
@@ -559,16 +559,16 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> mag = MultiAgent.new( key: 42)
-      iex> MultiAgent.cast( mag, :key, fn _ ->
+      iex> mag = MultiAgent.new key: 42
+      iex> MultiAgent.cast mag, :key, fn _ ->
       ...>   :timer.sleep( 100)
       ...>   43
-      ...> end)
-      iex> MultiAgent.get( mag, :!, :key, & &1)
+      ...> end
+      iex> MultiAgent.get mag, :!, :key, & &1
       42
-      iex> MultiAgent.get( mag, :key, & &1)
+      iex> MultiAgent.get mag, :key, & &1
       43
-      iex> MultiAgent.get( mag, :!, :key, & &1)
+      iex> MultiAgent.get mag, :!, :key, & &1
       43
   """
   @spec get( multiagent, :!, fun_arg([state], a), [key], timeout) :: a when a: var
@@ -654,15 +654,15 @@ defmodule MultiAgent do
   ## Examples
 
       iex> mag = MultiAgent.new()
-      iex> MultiAgent.get( mag, alice: & &1, bob: & &1)
+      iex> MultiAgent.get mag, alice: & &1, bob: & &1
       [nil, nil]
-      iex> MultiAgent.update( mag, alice: fn nil -> 42 end,
-      ...>                         bob:   fn nil -> 24 end)
+      iex> MultiAgent.update mag, alice: fn nil -> 42 end,
+      ...>                        bob:   fn nil -> 24 end
       :ok
-      iex> MultiAgent.get( mag, alice: & &1, bob: & &1)
+      iex> MultiAgent.get mag, alice: & &1, bob: & &1
       [42, 24]
-      iex> MultiAgent.update( mag, alice: & &1-10, bob: & &1+10)
-      iex> MultiAgent.get( mag, alice: & &1, bob: & &1)
+      iex> MultiAgent.update mag, alice: & &1-10, bob: & &1+10
+      iex> MultiAgent.get mag, alice: & &1, bob: & &1
       [32, 34]
   """
   @spec get( multiagent, [{key, fun_arg(state, any)}]) :: [any]
@@ -704,7 +704,7 @@ defmodule MultiAgent do
   that takes list of states with given keys and returns list of get values and
   new states:
 
-      get_and_update( multiagent, fn [a, b] ->
+      get_and_update multiagent, fn [a, b] ->
         if a > 10 do
           a = a-10
           b = b+10
@@ -712,7 +712,7 @@ defmodule MultiAgent do
         else
           {{:error, "Alice does not have 10$ to give to Bob!"}, [a,b]} # {get, [new_state]}
         end
-      end, [:alice, :bob])
+      end, [:alice, :bob]
 
   Please notice that in this case keys and fun arguments are swaped (list must
   be given as the third argument). This follows from fact that `multiagent` do
@@ -724,10 +724,10 @@ defmodule MultiAgent do
   `:id` make keys states to be returned as it is, and `:pop` will make the state
   be removed:
 
-      iex> mag = MultiAgent.new( alice: 42, bob: 24)
-      iex> MultiAgent.get_and_update( mag, fn _ -> [:pop, :id] end, [:alice, :bob])
+      iex> mag = MultiAgent.new alice: 42, bob: 24
+      iex> MultiAgent.get_and_update mag, fn _ -> [:pop, :id] end, [:alice, :bob]
       [42, 24]
-      iex> MultiAgent.get( mag, & &1, [:alice, :bob])
+      iex> MultiAgent.get mag, & &1, [:alice, :bob]
       [nil, 24]
 
   Also, as in the error statement of previous example, callback may return pair
@@ -764,37 +764,36 @@ defmodule MultiAgent do
   ## Examples
 
       iex> import MultiAgent
-      iex> mag = new( uno: 22, dos: 24, tres: 42, cuatro: 44)
-      iex> get_and_update( mag, :uno, & {&1, &1 + 1})
+      iex> mag = new uno: 22, dos: 24, tres: 42, cuatro: 44
+      iex> get_and_update mag, :uno, & {&1, &1 + 1}
       22
-      iex> get( mag, :uno, & &1)
+      iex> get mag, :uno, & &1
       23
       #
-      iex> get_and_update( mag, :tres, fn _ -> :pop end)
+      iex> get_and_update mag, :tres, fn _ -> :pop end
       42
-      iex> get( mag, :tres, & &1)
+      iex> get mag, :tres, & &1
       nil
       #
       # transaction calls:
       #
-      iex> get_and_update( mag, fn [u, d] ->
+      iex> get_and_update mag, fn [u, d] ->
       ...>   [{u, d}, {d, u}]}
-      ...> end, [:uno, :dos])
+      ...> end, [:uno, :dos]
       [23, 24]
-      iex> get( mag, & &1, [:uno, :dos])
+      iex> get mag, & &1, [:uno, :dos]
       [24, 23]
       #
-      iex> keys = [:uno, :dos, :tres, :cuatro]
-      iex> get_and_update( mag, fn _ -> :pop, [:dos])
+      iex> get_and_update mag, fn _ -> :pop end, [:dos]
       [42]
-      iex> get( pid, & &1, keys)
+      iex> get mag, & &1, [:uno, :dos, :tres, :cuatro]
       [24, nil, nil, 44]
       #
-      iex> get_and_update( mag, fn _ ->
+      iex> get_and_update mag, fn _ ->
       ...>   [:id, {nil, :_}, {:_, nil}, :pop]
-      ...> end, keys)
+      ...> end, [:uno, :dos, :tres, :cuatro]
       [24, nil, :_, 44]
-      iex> get( mag, & &1, keys)
+      iex> get mag, & &1, [:uno, :dos, :tres, :cuatro]
       [24, :_, nil, nil]
   """
   # 5
@@ -942,24 +941,27 @@ defmodule MultiAgent do
 
   Callback must return list of new states or `:drop` to remove all given states:
 
-      iex> mag = MultiAgent.new( alice: 42, bob: 24, chris: 33, dunya: 51)
-      iex> MultiAgent.update( mag, &Enum.reverse/1, [:alice, :bob])
+      iex> mag = MultiAgent.new alice: 42, bob: 24, chris: 33, dunya: 51
+      iex> MultiAgent.update mag, &Enum.reverse/1, [:alice, :bob]
       :ok
-      iex> MultiAgent.update( mag, fn _ -> :pop end, [:alice, :bob])
+      iex> MultiAgent.update mag, fn _ -> :pop end, [:alice, :bob]
       :ok
-      iex> MultiAgent.keys( mag)
+      iex> MultiAgent.keys mag
       [:chris]
-      iex> MultiAgent.update( mag, fn _ -> :pop end, [:chris])
+      iex> MultiAgent.update mag, fn _ -> :pop end, [:chris]
       # but:
-      iex> MultiAgent.update( mag, :dunya, fn _ -> :pop end)
-      iex> MultiAgent.get( mag, & &1, [:chris, :dunya])
+      iex> MultiAgent.update mag, :dunya, fn _ -> :pop end
+      iex> MultiAgent.get mag, & &1, [:chris, :dunya]
       [nil, :pop]
 
   (!) State changing transaction (such as `update`) will block all the involved
   states queues until the end of execution. So, for example,
 
       iex> MultiAgent.new( alice: 42, bob: 24, chris: 0) |>
-      ...> MultiAgent.update(&:timer.sleep(1000) && :drop, [:alice, :bob])
+      ...> MultiAgent.update( fn _ ->
+      ...>   :timer.sleep(1000)
+      ...>   :drop
+      ...> end, [:alice, :bob])
       :ok
 
   will block the possibility to `get_and_update`, `update`, `cast` and even
@@ -978,15 +980,15 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start_link( key: fn -> 42 end)
-      iex> MultiAgent.update( pid, :key, & &1+1)
+      iex> {:ok, pid} = MultiAgent.start_link key: fn -> 42 end
+      iex> MultiAgent.update pid, :key, & &1+1
       :ok
-      iex> MultiAgent.get( pid, :key, & &1)
+      iex> MultiAgent.get pid, :key, & &1
       43
       #
-      iex> MultiAgent.update( pid, :otherkey, fn nil -> 42 end)
+      iex> MultiAgent.update pid, :otherkey, fn nil -> 42 end
       :ok
-      iex> MultiAgent.get( pid, :othekey, & &1)
+      iex> MultiAgent.get pid, :othekey, & &1
       42
   """
   # 5
@@ -1088,7 +1090,8 @@ defmodule MultiAgent do
 
 
   @doc """
-  Perform `cast` — "fire and forget" version of `update`.
+  Perform `cast` ("fire and forget") `update`.
+  See `update/2` docs.
   """
   # 4
   @spec cast( multiagent, :!, fun_arg([state], [state] | :drop), [key]) :: :ok
@@ -1149,8 +1152,8 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> {:ok, pid} = MultiAgent.start_link( fn -> 42 end)
-      iex> MultiAgent.stop( pid)
+      iex> {:ok, pid} = MultiAgent.start_link fn -> 42 end
+      iex> MultiAgent.stop pid
       :ok
   """
   @spec stop( multiagent, reason :: term, timeout) :: :ok
@@ -1168,9 +1171,9 @@ defmodule MultiAgent do
   Examples
 
       iex> mag = MultiAgent.new(a: 1)
-      iex> MultiAgent.fetch( mag, :a)
+      iex> MultiAgent.fetch mag, :a
       {:ok, 1}
-      iex> MultiAgent.fetch( mag, :b)
+      iex> MultiAgent.fetch mag, :b
       :error
   """
   @spec fetch( multiagent, key) :: {:ok, state} | :error
@@ -1227,14 +1230,16 @@ defmodule MultiAgent do
 
   ## Examples
       iex> mag = MultiAgent.init a: 1
-      iex> MultiAgent.put( mag, :b, 2); MultiAgent.take( mag, [:a, :b])
+      iex> MultiAgent.put( mag, :b, 2) |>
+      ...> MultiAgent.take([:a, :b])
       %{a: 1, b: 2}
-      iex> MultiAgent.put( mag, :a, 3); MultiAgent.take( mag, [:a, :b])
+      iex> MultiAgent.put( mag, :a, 3) |>
+      ...> MultiAgent.take([:a, :b])
       %{a: 1, b: 3}
   """
-  @spec pop( multiagent, key) :: {any, multiagent}
-  def put( multiagent, key, value) do
-    update multiagent, key, fn _ -> value end
+  @spec put( multiagent, key, state) :: multiagent
+  def put( multiagent, key, state) do
+    cast multiagent, key, fn _ -> state end
     multiagent
   end
 
@@ -1282,7 +1287,7 @@ defmodule MultiAgent do
   Deletes the entry in `multiagent` for a specific `key`. If the `key` does not
   exist, returns `multiagent` unchanged.
 
-  Syntax sugar to `get_and_update( multiagent, key, fn _ -> :pop end, :!)`.
+  Syntax sugar to `get_and_update multiagent, :!, key, fn _ -> :pop end`.
 
   ## Examples
 
@@ -1296,7 +1301,7 @@ defmodule MultiAgent do
   """
   @spec delete( multiagent, key) :: multiagent
   def delete( multiagent, key) do
-    get_and_update multiagent, key, fn _ -> :pop end, :!
+    get_and_update multiagent, :!, key, fn _ -> :pop end
     multiagent
   end
 
@@ -1307,7 +1312,7 @@ defmodule MultiAgent do
 
   Syntax sugar to transaction call
 
-      get_and_update( multiagent, fn _ -> :pop end, keys, :!)
+      get_and_update multiagent, :!, fn _ -> :pop end, keys
 
   ## Examples
 
@@ -1318,8 +1323,24 @@ defmodule MultiAgent do
   """
   @spec drop( multiagent, Enumerable.t()) :: multiagent
   def drop( multiagent, keys) do
-    get_and_update( multiagent, fn _ -> :pop end, keys, :!)
+    get_and_update multiagent, :!, fn _ -> :pop end, keys
     multiagent
+  end
+
+
+  @doc """
+  Keys of all the `multiagent` states.
+
+  ## Examples
+
+  iex> mag = MultiAgent.new( a: 1, b: 2, c: 3)
+  iex> MultiAgent.keys mag
+  [:a, :b, :c]
+  """
+  @spec keys( multiagent) :: [key]
+  def keys( multiagent) do
+    mag = pid multiagent
+    GenServer.call mag, :keys
   end
 
 end

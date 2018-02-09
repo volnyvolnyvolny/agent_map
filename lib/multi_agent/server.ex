@@ -119,10 +119,11 @@ defmodule MultiAgent.Server do
     if Map.has_key? map, key do
       {:reply, {:error, {key, :already_exists}}, map}
     else
-      fun = fn _ -> Callback.run( fun) end
-      req = %Req{:action => :update,
+      fun = fn _ -> state = Callback.run( fun); {{:ok, state},state} end
+      req = %Req{:action => :get_and_update,
                  :data => {key, fun},
-                 :from => from}
+                 :from => from,
+                 :expires => :infinity}
 
       late_call = opts[:late_call] || false
       threads_num = opts[:max_threads] || 5
