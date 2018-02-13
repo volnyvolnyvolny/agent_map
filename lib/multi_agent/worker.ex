@@ -12,11 +12,13 @@ defmodule MultiAgent.Worker do
   #
 
   def dec(:infinity), do: :infinity
-  def dec(i) when is_integer(i), do: i
+  def dec(i) when is_integer(i), do: i-1
+  def dec({state, late_call, t_num}), do: {state, late_call, dec(t_num)}
   def dec( key), do: Process.put key, dec( Process.get key)
 
   def inc(:infinity), do: :infinity
-  def inc(i) when is_integer(i), do: i
+  def inc(i) when is_integer(i), do: i+1
+  def inc({state, late_call, t_num}), do: {state, late_call, inc(t_num)}
   def inc( key), do: Process.put key, inc( Process.get key)
 
 
@@ -106,7 +108,7 @@ defmodule MultiAgent.Worker do
   # send and receive
   defp process({:t_send_and_get, from}) do
     process {:t_send, from}
-    process {:t_get, from}
+    process :t_get
   end
 
 

@@ -1,7 +1,7 @@
 defmodule MultiAgent.Transaction do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Req}
+  alias MultiAgent.{Callback, Req, Worker}
 
 
   import Enum, only: [uniq: 1]
@@ -30,8 +30,8 @@ defmodule MultiAgent.Transaction do
     receive do
       msg ->
         {from, state} = case msg do
-          {_ref, msg} -> msg
-          msg         -> msg
+          {ref, msg} when is_reference(ref) -> msg
+          msg -> msg
         end
 
         {:dictionary, dict} =
@@ -67,12 +67,12 @@ defmodule MultiAgent.Transaction do
     {_,keys} = req.data
     {known, workers} = divide map, keys
 
-    tr = Task.start_link fn ->
-      process req, known
-    end
+    {:ok, tr} = Task.start_link fn ->
+                  process req, known
+                end
 
-    for {_, worker} <- workers do
-      send worker, {:t_send, tr}
+    for {_key, w} <- workers do
+      send w, {:t_send, tr}
     end
     map
   end
@@ -83,8 +83,8 @@ defmodule MultiAgent.Transaction do
     unless keys == uniq keys do
       raise """
             Expected uniq keys for changing transactions (update,
-            get_and_update, cast). Got: #{inspect keys}, so look
-            at #{inspect(keys--uniq keys)}.
+            get_and_update, cast). Got: #{inspect keys}, so crefully
+            check #{inspect(keys--uniq keys)} keys.
             """
             |> String.replace("\n", " ")
     end
@@ -92,18 +92,18 @@ defmodule MultiAgent.Transaction do
     {known, workers} = divide map, keys
 
     rec_workers =
-      for key <- keys( known), into: workers do
+      for key <- keys(known), into: workers do
         worker = spawn_link Worker, :loop, [self(), key, map[key]]
         send worker, :t_get
         {key, worker}
       end
 
-    tr = Task.start_link fn ->
-      process req, known, rec_workers
-    end
+    {:ok, tr} = Task.start_link fn ->
+                  process req, known, rec_workers
+                end
 
-    for w <- workers do
-      if req.urgent do
+    for {_key, w} <- workers do
+      if req.! do
         send w, {:!, {:t_send_and_get, tr}}
       else
         send w, {:t_send_and_get, tr}
@@ -146,7 +146,7 @@ defmodule MultiAgent.Transaction do
       err ->
         raise """
               Transaction callback is malformed!
-              Expected to be returned :pop or a list with a
+              Expected to be returned :drop or a list with a
               new state for every key involved. Got: #{inspect err}.
               See docs for hint."
               """

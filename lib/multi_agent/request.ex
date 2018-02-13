@@ -53,11 +53,13 @@ defmodule MultiAgent.Req do
   end
 
   def handle(%Req{action: :get}=req, map) do
+    IO.inspect( req, label: "req")
     {key,fun} = req.data
 
     case map[key] do
 
       {:pid, worker} ->
+#        IO.inspect( "key #{key} forward to worker")
         send worker, to_msg req
         {:noreply, map}
 
