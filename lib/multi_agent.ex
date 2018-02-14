@@ -201,27 +201,27 @@ defmodule MultiAgent do
   end
 
   defp batch( mag, req, timeout \\ nil) do
+    mag = pid(mag)
     results =
-      Keyword.values( req.data)
-      |> Enum.map( &Task.async fn ->
-           req = %{req | data: &1}
-           case req do
-             %{action: :get, !: true} ->
-               GenServer.call mag, req, timeout
-             %{action: :cast} ->
-               GenServer.cast mag, req
-             _ ->
-               GenServer.call mag, %{req | expires: expires(timeout)}, timeout
-           end
-         end)
-      |> Task.yield_many(timeout)
-      |> Enum.map( fn {task, res} ->
-           case res || Task.shutdown( task, :brutal_kill) do
-             {:ok, result} -> result
-             exit ->
-               Process.exit( self(), exit || :timeout)
-           end
-         end)
+      Enum.map( req.data, &Task.async fn ->
+        req = %{req | data: &1}
+        case req do
+          %{action: :get, !: true} ->
+            GenServer.call mag, req, timeout
+          %{action: :cast} ->
+            GenServer.cast mag, req
+          _ ->
+            GenServer.call mag, %{req | expires: expires(timeout)}, timeout
+        end
+      end) |>
+      Task.yield_many(timeout) |>
+      Enum.map( fn {task, res} ->
+        case res || Task.shutdown( task, :brutal_kill) do
+          {:ok, result} -> result
+          exit ->
+            Process.exit( self(), exit || :timeout)
+        end
+      end)
 
     if req.action in [:update, :cast], do: :ok, else: results
   end
@@ -530,17 +530,13 @@ defmodule MultiAgent do
       iex> mag = MultiAgent.new()
       iex> MultiAgent.get mag, :alice, & &1
       nil
-      iex> MultiAgent.init mag, :alice, fn -> 42 end
-      42
-      iex> MultiAgent.get mag, :alice, & &1
-      42
+      iex> MultiAgent.put mag, :alice, 42
       iex> MultiAgent.get mag, :alice, & &1+1
       43
       #
       # aggregate calls:
       #
-      iex> MultiAgent.init mag, :bob, fn -> 43 end
-      43
+      iex> MultiAgent.put mag, :bob, 43
       iex> MultiAgent.get mag, &Enum.sum/1, [:alice, :bob]
       85
       # order matters:
@@ -554,8 +550,8 @@ defmodule MultiAgent do
   Urgent version of `get` can be used to make out of turn async call. State can
   have an associated queue of callbacks, waiting to be executed. This version
   works as `get`, but retrives state immediately at the moment of call. No
-  matter of current number of threads used for involved state(s) it is called
-  in a separate `Task`.
+  matter of current number of threads used for involved state(s) it is called in
+  a separate `Task`.
 
   ## Examples
 
@@ -565,6 +561,8 @@ defmodule MultiAgent do
       ...>   43
       ...> end
       iex> MultiAgent.get mag, :!, :key, & &1
+      42
+      iex> mag[:key] # the same
       42
       iex> MultiAgent.get mag, :key, & &1
       43
@@ -779,14 +777,14 @@ defmodule MultiAgent do
       # transaction calls:
       #
       iex> get_and_update mag, fn [u, d] ->
-      ...>   [{u, d}, {d, u}]}
+      ...>   [{u, d}, {d, u}]
       ...> end, [:uno, :dos]
       [23, 24]
       iex> get mag, & &1, [:uno, :dos]
       [24, 23]
       #
       iex> get_and_update mag, fn _ -> :pop end, [:dos]
-      [42]
+      [23]
       iex> get mag, & &1, [:uno, :dos, :tres, :cuatro]
       [24, nil, nil, 44]
       #
@@ -943,15 +941,15 @@ defmodule MultiAgent do
       iex> mag = MultiAgent.new alice: 42, bob: 24, chris: 33, dunya: 51
       iex> MultiAgent.update mag, &Enum.reverse/1, [:alice, :bob]
       :ok
-      iex> MultiAgent.update mag, fn _ -> :pop end, [:alice, :bob]
-      :ok
+      iex> MultiAgent.get mag, & &1, [:alice, :bob]
+      [24, 42]
+      iex> MultiAgent.update mag, fn _ -> :drop end, [:alice, :bob]
       iex> MultiAgent.keys mag
-      [:chris]
-      iex> MultiAgent.update mag, fn _ -> :pop end, [:chris]
-      # but:
-      iex> MultiAgent.update mag, :dunya, fn _ -> :pop end
+      [:chris, :dunya]
+      iex> MultiAgent.update mag, fn _ -> :drop end, [:chris]
+      iex> MultiAgent.update mag, :dunya, fn _ -> :drop end
       iex> MultiAgent.get mag, & &1, [:chris, :dunya]
-      [nil, :pop]
+      [nil, :drop]
 
   (!) State changing transaction (such as `update`) will block all the involved
   states queues until the end of execution. So, for example,
@@ -987,7 +985,7 @@ defmodule MultiAgent do
       #
       iex> MultiAgent.update pid, :otherkey, fn nil -> 42 end
       :ok
-      iex> MultiAgent.get pid, :othekey, & &1
+      iex> MultiAgent.get pid, :otherkey, & &1
       42
   """
   # 5
@@ -1136,28 +1134,6 @@ defmodule MultiAgent do
 
 
   @doc """
-  Synchronously stops the multiagent with the given `reason`.
-
-  It returns `:ok` if the multiagent terminates with the given reason. If the
-  multiagent terminates with another reason, the call will exit.
-
-  This function keeps OTP semantics regarding error reporting. If the reason is
-  any other than `:normal`, `:shutdown` or `{:shutdown, _}`, an error report
-  will be logged.
-
-  ## Examples
-
-      iex> {:ok, pid} = MultiAgent.start_link fn -> 42 end
-      iex> MultiAgent.stop pid
-      :ok
-  """
-  @spec stop( multiagent, reason :: term, timeout) :: :ok
-  def stop( multiagent, reason \\ :normal, timeout \\ :infinity) do
-    GenServer.stop pid(multiagent), reason, timeout
-  end
-
-
-  @doc """
   Fetches the value for a specific `key` in the given `multiagent`.
 
   If `multiagent` contains the given `key` with value value, then `{:ok, value}`
@@ -1205,13 +1181,15 @@ defmodule MultiAgent do
   have `Access.pop/2` callback.
 
   ## Examples
-      iex> mag = MultiAgent.init a: 1
-      iex> {ret, ^mag} = MultiAgent.pop( mag, :a); ret
+      iex> mag = MultiAgent.new a: 1
+      iex> MultiAgent.pop mag, :a
       1
-      iex> {ret, ^mag} = MultiAgent.pop( mag, :b); ret
+      iex> MultiAgent.pop mag, :a
       nil
-      iex> {ret, ^mag} = MultiAgent.pop( mag, :b, 3); ret
-      3
+      iex> MultiAgent.pop mag, :b
+      nil
+      iex> Enum.empty? mag
+      true
   """
   @spec pop( multiagent, key, any) :: state | any
   def pop( multiagent, key, default \\ nil) do
@@ -1223,20 +1201,25 @@ defmodule MultiAgent do
   Puts the given `value` under `key` in `multiagent`.
 
   ## Examples
-      iex> mag = MultiAgent.init a: 1
+      iex> mag = MultiAgent.new a: 1
       iex> MultiAgent.put( mag, :b, 2) |>
       ...> MultiAgent.take([:a, :b])
       %{a: 1, b: 2}
       iex> MultiAgent.put( mag, :a, 3) |>
       ...> MultiAgent.take([:a, :b])
-      %{a: 1, b: 3}
+      %{a: 3, b: 2}
   """
   @spec put( multiagent, key, state) :: multiagent
   def put( multiagent, key, state) do
-    cast multiagent, key, fn _ -> state end
+    GenServer.cast pid(multiagent), %Req{action: :put, data: {key, state}}
     multiagent
   end
 
+  @spec put( multiagent, :!, key, state) :: multiagent
+  def put( multiagent, :!, key, state) do
+    GenServer.cast pid(multiagent), %Req{!: true, action: :put, data: {key, state}}
+    multiagent
+  end
 
   @doc """
   Fetches the value for a specific `key` in the given `multiagent`, erroring out
@@ -1246,17 +1229,17 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> mag = MultiAgent.new( a: 1)
-      iex> MultiAgent.fetch!( mag, :a)
+      iex> mag = MultiAgent.new a: 1
+      iex> MultiAgent.fetch! mag, :a
       1
-      iex> MultiAgent.fetch!( mag, :b)
-      ** (KeyError) key not found in multiagent
+      iex> MultiAgent.fetch! mag, :b
+      ** (KeyError) key :b not found
   """
   @spec fetch!( multiagent, key) :: state | no_return
   def fetch!( multiagent, key) do
     case GenServer.call pid(multiagent), {:!, {:fetch, key}} do
       {:ok, state} -> state
-      :error -> raise KeyError, message: "key not found in multiagent"
+      :error -> raise KeyError, key: key
     end
   end
 
@@ -1267,8 +1250,8 @@ defmodule MultiAgent do
   ignored.
 
   ## Examples
-      iex> mag = MultiAgent.new( a: 1, b: 2, c: 3)
-      iex> MultiAgent.take( mag, [:a, :c, :e])
+      iex> MultiAgent.new( a: 1, b: 2, c: 3) |>
+      ...> MultiAgent.take([:a, :c, :e])
       %{a: 1, c: 3}
   """
   @spec take( multiagent, Enumerable.t()) :: map
@@ -1285,10 +1268,11 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> mag = MultiAgent.new( a: 1, b: 2)
+      iex> mag = MultiAgent.new a: 1, b: 2
       iex> MultiAgent.delete mag, :a
       iex> MultiAgent.take mag, [:a, :b]
       %{b: 2}
+      #
       iex> MultiAgent.delete mag, :a
       iex> MultiAgent.take mag, [:a, :b]
       %{b: 2}
@@ -1310,9 +1294,9 @@ defmodule MultiAgent do
 
   ## Examples
 
-      iex> mag = MultiAgent.new( a: 1, b: 2, c: 3)
-      iex> MultiAgent.drop mag, [:b, :d]
-      iex> MultiAgent.keys mag
+      iex> MultiAgent.new( a: 1, b: 2, c: 3) |>
+      ...> MultiAgent.drop([:b, :d]) |>
+      ...> MultiAgent.keys()
       [:a, :c]
   """
   @spec drop( multiagent, Enumerable.t()) :: multiagent
@@ -1327,8 +1311,8 @@ defmodule MultiAgent do
 
   ## Examples
 
-  iex> mag = MultiAgent.new( a: 1, b: 2, c: 3)
-  iex> MultiAgent.keys mag
+  iex> MultiAgent.new( a: 1, b: 2, c: 3) |>
+  ...> MultiAgent.keys()
   [:a, :b, :c]
   """
   @spec keys( multiagent) :: [key]
@@ -1336,4 +1320,25 @@ defmodule MultiAgent do
     GenServer.call pid(multiagent), :keys
   end
 
+
+  @doc """
+  Synchronously stops the multiagent with the given `reason`.
+
+  It returns `:ok` if the multiagent terminates with the given reason. If the
+  multiagent terminates with another reason, the call will exit.
+
+  This function keeps OTP semantics regarding error reporting. If the reason is
+  any other than `:normal`, `:shutdown` or `{:shutdown, _}`, an error report
+  will be logged.
+
+  ## Examples
+
+  iex> {:ok, pid} = MultiAgent.start_link()
+  iex> MultiAgent.stop pid
+  :ok
+  """
+  @spec stop( multiagent, reason :: term, timeout) :: :ok
+  def stop( multiagent, reason \\ :normal, timeout \\ :infinity) do
+    GenServer.stop pid(multiagent), reason, timeout
+  end
 end

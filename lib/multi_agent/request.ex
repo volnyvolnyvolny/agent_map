@@ -6,7 +6,7 @@ defmodule MultiAgent.Req do
   import Worker, only: [dec: 1]
   import Callback, only: [parse: 1]
 
-  import Map, only: [put: 3, get: 2]
+  import Map, only: [put: 3]
 
 
   defstruct [:action,  # :get, :get_and_update, :update, :cast, …
@@ -38,6 +38,20 @@ defmodule MultiAgent.Req do
   def lookup(_key,_req), do: 0
 
 
+  def fetch( map, key) do
+    case map do
+      %{^key => {:pid, worker}} ->
+        {_, dict} = Process.info worker, :dictionary
+        Keyword.fetch dict, :'$state'
+
+      %{^key => {{:state, state},_,_}} ->
+        {:ok, state}
+
+      _ -> :error
+    end
+  end
+
+
   # →
   def handle(%Req{data: {_fun, keys}}=req, map) when is_list(keys) do
     {:noreply, Transaction.run( req, map)}
@@ -46,20 +60,23 @@ defmodule MultiAgent.Req do
   def handle(%Req{action: :get, !: true}=req, map) do
     {key, fun} = req.data
     Task.start_link fn ->
-      GenServer.reply req.from, Callback.run( fun, [get( map, key)])
+      state = case fetch map, key do
+                {:ok, state} -> state
+                :error -> nil
+              end
+
+      GenServer.reply req.from, Callback.run( fun, [state])
     end
 
     {:noreply, map}
   end
 
   def handle(%Req{action: :get}=req, map) do
-    IO.inspect( req, label: "req")
     {key,fun} = req.data
 
     case map[key] do
 
       {:pid, worker} ->
-#        IO.inspect( "key #{key} forward to worker")
         send worker, to_msg req
         {:noreply, map}
 
@@ -90,6 +107,28 @@ defmodule MultiAgent.Req do
 
         {:noreply, put( map, key, {:pid, worker})}
     end
+  end
+
+  def handle(%Req{action: :put}=req, map) do
+    {key, state} = req.data
+
+    map = case map do
+      %{^key => {:state, _}} ->
+        %{map | key => {:state, state}}
+
+      %{^key => {:pid, worker}} ->
+        msg = if req.! do
+          {:!, {:new_state, state}}
+        else
+          {:new_state, state}
+        end
+        send worker, msg
+        map
+      _ ->
+        Map.put map, key, Worker.new_state {:state, state}
+    end
+
+    {:noreply, map}
   end
 
   def handle( req, map) do

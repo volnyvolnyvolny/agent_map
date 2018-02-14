@@ -7,6 +7,7 @@ defmodule MultiAgent.Server do
 
   import Enum, only: [uniq: 1]
   import Map, only: [put: 3, delete: 2]
+  import Req, only: [fetch: 2, handle: 2]
 
   use GenServer
 
@@ -20,9 +21,10 @@ defmodule MultiAgent.Server do
          [] <- keys--uniq( keys), #check for dups
          {:ok, results} <- Callback.safe_run( funs, timeout) do
 
-      {:ok, Enum.reduce( results, %{}, fn {key,s}, map ->
-              put map, key, Worker.new_state {:state,s}
-            end)}
+      map = for {key, s} <- results, into: %{} do
+              {key, Worker.new_state {:state, s}}
+            end
+      {:ok, map}
     else
       {:error, reason} ->
         {:stop, reason}
@@ -34,19 +36,6 @@ defmodule MultiAgent.Server do
   ##
   ## Map functions
   ##
-
-  defp fetch( map, key) do
-    case map do
-      %{^key => {:pid, worker}} ->
-        {:dictionary, dict} =
-          Process.info worker, :dictionary
-        {:ok, dict[:'$state']}
-
-      %{^key => {{:state, state},_,_}} -> {:ok, state}
-
-      _ -> :error
-    end
-  end
 
   defp has_key?( map, key) do
     case fetch map, key do
@@ -73,26 +62,21 @@ defmodule MultiAgent.Server do
   end
 
   def handle_call({:!, {:take, keys}},_from, map) do
-    res = for key <- keys,
-              has_key?( map, key),
-              into: %{} do
-
-            case fetch( map, key) do
-              {:ok, state} ->
-                {key, state}
-              _ ->
-                {key, nil}
+    res = Enum.reduce keys, %{}, fn key, res ->
+            case fetch map, key do
+              {:ok, state} -> Map.put res, key, state
+              _ -> res
             end
           end
 
     {:reply, res, map}
   end
 
-  def handle_call({:pop, key, default}, from, map) do
+  def handle_call({:!, {:pop, key, default}}, from, map) do
     if has_key? map, key do
-      Req.handle %Req{action: :get_and_update,
-                      data: {key, fn _ -> :pop end},
-                      from: from}, map
+      handle %Req{action: :get_and_update,
+                  data: {key, fn _ -> :pop end},
+                  from: from}, map
     else
       {:reply, default, map}
     end
@@ -128,16 +112,16 @@ defmodule MultiAgent.Server do
       threads_num = opts[:max_threads] || 5
       map = put map, key, {nil, late_call, threads_num}
 
-      Req.handle req, map
+      handle req, map
     end
   end
 
   def handle_call( req, from, map) do
-    Req.handle %{req | :from => from}, map
+    handle %{req | :from => from}, map
   end
 
   def handle_cast( req, map) do
-    Req.handle req, map
+    handle req, map
   end
 
 

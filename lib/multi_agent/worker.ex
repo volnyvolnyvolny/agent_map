@@ -139,10 +139,37 @@ defmodule MultiAgent.Worker do
     loop() # →
   end
 
+
+  defp common_rec( selective \\ true) do
+    wait = Process.get :'$wait'
+    receive do
+      {:!, msg} ->
+        process msg
+        loop selective
+      msg ->
+        process msg
+        loop selective
+    after wait ->
+      send Process.get(:'$gen_server'), {self(), :mayidie?}
+      receive do
+        :continue ->
+          # 1. next time wait a little bit longer (a few ms)
+          Process.put :'$wait', wait+rand 5
+          # 2. use selective receive (maybe, again)
+          Process.put :'$selective_receive', true
+          loop true
+
+        :die! -> :bye
+      end
+    end
+  end
+
   # →
   def loop( selective_receive \\ true)
+  def loop( false), do: common_rec(false)
   def loop( true) do
-    if Process.info( self(), :message_queue_len) > 100 do
+    {_, len} = Process.info self(), :message_queue_len
+    if len > 100 do
       # turn off selective receive
       Process.put :'$selective_receive', false
       loop false
@@ -152,36 +179,10 @@ defmodule MultiAgent.Worker do
     receive do
       {:!, msg} ->
         process msg
-        loop true
+        loop()
     after 0 ->
-      loop :sub
+      common_rec()
     end
   end
 
-  def loop( s_receive) do
-    s_receive = (s_receive == :sub)
-    wait = Process.get :'$wait'
-
-    receive do
-      {:!, msg} ->
-        process msg
-        loop s_receive
-      msg ->
-        process msg
-        loop s_receive
-
-      after wait ->
-        send Process.get(:'$gen_server'), {self(), :mayidie?}
-        receive do
-          :continue ->
-            # 1. next time wait a little bit longer (a few ms)
-            Process.put :'$wait', wait+rand 5
-            # 2. use selective receive (maybe, again)
-            Process.put :'$selective_receive', true
-            loop true
-
-          :die! -> :bye
-        end
-    end
-  end
 end

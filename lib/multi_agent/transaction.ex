@@ -91,12 +91,15 @@ defmodule MultiAgent.Transaction do
 
     {known, workers} = divide map, keys
 
-    rec_workers =
-      for key <- keys(known), into: workers do
-        worker = spawn_link Worker, :loop, [self(), key, map[key]]
-        send worker, :t_get
-        {key, worker}
-      end
+    rec_workers = for k <- keys(known), into: workers do
+      worker = spawn_link Worker, :loop, [self(), k, map[k]]
+      send worker, :t_get
+      {k, worker}
+    end
+
+    map = for k <- keys(known), into: map do
+      {k, {:pid, rec_workers[k]}}
+    end
 
     {:ok, tr} = Task.start_link fn ->
                   process req, known, rec_workers
@@ -182,17 +185,20 @@ defmodule MultiAgent.Transaction do
         get
 
       results when length(results) == length(keys) ->
-        for {key, state, result} <- Enum.zip [keys, states, results] do
+        for {key, oldstate, result} <- Enum.zip [keys, states, results] do
           case result do
             {get, state} ->
+              # IO.inspect({key, oldstate, result}, label: "{key, oldstate, result}")
+              # IO.inspect(workers[key], label: "workers[key]")
+              # IO.inspect("")
               send workers[key], {:new_state, state}
               get
             :pop ->
               send workers[key], :drop_state
-              state
+              oldstate
             :id ->
               send workers[key], :id
-              state
+              oldstate
           end
         end
 
