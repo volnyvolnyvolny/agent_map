@@ -495,11 +495,9 @@ defmodule MultiAgent do
          | {:error, {key, :already_exists}} when a: var
   def init( multiagent, key, fun, opts \\ [timeout: 5000]) do
     check_opts opts, [:late_call, :timeout, :max_threads]
-    {timeout, opts} = Keyword.pop opts, :timeout, 5000
-
+    opts = Keyword.put opts, :timeout, 5000
     req = %Req{action: :init, data: {key, fun, opts}}
-    mag = pid multiagent
-    GenServer.call mag, req, timeout
+    GenServer.call pid(multiagent), req, :infinity
   end
 
 
@@ -1193,7 +1191,7 @@ defmodule MultiAgent do
   """
   @spec pop( multiagent, key, any) :: state | any
   def pop( multiagent, key, default \\ nil) do
-    GenServer.call pid(multiagent), {:!, {:pop, key, default}}
+    GenServer.call pid(multiagent), %Req{action: :pop, data: {key, default}}
   end
 
 

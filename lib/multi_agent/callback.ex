@@ -45,8 +45,8 @@ defmodule MultiAgent.Callback do
          res || Task.shutdown( task, :brutal_kill)
        end)
     |> Enum.map( fn
-         {:ok, result} -> result;
-         nil -> {:error, :timeout};
+         {:ok, result} -> result
+         nil -> {:error, :timeout}
          exit -> {:error, exit}
        end)
     |> Enum.zip( Keyword.keys( funs))

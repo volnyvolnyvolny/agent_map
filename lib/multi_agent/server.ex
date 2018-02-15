@@ -44,7 +44,7 @@ defmodule MultiAgent.Server do
     end
   end
 
-  ##
+  ## IMMEDIATE REPLY
 
   def handle_call(:keys,_from, map) do
     keys = for key <- Map.keys( map),
@@ -72,16 +72,6 @@ defmodule MultiAgent.Server do
     {:reply, res, map}
   end
 
-  def handle_call({:!, {:pop, key, default}}, from, map) do
-    if has_key? map, key do
-      handle %Req{action: :get_and_update,
-                  data: {key, fn _ -> :pop end},
-                  from: from}, map
-    else
-      {:reply, default, map}
-    end
-  end
-
   def handle_call({:!, {:get, key, default}},_from, map) do
     state = case fetch map, key do
       {:ok, state} -> state
@@ -102,11 +92,9 @@ defmodule MultiAgent.Server do
     if Map.has_key? map, key do
       {:reply, {:error, {key, :already_exists}}, map}
     else
-      fun = fn _ -> state = Callback.run( fun); {{:ok, state},state} end
-      req = %Req{:action => :get_and_update,
-                 :data => {key, fun},
-                 :from => from,
-                 :expires => :infinity}
+      req = %Req{action: :init,
+                 from: from,
+                 data: {key, fun}}
 
       late_call = opts[:late_call] || false
       threads_num = opts[:max_threads] || 5

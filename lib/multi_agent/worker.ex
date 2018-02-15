@@ -91,6 +91,21 @@ defmodule MultiAgent.Worker do
   defp process({:new_state, state}), do: Process.put :'$state', state
   defp process(:id), do: :ignore
 
+  defp process({:init, fun, from}) do
+    res = Task.start( fn -> Callback.run fun end) |>
+          Task.yield( opts[:timeout])
+       || Task.shutdown( task, :brutal_kill)
+
+    case res do
+      {:ok, state} ->
+         GenServer.reply from, {:ok, state}
+         process {:new_state, state}
+      nil ->
+         GenServer.reply from, {:error, :timeout}
+      exit ->
+         GenServer.reply from, {:error, exit}
+    end
+  end
 
   # transaction handler
   # only send current state

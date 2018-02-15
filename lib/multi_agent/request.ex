@@ -17,10 +17,10 @@ defmodule MultiAgent.Req do
 
 
   defp to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | !: false}}
-  defp to_msg(%Req{action: :cast, data: {_,fun}}), do: {:cast, fun}
-  defp to_msg(%Req{data: {_,fun}}=req) do
-    {req.action, fun, req.from, req.expires}
-  end
+  defp to_msg(%Req{action: :cast, data: {_, fun}}), do: {:cast, fun}
+  defp to_msg(%Req{action: :init, data: {_, fun}}=req), do: {:init, fun, req.from}
+  defp to_msg(%Req{action: :put, data: {_, state}}), do: {:new_state, state}
+  defp to_msg(%Req{data: {_, fun}}=req), do: {req.action, fun, req.from, req.expires}
 
 
   def lookup( key, {:'$gen_call', _, req}), do: lookup key, req
@@ -117,12 +117,7 @@ defmodule MultiAgent.Req do
         %{map | key => {:state, state}}
 
       %{^key => {:pid, worker}} ->
-        msg = if req.! do
-          {:!, {:new_state, state}}
-        else
-          {:new_state, state}
-        end
-        send worker, msg
+        send worker, to_msg req
         map
       _ ->
         Map.put map, key, Worker.new_state {:state, state}
@@ -130,6 +125,19 @@ defmodule MultiAgent.Req do
 
     {:noreply, map}
   end
+
+  def handle(%Req{action: :pop}=req, map) do
+    {key, default} = req.data
+
+    case fetch map, key do
+      {:ok, _} ->
+        handle %{req | action: :get_and_update,
+                       data: {key, fn _ -> :pop end}}, map
+      :error ->
+        {:reply, default, map}
+    end
+  end
+
 
   def handle( req, map) do
     {key,_} = req.data
