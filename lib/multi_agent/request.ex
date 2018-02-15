@@ -3,7 +3,7 @@ defmodule MultiAgent.Req do
 
   alias MultiAgent.{Callback, Worker, Transaction, Req}
 
-  import Worker, only: [dec: 1]
+  import Worker, only: [dec: 1, new_state: 1, new_state: 0]
   import Callback, only: [parse: 1]
 
   import Map, only: [put: 3]
@@ -16,11 +16,10 @@ defmodule MultiAgent.Req do
              !: false] # is not urgent by default
 
 
-  defp to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | !: false}}
-  defp to_msg(%Req{action: :cast, data: {_, fun}}), do: {:cast, fun}
-  defp to_msg(%Req{action: :init, data: {_, fun}}=req), do: {:init, fun, req.from}
-  defp to_msg(%Req{action: :put, data: {_, state}}), do: {:new_state, state}
-  defp to_msg(%Req{data: {_, fun}}=req), do: {req.action, fun, req.from, req.expires}
+  def to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | !: false}}
+  def to_msg(%Req{action: a, data: {_, fun}})
+    when a in [:cast, {:one_key_t, :cast}], do: {a, fun}
+  def to_msg(%Req{data: {_, fun}}=req), do: {req.action, fun, req.from, req.expires}
 
 
   def lookup( key, {:'$gen_call', _, req}), do: lookup key, req
@@ -53,8 +52,12 @@ defmodule MultiAgent.Req do
 
 
   # →
+  def handle(%Req{action: :get, data: {fun, [key]}}=req, map) do
+    handle %{req | data: {key, &Callback.run(fun, [[&1]])}}, map
+  end
+
   def handle(%Req{data: {_fun, keys}}=req, map) when is_list(keys) do
-    {:noreply, Transaction.run( req, map)}
+    {:noreply, Transaction.run(req, map)}
   end
 
   def handle(%Req{action: :get, !: true}=req, map) do
@@ -99,7 +102,7 @@ defmodule MultiAgent.Req do
           send server, {:done_on_server, key}
         end)
 
-        {:noreply, put( map, key, Worker.new_state())}
+        {:noreply, put( map, key, new_state())}
 
       {_,_,_}=tuple -> # max_threads forbids to spawn more Task's
         worker = spawn_link Worker, :loop, [self(), key, tuple]
@@ -117,10 +120,10 @@ defmodule MultiAgent.Req do
         %{map | key => {:state, state}}
 
       %{^key => {:pid, worker}} ->
-        send worker, to_msg req
+        send worker, to_msg %{req | action: :cast}
         map
       _ ->
-        Map.put map, key, Worker.new_state {:state, state}
+        Map.put map, key, new_state {:state, state}
     end
 
     {:noreply, map}

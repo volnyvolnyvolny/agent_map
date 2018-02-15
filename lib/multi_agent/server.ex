@@ -3,10 +3,10 @@ defmodule MultiAgent.Server do
 
   alias MultiAgent.{Callback, Worker, Req}
 
-  import Worker, only: [inc: 1]
+  import Worker, only: [inc: 1, new_state: 1]
 
   import Enum, only: [uniq: 1]
-  import Map, only: [put: 3, delete: 2]
+  import Map, only: [delete: 2]
   import Req, only: [fetch: 2, handle: 2]
 
   use GenServer
@@ -22,7 +22,7 @@ defmodule MultiAgent.Server do
          {:ok, results} <- Callback.safe_run( funs, timeout) do
 
       map = for {key, s} <- results, into: %{} do
-              {key, Worker.new_state {:state, s}}
+              {key, new_state {:state, s}}
             end
       {:ok, map}
     else
@@ -64,7 +64,7 @@ defmodule MultiAgent.Server do
   def handle_call({:!, {:take, keys}},_from, map) do
     res = Enum.reduce keys, %{}, fn key, res ->
             case fetch map, key do
-              {:ok, state} -> Map.put res, key, state
+              {:ok, state} -> put_in res[key], state
               _ -> res
             end
           end
@@ -86,21 +86,34 @@ defmodule MultiAgent.Server do
   ##
 
   # init is a Map.put analog
-  def handle_call(%Req{:action => :init}=req, from, map) do
-    {key, fun, opts} = req.data
+  def handle_call({:init, key, fun, opts}, from, map) do
 
     if Map.has_key? map, key do
       {:reply, {:error, {key, :already_exists}}, map}
     else
-      req = %Req{action: :init,
-                 from: from,
-                 data: {key, fun}}
+      timeout = opts[:timeout] || 5000
+
+      fun = fn [_state] ->
+        task = Task.async fn -> Callback.run fun end
+        res = Task.yield( task, timeout)
+           || Task.shutdown( task, :brutal_kill)
+
+        case res do
+          {:ok, state} -> {{:ok, state}, [state]}
+          nil ->
+            {{:error, :timeout}, :id}
+          exit ->
+            {{:error, exit}, :id}
+        end
+      end
 
       late_call = opts[:late_call] || false
       threads_num = opts[:max_threads] || 5
-      map = put map, key, {nil, late_call, threads_num}
+      map = put_in map[key], {nil, late_call, threads_num}
 
-      handle req, map
+      handle %Req{action: :get_and_update,
+                  from: from,
+                  data: {fun, [key]}}, map
     end
   end
 

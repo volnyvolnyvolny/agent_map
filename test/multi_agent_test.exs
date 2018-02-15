@@ -133,7 +133,7 @@ defmodule MultiAgentTest do
 
     MultiAgent.cast mag, :k2, & :timer.sleep(100) && &1 #blocks for 100 ms
 
-    assert {:error, :timeout} == MultiAgent.update mag, :k, fn _ -> 0 end, timeout: 50
+    assert {:error, :timeout} == MultiAgent.update mag, :k, fn _ -> 0 end, 50
     assert 42 == MultiAgent.get mag, :k, & &1 #update was not happend
   end
 end

@@ -240,14 +240,6 @@ defmodule MultiAgent do
   end
 
 
-  defp check_opts( opts, keys) do
-    keys = Keyword.keys(opts)--keys
-    unless Enum.empty? keys do
-      raise "Unexpected opts: #{inspect(keys)}."
-    end
-  end
-
-
   @doc """
   Returns a new empty multiagent.
 
@@ -414,90 +406,6 @@ defmodule MultiAgent do
     timeout = opts[:timeout] || 5000
     opts = Keyword.put opts, :timeout, :infinity # turn off global timeout
     GenServer.start Server, {funs, timeout}, opts
-  end
-
-
-  @doc """
-  Initialize a multiagent state via the given anonymous function with zero
-  arity, `{fun/length(args), args}` or corresponding MFA triplet. The callback
-  is sent to the `multiagent` which invokes it in `GenServer` call.
-
-  Its return value is used as the multiagent state with given key. Note that
-  `init/4` does not return until the given callback has returned.
-
-  State may also be added via `update/4` or `get_and_update/4` functions:
-
-      update( multiagent, :alice, fn nil -> :'200$' end)
-      update( multiagent, fn _ -> [:'100000000$', :'0$'] end, [:rich, :poor])
-      # remember to never store arbitrary atoms as they are not GC ;)
-
-  ## Options
-
-  `:timeout` option specifies an integer greater than zero which defines how
-  long (in milliseconds) multiagent is allowed to spend on initialization before
-  init task will be `Task.shutdown(…, :brutal_kill)`ed and this function will
-  return `{:error, :timeout}`. Also, the atom `:infinity` can be provided to
-  make multiagent wait infinitely.
-
-  `:late_call` option specifies should multiagent execute functions that are
-  expired. This happend when caller timeout is took place before function
-  execution.
-
-  Multiagent can execute `get` calls on the same key in parallel. `max_threads`
-  option specifies number of threads per key used. By default two `get` calls on
-  the same state could be executed, so
-
-      sleep100ms = fn _ -> :timer.sleep(100) end
-      List.duplicate( fn -> MultiAgent.get( multiagent, :k, sleep100ms) end, 5)
-      |> Enum.map( &Task.async/1)
-      |> Enum.map( &Task.await/1)
-
-  will be executed in around of 100 ms, not 500. Be aware, that this call:
-
-      Task.start fn -> get( multiagent, :k, sleep100ms) end
-      get_and_update multiagent, :k, sleep100ms
-      get_and_update multiagent, :k, sleep100ms
-
-  will be executed in around of 200 ms because `multiagent` can parallelize any
-  sequence of `get/4` calls ending with `get_and_update/4` or `update/4` calls.
-  Parallelization uses no more than `max_threads`.
-
-  Use `max_threads: 1` to execute `get` calls in sequence.
-
-  ## Examples
-
-      iex> mag = MultiAgent.new()
-      iex> MultiAgent.get mag, :k, & &1
-      nil
-      iex> MultiAgent.init mag, :k, fn -> 42 end
-      {:ok, 42}
-      iex> MultiAgent.get mag, :k, & &1
-      42
-      iex> MultiAgent.init mag, :k, fn -> 43 end
-      {:error, {:k, :already_exists}}
-      #
-      iex> MultiAgent.init mag, :_, fn -> :timer.sleep(300) end, timeout: 200
-      {:error, :timeout}
-      iex> MultiAgent.init mag, :k, fn -> :timer.sleep(300) end, timeout: 200
-      {:error, {:k, :already_exists}}
-      iex> MultiAgent.init mag, :k2, fn -> 42 end, late_call: false
-      {:ok, 42}
-      iex> MultiAgent.cast mag, :k2, & :timer.sleep(100) && &1 #blocks for 100 ms
-      iex> MultiAgent.update mag, :k, fn _ -> 0 end, timeout: 50
-      {:error, :timeout}
-      iex> MultiAgent.get mag, :k, & &1 #update was not happend
-      42
-  """
-  @spec init( multiagent, key, fun_arg( a), [ {:timeout, timeout}
-                                            | {:late_call, boolean}
-                                            | {:max_threads, pos_integer | :infinity}])
-        :: {:ok, a}
-         | {:error, {key, :already_exists}} when a: var
-  def init( multiagent, key, fun, opts \\ [timeout: 5000]) do
-    check_opts opts, [:late_call, :timeout, :max_threads]
-    opts = Keyword.put opts, :timeout, 5000
-    req = %Req{action: :init, data: {key, fun, opts}}
-    GenServer.call pid(multiagent), req, :infinity
   end
 
 
@@ -1128,6 +1036,66 @@ defmodule MultiAgent do
   def cast( multiagent, funs) do
     req = %Req{action: :cast, data: funs}
     batch multiagent, req
+  end
+
+  @doc """
+  Sets the given `flag` to state with given `key`.
+  Returns the old value of flag for this `key`.
+
+  ## Flags
+
+  `:late_call` option specifies should multiagent execute functions that are
+  expired. This happend when caller timeout is took place while callback is
+  still in the queue. By default it is set to `false`, so callback will never be
+  called after timeout.
+
+  Multiagent can execute `get` calls on the same key in parallel. `max_threads`
+  option specifies number of threads per key used minus one (for the worker
+  process thread, holding the queue). By default four `get` calls on the same
+  state could be executed, so
+
+      sleep100ms = fn _ -> :timer.sleep(100) end
+      List.duplicate( fn -> MultiAgent.get( multiagent, :key, sleep100ms) end, 4)
+      |> Enum.map( &Task.async/1)
+      |> Enum.map( &Task.await/1)
+
+  will be executed in around of 100 ms, not 500. Be aware, that this call:
+
+      Task.start fn -> get( multiagent, :k, sleep100ms) end
+      get_and_update multiagent, :k, sleep100ms
+      get_and_update multiagent, :k, sleep100ms
+
+  will be executed in around of 200 ms because `multiagent` can parallelize any
+  sequence of `get/3` calls ending with `get_and_update/3`, `update/3` or
+  `cast/3`.
+
+  Use `max_threads: 1` to execute `get` calls in sequence.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new()
+      iex> MultiAgent.get mag, :key, & &1
+      nil
+      iex> MultiAgent.flag mag, :key, :late_call, true
+      false
+      iex> MultiAgent.cast mag, :key, & :timer.sleep(100) && &1 
+      #blocks for 100 ms
+      iex> MultiAgent.update mag, :k, fn _ -> 0 end, timeout: 50
+      {:error, :timeout}
+      iex> MultiAgent.get mag, :k, & &1 #update was not happend
+      42
+  """
+  @spec flag( multiagent, key, :late_call, boolean) :: boolean
+  @spec flag( multiagent, key, :max_threads, pos_integer | :infinity) :: pos_integer | :infinity
+  def flag( multiagent, key, flag, value) do
+    GenServer.call pid(multiagent), {:flag, key, flag, value}
+  end
+
+
+  @spec flags( multiagent, key) :: [ {:late_call, boolean}
+                                   | {:max_threads, pos_integer | :infinity}]
+  def flags( multiagent, key) do
+    GenServer.call pid(multiagent), {:flags, key}
   end
 
 

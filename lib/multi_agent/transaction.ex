@@ -12,12 +12,13 @@ defmodule MultiAgent.Transaction do
   def divide( map, keys) do
     Enum.reduce uniq(keys), {%{}, %{}}, fn key, {known, workers} ->
       case map do
-        %{^key => {state,_,_}} ->
-          {known |> Map.put(key, parse state), workers}
         %{^key => {:pid, worker}} ->
-          {known, workers |> Map.put(key, worker)}
+          {known, put_in( workers[key], worker)}
+
+        %{^key => {state,_,_}} ->
+          {put_in( known[key], parse state), workers}
         _ ->
-          {known |> Map.put(key, nil), workers}
+          {put_in( known[key], nil), workers}
       end
     end
   end
@@ -34,32 +35,28 @@ defmodule MultiAgent.Transaction do
           msg -> msg
         end
 
-        {:dictionary, dict} =
-          Process.info( from, :dictionary)
+        {_, dict} = Process.info( from, :dictionary)
         key = dict[:'$key']
-        known = Map.put known, key, state
+        known = put_in known[key], state
        _collect( known, keys--[key])
     end
   end
 
 
-  #
-  # on server
-  #
+  ##
+  ## WILL RUN BY SERVER
+  ##
 
   def run(%Req{action: :get, !: true}=req, map) do
     {_, keys} = req.data
     {known, workers} = divide map, keys
 
     known = for {key, w} <- workers, into: known do
-              {:dictionary, dict}
-                = Process.info w, :dictionary
+              {_, dict} = Process.info w, :dictionary
               {key, dict[:'$state']}
             end
 
-    Task.start_link fn ->
-      process req, known
-    end
+    Task.start_link __MODULE__, :process, [req, known]
     map
   end
 
@@ -67,14 +64,27 @@ defmodule MultiAgent.Transaction do
     {_,keys} = req.data
     {known, workers} = divide map, keys
 
-    {:ok, tr} = Task.start_link fn ->
-                  process req, known
-                end
+    {:ok, tr} =
+      Task.start_link __MODULE__, :process, [req, known]
 
-    for {_key, w} <- workers do
-      send w, {:t_send, tr}
-    end
+    for {_key, w} <- workers, do: send w, {:t_send, tr}
     map
+  end
+
+  # One-key transaction
+  def run(%Req{data: {fun, [key]}}=req, map) do
+    case map[key] do
+      {:pid, worker} ->
+        req = %{req | action: {:one_key_t, req.action},
+                      data: {key, &Callback.run(fun, [[&1]])}}
+        send worker, Req.to_msg req
+        map
+
+      tuple_or_nil ->
+        worker = spawn_link Worker, :loop, [self(), key, tuple_or_nil]
+        map = put_in map[key], {:pid, worker}
+        run req, map
+    end
   end
 
   def run( req, map) do
@@ -82,9 +92,9 @@ defmodule MultiAgent.Transaction do
 
     unless keys == uniq keys do
       raise """
-            Expected uniq keys for changing transactions (update,
-            get_and_update, cast). Got: #{inspect keys}, so crefully
-            check #{inspect(keys--uniq keys)} keys.
+            Expected uniq keys for transactions that changing state
+            (`update`, `get_and_update`, `cast`). Got: #{inspect keys}.
+            Please check #{inspect(keys--uniq keys)} keys.
             """
             |> String.replace("\n", " ")
     end
@@ -101,24 +111,21 @@ defmodule MultiAgent.Transaction do
       {k, {:pid, rec_workers[k]}}
     end
 
-    {:ok, tr} = Task.start_link fn ->
-                  process req, known, rec_workers
-                end
+    {:ok, tr} =
+      Task.start_link __MODULE__, :process, [req, known, rec_workers]
 
-    for {_key, w} <- workers do
-      if req.! do
-        send w, {:!, {:t_send_and_get, tr}}
-      else
-        send w, {:t_send_and_get, tr}
-      end
+    if req.! do
+      for {_, w} <- workers, do: send( w, {:!, {:t_send_and_get, tr}})
+    else
+      for {_, w} <- workers, do: send( w, {:t_send_and_get, tr})
     end
     map
   end
 
 
-  #
-  # on separate process
-  #
+  ##
+  ## WILL RUN BY SEPARATE PROCESS
+  ##
 
   def process(%Req{action: :get, !: true}=req, known) do
     {fun, keys} = req.data
@@ -137,21 +144,18 @@ defmodule MultiAgent.Transaction do
     states = for key <- keys, do: known[key]
 
     case Callback.run fun, [states] do
-      :drop ->
-        for key <- keys,
-          do: send( workers[key], :drop_state)
+      c when c in [:id, :drop] ->
+        for key <- keys, do: send( workers[key], c)
 
       results when length(results) == length(keys) ->
         for {key, state} <- Enum.zip keys, results do
-          send workers[key], {:new_state, state}
+          send workers[key], {:put, state}
         end
 
       err ->
         raise """
-              Transaction callback is malformed!
-              Expected to be returned :drop or a list with a
-              new state for every key involved. Got: #{inspect err}.
-              See docs for hint."
+              Transaction callback for `cast` or `update` is malformed!
+              See docs for hint. Got: #{inspect err}."
               """
               |> String.replace("\n", " ")
     end
@@ -170,17 +174,16 @@ defmodule MultiAgent.Transaction do
     case Callback.run fun, [states] do
       :pop ->
         for key <- keys,
-          do: send( workers[key], :drop_state)
+          do: send( workers[key], :drop)
         states
 
-      {get, :drop} ->
-        for key <- keys,
-          do: send( workers[key], :drop_state)
+      {get, res} when res in [:drop, :id] ->
+        for key <- keys, do: send( workers[key], res)
         get
 
       {get, states} when length(states) == length(keys) ->
         for {key, state} <- Enum.zip keys, states do
-          send workers[key], {:new_state, state}
+          send workers[key], {:put, state}
         end
         get
 
@@ -188,13 +191,10 @@ defmodule MultiAgent.Transaction do
         for {key, oldstate, result} <- Enum.zip [keys, states, results] do
           case result do
             {get, state} ->
-              # IO.inspect({key, oldstate, result}, label: "{key, oldstate, result}")
-              # IO.inspect(workers[key], label: "workers[key]")
-              # IO.inspect("")
-              send workers[key], {:new_state, state}
+              send workers[key], {:put, state}
               get
             :pop ->
-              send workers[key], :drop_state
+              send workers[key], :drop
               oldstate
             :id ->
               send workers[key], :id
@@ -203,11 +203,8 @@ defmodule MultiAgent.Transaction do
         end
 
       err -> raise """
-                   Transaction callback is malformed!
-                   Expected to be returned :pop, a list with a
-                   new state for every key involved or a pair
-                   {returned value, new states}. Got: #{inspect err}.
-                   See docs."
+                   Transaction callback for `get_and_update` is malformed!
+                   See docs for hint. Got: #{inspect err}."
                    """
                    |> String.replace("\n", " ")
     end

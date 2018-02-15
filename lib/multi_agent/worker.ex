@@ -7,9 +7,9 @@ defmodule MultiAgent.Worker do
 
   @wait 10 #milliseconds
 
-  #
-  # HELPERS
-  #
+  ##
+  ## HELPERS
+  ##
 
   def dec(:infinity), do: :infinity
   def dec(i) when is_integer(i), do: i-1
@@ -24,21 +24,24 @@ defmodule MultiAgent.Worker do
 
   def new_state( state \\ nil), do: {state, false, 4} # 5 processes per state by def
 
-
-  defp call?(:infinity), do: true
-  defp call?( exp), do: Process.get(:'$late_call') || (System.system_time < exp)
-
   # is OK for numbers < 1000
   defp rand( to), do: rem System.system_time, to
 
 
-  #
-  # PROCESS MSG
-  #
+  ##
+  ## PROCESS MSG
+  ##
+
+  defp process({action, fun, from, :infinity}), do: process {action, fun, from}
+  defp process({action, fun, from, expires}) do
+    if Process.get(:'$late_call') || (System.system_time < expires) do
+      process {action, fun, from}
+    end
+  end
 
   # get case if cannot create more threads
-  defp process({:get, fun, from, expires}) do
-    if call? expires do
+  defp process({:get, fun, from}) do
+    # if call? expires do
       t_limit = Process.get :'$threads_limit'
       if t_limit > 1 do
         worker = self()
@@ -58,28 +61,28 @@ defmodule MultiAgent.Worker do
         result = Callback.run fun, [state]
         GenServer.reply from, result
       end
-    end
+    # end
   end
 
-  defp process({:get_and_update, fun, from, expires}) do
-    if call? expires do
+  defp process({:get_and_update, fun, from}) do
+    # if call? expires do
       state = Process.get :'$state'
       case Callback.run fun, [state] do
         {get, state} ->
-          process {:new_state, state}
+          process {:put, state}
           GenServer.reply from, get
         :pop ->
-          process :drop_state
+          process :drop
           GenServer.reply from, state
       end
-    end
+    # end
   end
 
-  defp process({:update, fun, from, expires}) do
-    if call? expires do
+  defp process({:update, fun, from}) do
+    # if call? expires do
       process {:cast, fun}
       GenServer.reply from, :ok
-    end
+    # end
   end
 
   defp process({:cast, fun}) do
@@ -87,25 +90,9 @@ defmodule MultiAgent.Worker do
     Process.put :'$state', Callback.run( fun, [state])
   end
 
-  defp process(:drop_state), do: Process.delete :'$state'
-  defp process({:new_state, state}), do: Process.put :'$state', state
+  defp process(:drop), do: Process.delete :'$state'
+  defp process({:put, state}), do: Process.put :'$state', state
   defp process(:id), do: :ignore
-
-  defp process({:init, fun, from}) do
-    res = Task.start( fn -> Callback.run fun end) |>
-          Task.yield( opts[:timeout])
-       || Task.shutdown( task, :brutal_kill)
-
-    case res do
-      {:ok, state} ->
-         GenServer.reply from, {:ok, state}
-         process {:new_state, state}
-      nil ->
-         GenServer.reply from, {:error, :timeout}
-      exit ->
-         GenServer.reply from, {:error, exit}
-    end
-  end
 
   # transaction handler
   # only send current state
@@ -124,6 +111,64 @@ defmodule MultiAgent.Worker do
   defp process({:t_send_and_get, from}) do
     process {:t_send, from}
     process :t_get
+  end
+
+  ##
+  ## OPTIMIZATION FOR ONE-KEY TRANSACTIONS
+  ##
+  ## This exists so additional process to hold
+  ## transaction will not be spawned and we will
+  ## not have to wait process to reply it's state.
+  ##
+
+  defp process({{:one_key_t, :get_and_update}, fun, from}) do
+    state = Process.get :'$state'
+    case Callback.run fun, [[state]] do
+      [:id] ->
+        GenServer.reply from, [state]
+      [:pop] ->
+        process :drop
+        GenServer.reply from, [state]
+      [{get, state}] ->
+        process {:put, state}
+        GenServer.reply from, [get]
+      {get, [state]} ->
+        process {:put, state}
+        GenServer.reply from, get
+      {get, res} when res in [:drop, :id] ->
+        process res
+        GenServer.reply from, get
+      :pop ->
+        process :drop
+        GenServer.reply from, [state]
+      err ->
+        raise """
+        Transaction callback for `get_and_update` is malformed!
+        See docs for hint. Got: #{inspect err}."
+        """
+        |> String.replace("\n", " ")
+    end
+  end
+
+  defp process({{:one_key_t, :update}, fun, from}) do
+    process {{:one_key_t, :cast}, fun}
+    GenServer.reply from, :ok
+  end
+
+  defp process({{:one_key_t, :cast}, fun}) do
+    state = Process.get :'$state'
+    case Callback.run fun, [[state]] do
+      [state] ->
+        process {:put, state}
+      c when c in [:drop, :id] -> # :drop, :id
+        process c
+      err ->
+        raise """
+        Transaction callback for `cast` or `update` is malformed!
+        See docs for hint. Got: #{inspect err}."
+        """
+        |> String.replace("\n", " ")
+    end
   end
 
 
@@ -155,7 +200,7 @@ defmodule MultiAgent.Worker do
   end
 
 
-  defp common_rec( selective \\ true) do
+  defp _loop( selective \\ true) do
     wait = Process.get :'$wait'
     receive do
       {:!, msg} ->
@@ -181,7 +226,7 @@ defmodule MultiAgent.Worker do
 
   # →
   def loop( selective_receive \\ true)
-  def loop( false), do: common_rec(false)
+  def loop( false), do: _loop(false)
   def loop( true) do
     {_, len} = Process.info self(), :message_queue_len
     if len > 100 do
@@ -196,7 +241,7 @@ defmodule MultiAgent.Worker do
         process msg
         loop()
     after 0 ->
-      common_rec()
+     _loop()
     end
   end
 
