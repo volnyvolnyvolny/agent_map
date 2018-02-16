@@ -32,6 +32,17 @@ defmodule MultiAgent.Worker do
   ## PROCESS MSG
   ##
 
+  defp process({:flag, :late_call, value, from}) do
+    GenServer.reply from, (Process.get(:'$late_call') || false)
+    Process.put :'$late_call', value
+  end
+
+  defp process({:flag, :max_threads, value, from}) do
+    GenServer.reply from, Process.get :'$max_threads'
+    Process.put :'$max_threads', value
+  end
+
+
   defp process({action, fun, from, :infinity}), do: process {action, fun, from}
   defp process({action, fun, from, expires}) do
     if Process.get(:'$late_call') || (System.system_time < expires) do
@@ -41,48 +52,41 @@ defmodule MultiAgent.Worker do
 
   # get case if cannot create more threads
   defp process({:get, fun, from}) do
-    # if call? expires do
-      t_limit = Process.get :'$threads_limit'
-      if t_limit > 1 do
-        worker = self()
-        state = Process.get :'$state'
+    t_limit = Process.get :'$threads_limit'
+    if t_limit > 1 do
+      worker = self()
+      state = Process.get :'$state'
 
-        Task.start_link fn ->
-          result = Callback.run fun, [state]
-          GenServer.reply from, result
-          unless t_limit == :infinity do
-            send worker, :done
-          end
-        end
-        dec :'$threads_limit'
-
-      else
-        state = Process.get :'$state'
+      Task.start_link fn ->
         result = Callback.run fun, [state]
         GenServer.reply from, result
+        unless t_limit == :infinity do
+          send worker, :done
+        end
       end
-    # end
+      dec :'$threads_limit'
+    else
+      state = Process.get :'$state'
+      result = Callback.run fun, [state]
+      GenServer.reply from, result
+    end
   end
 
   defp process({:get_and_update, fun, from}) do
-    # if call? expires do
-      state = Process.get :'$state'
-      case Callback.run fun, [state] do
-        {get, state} ->
-          process {:put, state}
-          GenServer.reply from, get
-        :pop ->
-          process :drop
-          GenServer.reply from, state
-      end
-    # end
+    state = Process.get :'$state'
+    case Callback.run fun, [state] do
+      {get, state} ->
+        process {:put, state}
+        GenServer.reply from, get
+      :pop ->
+        process :drop
+        GenServer.reply from, state
+    end
   end
 
   defp process({:update, fun, from}) do
-    # if call? expires do
-      process {:cast, fun}
-      GenServer.reply from, :ok
-    # end
+    process {:cast, fun}
+    GenServer.reply from, :ok
   end
 
   defp process({:cast, fun}) do
@@ -93,6 +97,7 @@ defmodule MultiAgent.Worker do
   defp process(:drop), do: Process.delete :'$state'
   defp process({:put, state}), do: Process.put :'$state', state
   defp process(:id), do: :ignore
+
 
   # transaction handler
   # only send current state
@@ -112,6 +117,14 @@ defmodule MultiAgent.Worker do
     process {:t_send, from}
     process :t_get
   end
+
+
+  defp process(:done), do: inc :'$threads_limit'
+  defp process(:done_on_server) do
+    process :done
+    inc :'$max_threads'
+  end
+
 
   ##
   ## OPTIMIZATION FOR ONE-KEY TRANSACTIONS
@@ -169,13 +182,6 @@ defmodule MultiAgent.Worker do
         """
         |> String.replace("\n", " ")
     end
-  end
-
-
-  defp process(:done), do: inc :'$threads_limit'
-  defp process(:done_on_server) do
-    inc :'$max_threads'
-    process :done
   end
 
 

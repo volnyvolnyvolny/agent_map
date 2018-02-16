@@ -1,6 +1,6 @@
 defmodule MultiAgentTest do
   use ExUnit.Case
-#  doctest MultiAgent
+  doctest MultiAgent
 
   test "new" do
     # mag = MultiAgent.new
@@ -121,19 +121,19 @@ defmodule MultiAgentTest do
     # assert 43 == MultiAgent.get mag, :!, :key, & &1
   end
 
-  test "init" do
-    mag = MultiAgent.new()
-    assert nil == MultiAgent.get mag, :k, & &1
-    assert {:ok, 42} == MultiAgent.init mag, :k, fn -> 42 end
-    assert 42 == MultiAgent.get mag, :k, & &1
-    assert {:error, {:k, :already_exists}} == MultiAgent.init mag, :k, fn -> 43 end
-    assert {:error, :timeout} == MultiAgent.init mag, :_, fn -> :timer.sleep(300) end, timeout: 200
-    assert {:error, {:k, :already_exists}} == MultiAgent.init mag, :k, fn -> :timer.sleep(300) end, timeout: 200
-    assert {:ok, 42} == MultiAgent.init mag, :k2, fn -> 42 end, late_call: false
+  # test "init" do
+  #   mag = MultiAgent.new()
+  #   assert nil == MultiAgent.get mag, :k, & &1
+  #   assert {:ok, 42} == MultiAgent.init mag, :k, fn -> 42 end
+  #   assert 42 == MultiAgent.get mag, :k, & &1
+  #   assert {:error, {:k, :already_exists}} == MultiAgent.init mag, :k, fn -> 43 end
+  #   assert {:error, :timeout} == MultiAgent.init mag, :_, fn -> :timer.sleep(300) end, timeout: 200
+  #   assert {:error, {:k, :already_exists}} == MultiAgent.init mag, :k, fn -> :timer.sleep(300) end, timeout: 200
+  #   assert {:ok, 42} == MultiAgent.init mag, :k2, fn -> 42 end, late_call: false
 
-    MultiAgent.cast mag, :k2, & :timer.sleep(100) && &1 #blocks for 100 ms
+  #   MultiAgent.cast mag, :k2, & :timer.sleep(100) && &1 #blocks for 100 ms
 
-    assert {:error, :timeout} == MultiAgent.update mag, :k, fn _ -> 0 end, 50
-    assert 42 == MultiAgent.get mag, :k, & &1 #update was not happend
-  end
+  #   assert {:error, :timeout} == MultiAgent.update mag, :k, fn _ -> 0 end, 50
+  #   assert 42 == MultiAgent.get mag, :k, & &1 #update was not happend
+  # end
 end

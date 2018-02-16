@@ -241,7 +241,7 @@ defmodule MultiAgent do
 
 
   @doc """
-  Returns a new empty multiagent.
+  Returns a new empty `multiagent`.
 
   ## Examples
 
@@ -270,8 +270,7 @@ defmodule MultiAgent do
 
       iex> {:ok, pid} = MultiAgent.start_link()
       iex> mag = MultiAgent.new pid
-      iex> MultiAgent.init mag, :a, fn -> 1 end
-      {:ok, 1}
+      iex> MultiAgent.put mag, :a, 1
       iex> mag[:a]
       1
   """
@@ -1038,6 +1037,7 @@ defmodule MultiAgent do
     batch multiagent, req
   end
 
+
   @doc """
   Sets the given `flag` to state with given `key`.
   Returns the old value of flag for this `key`.
@@ -1050,18 +1050,24 @@ defmodule MultiAgent do
   called after timeout.
 
   Multiagent can execute `get` calls on the same key in parallel. `max_threads`
-  option specifies number of threads per key used minus one (for the worker
-  process thread, holding the queue). By default four `get` calls on the same
-  state could be executed, so
+  option specifies number of threads per key used, minus one thread that is the
+  process holding the queue. By default four `get` calls on the same state could
+  be executed, so
 
-      sleep100ms = fn _ -> :timer.sleep(100) end
-      List.duplicate( fn -> MultiAgent.get( multiagent, :key, sleep100ms) end, 4)
-      |> Enum.map( &Task.async/1)
-      |> Enum.map( &Task.await/1)
+      sleep100ms = fn _ ->
+        :timer.sleep 100
+      end
+      List.duplicate( fn ->
+        MultiAgent.get multiagent, :key, sleep100ms
+      end, 4)
+      |> Enum.map(&Task.async/1)
+      |> Enum.map(&Task.await/1)
 
   will be executed in around of 100 ms, not 500. Be aware, that this call:
 
-      Task.start fn -> get( multiagent, :k, sleep100ms) end
+      Task.start fn ->
+        get multiagent, :k, sleep100ms
+      end
       get_and_update multiagent, :k, sleep100ms
       get_and_update multiagent, :k, sleep100ms
 
@@ -1074,16 +1080,25 @@ defmodule MultiAgent do
   ## Examples
 
       iex> mag = MultiAgent.new()
-      iex> MultiAgent.get mag, :key, & &1
-      nil
+      iex> MultiAgent.cast mag, :key, fn _ ->
+      ...>   :timer.sleep 100 #!!!
+      ...>   42
+      ...> end
+      iex> MultiAgent.update mag, :k, fn _ -> 0 end, 50
+      iex> MultiAgent.get mag, :k # late_call==false
+      42
+      ##
+      ## BUT:
+      ##
       iex> MultiAgent.flag mag, :key, :late_call, true
       false
-      iex> MultiAgent.cast mag, :key, & :timer.sleep(100) && &1 
-      #blocks for 100 ms
-      iex> MultiAgent.update mag, :k, fn _ -> 0 end, timeout: 50
-      {:error, :timeout}
-      iex> MultiAgent.get mag, :k, & &1 #update was not happend
-      42
+      iex> MultiAgent.cast mag, :key, fn _ ->
+      ...>   :timer.sleep 100 #!!!
+      ...>   43
+      ...> end
+      iex> MultiAgent.update mag, :k, fn _ -> 0 end, 50
+      iex> MultiAgent.get mag, :k # late_call==true
+      0
   """
   @spec flag( multiagent, key, :late_call, boolean) :: boolean
   @spec flag( multiagent, key, :max_threads, pos_integer | :infinity) :: pos_integer | :infinity
@@ -1092,8 +1107,27 @@ defmodule MultiAgent do
   end
 
 
-  @spec flags( multiagent, key) :: [ {:late_call, boolean}
-                                   | {:max_threads, pos_integer | :infinity}]
+  @doc """
+  See `flag/4`.
+
+  ## Examples
+
+      iex> mag = MultiAgent.new()
+      iex> MultiAgent.get mag, :key, & &1
+      nil
+      iex> MultiAgent.flags mag, :key
+      [late_call: false, max_threads: 4]
+      iex> MultiAgent.flag mag, :key, :late_call, true
+      false
+      iex> MultiAgent.flags mag, :key
+      [late_call: true, max_threads: 4]
+      iex> MultiAgent.flag mag, :key, :max_threads, 1
+      4
+      iex> MultiAgent.flags mag, :key
+      [late_call: true, max_threads: 1]
+  """
+  @spec flags( multiagent, key) :: [late_call: boolean,
+                                    max_threads: pos_integer | :infinity]
   def flags( multiagent, key) do
     GenServer.call pid(multiagent), {:flags, key}
   end

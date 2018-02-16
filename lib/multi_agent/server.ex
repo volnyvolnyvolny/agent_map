@@ -3,7 +3,7 @@ defmodule MultiAgent.Server do
 
   alias MultiAgent.{Callback, Worker, Req}
 
-  import Worker, only: [inc: 1, new_state: 1]
+  import Worker, only: [inc: 1, new_state: 1, new_state: 0]
 
   import Enum, only: [uniq: 1]
   import Map, only: [delete: 2]
@@ -85,36 +85,42 @@ defmodule MultiAgent.Server do
   ## Handle Reqs
   ##
 
-  # init is a Map.put analog
-  def handle_call({:init, key, fun, opts}, from, map) do
+  def handle_call({:flag, key, flag, value}=msg, from, map) do
+    case map do
+      %{^key => {:pid, worker}} ->
+        send worker, {:!, {:flag, flag, value, from}}
+        {:noreply, map}
 
-    if Map.has_key? map, key do
-      {:reply, {:error, {key, :already_exists}}, map}
-    else
-      timeout = opts[:timeout] || 5000
-
-      fun = fn [_state] ->
-        task = Task.async fn -> Callback.run fun end
-        res = Task.yield( task, timeout)
-           || Task.shutdown( task, :brutal_kill)
-
-        case res do
-          {:ok, state} -> {{:ok, state}, [state]}
-          nil ->
-            {{:error, :timeout}, :id}
-          exit ->
-            {{:error, exit}, :id}
+      %{^key => {state, lc, mt}} ->
+        case flag do
+          :late_call ->
+            map = put_in map[key], {state, value, mt}
+            {:reply, lc, map}
+          :max_threads ->
+            map = put_in map[key], {state, lc, value}
+            {:reply, mt, map}
+          err ->
+            {:stop, {:error, "Wrong flag #{err}. Accepted :late_call and :max_threads!"}, map}
         end
-      end
 
-      late_call = opts[:late_call] || false
-      threads_num = opts[:max_threads] || 5
-      map = put_in map[key], {nil, late_call, threads_num}
-
-      handle %Req{action: :get_and_update,
-                  from: from,
-                  data: {fun, [key]}}, map
+      _ -> map = put_in map[key], new_state()
+           handle_call msg, from, map
     end
+  end
+
+  def handle_call({:flags, key},_from, map) do
+    {lc, mt} = case map do
+
+      %{^key => {:pid, worker}} ->
+        {_, dict} = Process.info worker, :dictionary
+        {dict[:'$late_call'], dict[:'$max_threads']}
+
+      %{^key => {_, lc, mt}} -> {lc, mt}
+
+      _ -> {false, 4}
+    end
+
+    {:reply, [late_call: lc, max_threads: mt], map}
   end
 
   def handle_call( req, from, map) do
@@ -196,6 +202,9 @@ defmodule MultiAgent.Server do
       send worker, :die!
 
       unless Keyword.has_key? dict, :'$state' do
+        #
+        # TODO: remember changed state
+        #
         {:noreply, delete( map, key)} #GC
       else
         max_t = dict[:'$max_threads']
