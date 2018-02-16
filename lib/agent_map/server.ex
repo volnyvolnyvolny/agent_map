@@ -1,7 +1,7 @@
-defmodule MultiAgent.Server do
+defmodule AgentMap.Server do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Worker, Req}
+  alias AgentMap.{Callback, Worker, Req}
 
   import Worker, only: [inc: 1, new_state: 1, new_state: 0]
 

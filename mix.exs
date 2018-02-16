@@ -1,4 +1,4 @@
-defmodule MultiAgent.Mixfile do
+defmodule AgentMap.Mixfile do
   use Mix.Project
 
   def project do

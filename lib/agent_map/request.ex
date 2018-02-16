@@ -1,7 +1,7 @@
-defmodule MultiAgent.Req do
+defmodule AgentMap.Req do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Worker, Transaction, Req}
+  alias AgentMap.{Callback, Worker, Transaction, Req}
 
   import Worker, only: [dec: 1, new_state: 1, new_state: 0]
   import Callback, only: [parse: 1]
@@ -123,7 +123,7 @@ defmodule MultiAgent.Req do
         send worker, to_msg %{req | action: :cast}
         map
       _ ->
-        Map.put map, key, new_state {:state, state}
+        put_in map[key], new_state {:state, state}
     end
 
     {:noreply, map}

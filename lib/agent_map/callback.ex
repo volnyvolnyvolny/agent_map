@@ -1,4 +1,4 @@
-defmodule MultiAgent.Callback do
+defmodule AgentMap.Callback do
   @moduledoc false
 
   @compile {:inline, parse: 1}

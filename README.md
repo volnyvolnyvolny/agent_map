@@ -1,4 +1,4 @@
-# MultiAgent
+# AgentMap
 
 **TODO: Add description**
 

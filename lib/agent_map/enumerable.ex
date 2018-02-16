@@ -1,8 +1,8 @@
-defimpl Enumerable, for: MultiAgent do
-  import MultiAgent
+defimpl Enumerable, for: AgentMap do
+  import AgentMap
 
 
-  def count(%MultiAgent{link: mag}) do
+  def count(%AgentMap{link: mag}) do
     {:ok, GenServer.call( mag, :count)}
   end
 

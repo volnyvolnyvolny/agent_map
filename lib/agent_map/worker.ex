@@ -1,9 +1,9 @@
-defmodule MultiAgent.Worker do
+defmodule AgentMap.Worker do
   @moduledoc false
 
   @compile {:inline, rand: 1, dec: 1, inc: 1, new_state: 1}
 
-  alias MultiAgent.Callback
+  alias AgentMap.Callback
 
   @wait 10 #milliseconds
 

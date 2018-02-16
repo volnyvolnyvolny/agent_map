@@ -1,7 +1,7 @@
-defmodule MultiAgent.Transaction do
+defmodule AgentMap.Transaction do
   @moduledoc false
 
-  alias MultiAgent.{Callback, Req, Worker}
+  alias AgentMap.{Callback, Req, Worker}
 
 
   import Enum, only: [uniq: 1]
