@@ -162,10 +162,8 @@ defmodule AgentMap do
 
   @doc false
   def child_spec( funs_and_opts) do
-    %{
-      id: AgentMap,
-      start: {AgentMap, :start_link, [funs_and_opts]}
-    }
+    %{id: AgentMap,
+      start: {AgentMap, :start_link, [funs_and_opts]}}
   end
 
 

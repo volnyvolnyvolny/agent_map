@@ -3,7 +3,7 @@ defimpl Enumerable, for: AgentMap do
 
 
   def count(%AgentMap{link: mag}) do
-    {:ok, GenServer.call( mag, :count)}
+    {:ok, GenServer.call(mag, :count)}
   end
 
 

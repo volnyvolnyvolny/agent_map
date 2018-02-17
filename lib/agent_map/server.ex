@@ -1,13 +1,14 @@
 defmodule AgentMap.Server do
   @moduledoc false
 
-  alias AgentMap.{Callback, Worker, Req}
+  alias AgentMap.{Callback, Worker, Req, Value}
 
-  import Worker, only: [inc: 1, new_state: 1, new_state: 0]
+  import Worker, only: [inc: 1]
+  import Req, only: [fetch: 2, handle: 2]
+  import Value, only: [fmt: 1]
 
   import Enum, only: [uniq: 1]
   import Map, only: [delete: 2]
-  import Req, only: [fetch: 2, handle: 2]
 
   use GenServer
 
@@ -17,13 +18,13 @@ defmodule AgentMap.Server do
   ##
 
   def init({funs, timeout}) do
-    with keys = Keyword.keys( funs),
-         [] <- keys--uniq( keys), #check for dups
-         {:ok, results} <- Callback.safe_run( funs, timeout) do
+    with keys = Keyword.keys(funs),
+         [] <- keys--uniq(keys), #check for dups
+         {:ok, results} <- Callback.safe_run(funs, timeout) do
 
       map = for {key, s} <- results, into: %{} do
-              {key, new_state {:state, s}}
-            end
+        {key, fmt %Value{state: {:state, s}}}
+      end
       {:ok, map}
     else
       {:error, reason} ->
@@ -48,26 +49,26 @@ defmodule AgentMap.Server do
 
   def handle_call(:keys,_from, map) do
     keys = for key <- Map.keys( map),
-               has_key?( map, key), do: key
+               has_key?(map, key), do: key
 
     {:reply, keys, map}
   end
 
   def handle_call({:has_key?, key},_from, map) do
-    {:reply, has_key?( map, key), map}
+    {:reply, has_key?(map, key), map}
   end
 
   def handle_call({:!, {:fetch, key}},_from, map) do
-    {:reply, fetch( map, key), map}
+    {:reply, fetch(map, key), map}
   end
 
   def handle_call({:!, {:take, keys}},_from, map) do
     res = Enum.reduce keys, %{}, fn key, res ->
-            case fetch map, key do
-              {:ok, state} -> put_in res[key], state
-              _ -> res
-            end
-          end
+      case fetch map, key do
+        {:ok, state} -> put_in res[key], state
+        _ -> res
+      end
+    end
 
     {:reply, res, map}
   end
@@ -103,8 +104,9 @@ defmodule AgentMap.Server do
             {:stop, {:error, "Wrong flag #{err}. Accepted :late_call and :max_threads!"}, map}
         end
 
-      _ -> map = put_in map[key], new_state()
-           handle_call msg, from, map
+      _ ->
+        map = put_in map[key], fmt %Value{}
+        handle_call msg, from, map
     end
   end
 
@@ -115,9 +117,11 @@ defmodule AgentMap.Server do
         {_, dict} = Process.info worker, :dictionary
         {dict[:'$late_call'], dict[:'$max_threads']}
 
-      %{^key => {_, lc, mt}} -> {lc, mt}
+      %{^key => {_, lc, mt}} ->
+        {lc, mt}
 
-      _ -> {false, 4}
+      _ ->
+        {%Value{}.late_call, %Value{}.max_threads}
     end
 
     {:reply, [late_call: lc, max_threads: mt], map}
@@ -136,7 +140,7 @@ defmodule AgentMap.Server do
   ## Info
   ##
 
-  defp update_or_cast?( act) when is_atom(act), do: act not in [:get, :done, :id]
+  defp update_or_cast?(act) when is_atom(act), do: act not in [:get, :done, :id]
   defp update_or_cast?({:!, msg}), do: update_or_cast? msg
   defp update_or_cast?({act,_,_,_}), do: update_or_cast? act
   defp update_or_cast?({act,_}), do: update_or_cast? act
@@ -152,16 +156,17 @@ defmodule AgentMap.Server do
 
   # `get`-callback was executed on server
   def handle_info({:done_on_server, key}, map) do
+    def_value = fmt %Value{}
     map = case map do
       %{^key => {:pid, worker}} ->
         send worker, {:!, :done_on_server}
         map
 
-      %{^key => {nil, _, 4}} ->
+      %{^key => ^def_value} ->
         delete map, key
 
-      %{^key => state} ->
-        %{map | key => inc(state)}
+      %{^key => {state, late_call, max_threads}} ->
+        %{map | key => {state, late_call, inc max_threads}}
 
       _ -> map
     end

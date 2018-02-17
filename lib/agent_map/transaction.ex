@@ -1,12 +1,12 @@
 defmodule AgentMap.Transaction do
   @moduledoc false
 
-  alias AgentMap.{Callback, Req, Worker}
+  alias AgentMap.{Callback, Req, Worker, Value}
 
 
   import Enum, only: [uniq: 1]
   import Map, only: [keys: 1]
-  import Callback, only: [parse: 1]
+  import Value, only: [parse: 1]
 
 
   def divide( map, keys) do
@@ -35,10 +35,10 @@ defmodule AgentMap.Transaction do
           msg -> msg
         end
 
-        {_, dict} = Process.info( from, :dictionary)
+        {_, dict} = Process.info from, :dictionary
         key = dict[:'$key']
         known = put_in known[key], state
-       _collect( known, keys--[key])
+       _collect known, keys--[key]
     end
   end
 
@@ -52,9 +52,9 @@ defmodule AgentMap.Transaction do
     {known, workers} = divide map, keys
 
     known = for {key, w} <- workers, into: known do
-              {_, dict} = Process.info w, :dictionary
-              {key, dict[:'$state']}
-            end
+      {_, dict} = Process.info w, :dictionary
+      {key, dict[:'$state']}
+    end
 
     Task.start_link __MODULE__, :process, [req, known]
     map
@@ -130,12 +130,12 @@ defmodule AgentMap.Transaction do
   def process(%Req{action: :get, !: true}=req, known) do
     {fun, keys} = req.data
     states = for key <- keys, do: known[key]
-    GenServer.reply req.from, Callback.run( fun, [states])
+    GenServer.reply req.from, Callback.run(fun, [states])
   end
 
   def process(%Req{action: :get}=req, known) do
     {_, keys} = req.data
-    process %{req | :! => true}, collect( known, keys)
+    process %{req | :! => true}, collect(known, keys)
   end
 
   def process(%Req{action: :cast}=req, known, workers) do
@@ -145,7 +145,9 @@ defmodule AgentMap.Transaction do
 
     case Callback.run fun, [states] do
       c when c in [:id, :drop] ->
-        for key <- keys, do: send( workers[key], c)
+        for key <- keys do
+          send workers[key], c
+        end
 
       results when length(results) == length(keys) ->
         for {key, state} <- Enum.zip keys, results do
@@ -173,12 +175,15 @@ defmodule AgentMap.Transaction do
 
     case Callback.run fun, [states] do
       :pop ->
-        for key <- keys,
-          do: send( workers[key], :drop)
+        for key <- keys do
+          send workers[key], :drop
+        end
         states
 
       {get, res} when res in [:drop, :id] ->
-        for key <- keys, do: send( workers[key], res)
+        for key <- keys do
+          send workers[key], res
+        end
         get
 
       {get, states} when length(states) == length(keys) ->

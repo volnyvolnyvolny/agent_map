@@ -1,10 +1,10 @@
 defmodule AgentMap.Req do
   @moduledoc false
 
-  alias AgentMap.{Callback, Worker, Transaction, Req}
+  alias AgentMap.{Callback, Worker, Transaction, Req, Value}
 
-  import Worker, only: [dec: 1, new_state: 1, new_state: 0]
-  import Callback, only: [parse: 1]
+  import Worker, only: [dec: 1]
+  import Value, only: [parse: 1, fmt: 1]
 
   import Map, only: [put: 3]
 
@@ -64,11 +64,11 @@ defmodule AgentMap.Req do
     {key, fun} = req.data
     Task.start_link fn ->
       state = case fetch map, key do
-                {:ok, state} -> state
-                :error -> nil
-              end
+        {:ok, state} -> state
+        :error -> nil
+      end
 
-      GenServer.reply req.from, Callback.run( fun, [state])
+      GenServer.reply req.from, Callback.run(fun, [state])
     end
 
     {:noreply, map}
@@ -86,29 +86,29 @@ defmodule AgentMap.Req do
       {state,_late_call, t_num}=tuple when t_num > 1 -> # no need to check expires value
         server = self()
         Task.start_link fn ->
-          GenServer.reply req.from, Callback.run( fun, [parse state])
+          GenServer.reply req.from, Callback.run(fun, [parse state])
 
           unless t_num == :infinity do
             send server, {:done_on_server, key}
           end
         end
 
-        {:noreply, put( map, key, dec(tuple))}
+        {:noreply, put_in( map[key], dec tuple)}
 
       nil -> # no such key
         server = self()
-        Task.start_link( fn ->
-          GenServer.reply req.from, Callback.run( fun, [nil])
+        Task.start_link fn ->
+          GenServer.reply req.from, Callback.run(fun, [nil])
           send server, {:done_on_server, key}
-        end)
+        end
 
-        {:noreply, put( map, key, new_state())}
+        {:noreply, put_in( map[key], fmt %Value{})}
 
-      {_,_,_}=tuple -> # max_threads forbids to spawn more Task's
+      {_, _, 1}=tuple -> # max_threads forbids to spawn more Task's
         worker = spawn_link Worker, :loop, [self(), key, tuple]
         send worker, to_msg req
 
-        {:noreply, put( map, key, {:pid, worker})}
+        {:noreply, put_in( map[key], {:pid, worker})}
     end
   end
 
@@ -116,14 +116,14 @@ defmodule AgentMap.Req do
     {key, state} = req.data
 
     map = case map do
-      %{^key => {:state, _}} ->
-        %{map | key => {:state, state}}
+      %{^key => {{:state, _}, lc, mt}} ->
+        %{map | key => {{:state, state}, lc, mt}}
 
       %{^key => {:pid, worker}} ->
         send worker, to_msg %{req | action: :cast}
         map
       _ ->
-        put_in map[key], new_state {:state, state}
+        put_in map[key], fmt %Value{state: {:state, state}}
     end
 
     {:noreply, map}
@@ -153,7 +153,7 @@ defmodule AgentMap.Req do
       tuple ->
         worker = spawn_link Worker, :loop, [self(), key, tuple]
         send worker, to_msg req
-        {:noreply, put( map, key, {:pid, worker})}
+        {:noreply, put_in( map[key], {:pid, worker})}
     end
   end
 

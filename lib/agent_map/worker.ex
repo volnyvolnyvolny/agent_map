@@ -1,9 +1,11 @@
 defmodule AgentMap.Worker do
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1, new_state: 1}
+  @compile {:inline, rand: 1, dec: 1, inc: 1}
 
-  alias AgentMap.Callback
+  alias AgentMap.{Callback, Value}
+
+  import Value, only: [fmt: 1]
 
   @wait 10 #milliseconds
 
@@ -13,16 +15,13 @@ defmodule AgentMap.Worker do
 
   def dec(:infinity), do: :infinity
   def dec(i) when is_integer(i), do: i-1
-  def dec({state, late_call, t_num}), do: {state, late_call, dec(t_num)}
+  def dec(%Value{}=v), do: %{v | max_threads: dec v.max_threads}
   def dec( key), do: Process.put key, dec( Process.get key)
 
   def inc(:infinity), do: :infinity
   def inc(i) when is_integer(i), do: i+1
-  def inc({state, late_call, t_num}), do: {state, late_call, inc(t_num)}
+  def inc(%Value{}=v), do: %{v | max_threads: inc v.max_threads}
   def inc( key), do: Process.put key, inc( Process.get key)
-
-
-  def new_state( state \\ nil), do: {state, false, 4} # 5 processes per state by def
 
   # is OK for numbers < 1000
   defp rand( to), do: rem System.system_time, to
@@ -39,6 +38,17 @@ defmodule AgentMap.Worker do
 
   defp process({:flag, :max_threads, value, from}) do
     GenServer.reply from, Process.get :'$max_threads'
+
+    # if value == :infinity do
+    #   Process.put :'$threads_limit', :infinity
+    #   Process.put :'$max_threads', :infinity
+    # else
+    #   if :infinity == Process.get :'$threads_limit' do
+    #   else
+    #   end
+    #   Process.put :'$threads_limit', :infinity
+    #   Process.put :'$max_threads', :infinity
+    # end
     Process.put :'$max_threads', value
   end
 
@@ -186,22 +196,22 @@ defmodule AgentMap.Worker do
 
 
   # main
-  def loop( server, key, nil), do: loop server, key, new_state()
-  def loop( server, key, {state, late_call, threads_limit}) do
-    if state = Callback.parse( state),
-      do: Process.put(:'$state', state)
-    if late_call,
-      do: Process.put(:'$late_call', true)
+  def loop( server, key, nil), do: loop server, key, fmt %Value{}
+  def loop( server, key, {state, late_call, max_threads}) do
+    if state = Callback.parse state do
+      Process.put :'$state', state
+    end
 
     Process.put :'$key', key
-    Process.put :'$max_threads', threads_limit
-    Process.put :'$threads_limit', threads_limit # == max_threads
+    Process.put :'$late_call', late_call
+    Process.put :'$max_threads', max_threads
+    Process.put :'$threads_limit', max_threads-1
     Process.put :'$gen_server', server
     Process.put :'$wait', @wait+rand(25)
     Process.put :'$selective_receive', true
 
-    # :'$wait', :'$threads_limit', :'$selective_receive' are process
-    # keys, so they are easy to inspect from outside of the process
+    # :'$wait', :'$threads_limit', :'max_threads', ':'$selective_receive' are
+    # process keys, so they are easy to inspect from outside of the process
     loop() # →
   end
 
