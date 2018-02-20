@@ -3,10 +3,7 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Callback, Worker, Transaction, Req, Value}
 
-  import Worker, only: [dec: 1]
-  import Value, only: [parse: 1, fmt: 1]
-
-  import Map, only: [put: 3]
+  import Value, only: [parse: 1, fmt: 1, dec: 1]
 
 
   defstruct [:action,  # :get, :get_and_update, :update, :cast, …
@@ -78,22 +75,21 @@ defmodule AgentMap.Req do
     {key,fun} = req.data
 
     case map[key] do
-
       {:pid, worker} ->
         send worker, to_msg req
         {:noreply, map}
 
-      {state,_late_call, t_num}=tuple when t_num > 1 -> # no need to check expires value
+      {state, late_call, quota} when quota > 1 ->
         server = self()
         Task.start_link fn ->
           GenServer.reply req.from, Callback.run(fun, [parse state])
 
-          unless t_num == :infinity do
+          unless quota == :infinity do
             send server, {:done_on_server, key}
           end
         end
 
-        {:noreply, put_in( map[key], dec tuple)}
+        {:noreply, put_in( map[key], {state, late_call, dec quota})}
 
       nil -> # no such key
         server = self()
@@ -116,8 +112,8 @@ defmodule AgentMap.Req do
     {key, state} = req.data
 
     map = case map do
-      %{^key => {{:state, _}, lc, mt}} ->
-        %{map | key => {{:state, state}, lc, mt}}
+      %{^key => {{:state, _}, lc, quota}} ->
+        %{map | key => {{:state, state}, lc, quota}}
 
       %{^key => {:pid, worker}} ->
         send worker, to_msg %{req | action: :cast}

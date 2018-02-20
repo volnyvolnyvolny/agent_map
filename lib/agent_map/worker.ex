@@ -13,15 +13,8 @@ defmodule AgentMap.Worker do
   ## HELPERS
   ##
 
-  def dec(:infinity), do: :infinity
-  def dec(i) when is_integer(i), do: i-1
-  def dec(%Value{}=v), do: %{v | max_threads: dec v.max_threads}
-  def dec( key), do: Process.put key, dec( Process.get key)
-
-  def inc(:infinity), do: :infinity
-  def inc(i) when is_integer(i), do: i+1
-  def inc(%Value{}=v), do: %{v | max_threads: inc v.max_threads}
-  def inc( key), do: Process.put key, inc( Process.get key)
+  def dec(key), do: Process.put key, Value.dec Process.get key
+  def inc(key), do: Process.put key, Value.inc Process.get key
 
   # is OK for numbers < 1000
   defp rand( to), do: rem System.system_time, to
@@ -38,17 +31,6 @@ defmodule AgentMap.Worker do
 
   defp process({:flag, :max_threads, value, from}) do
     GenServer.reply from, Process.get :'$max_threads'
-
-    # if value == :infinity do
-    #   Process.put :'$threads_limit', :infinity
-    #   Process.put :'$max_threads', :infinity
-    # else
-    #   if :infinity == Process.get :'$threads_limit' do
-    #   else
-    #   end
-    #   Process.put :'$threads_limit', :infinity
-    #   Process.put :'$max_threads', :infinity
-    # end
     Process.put :'$max_threads', value
   end
 
@@ -60,21 +42,19 @@ defmodule AgentMap.Worker do
     end
   end
 
-  # get case if cannot create more threads
   defp process({:get, fun, from}) do
-    t_limit = Process.get :'$threads_limit'
-    if t_limit > 1 do
+    threads = Process.get :'$threads'
+
+    if threads < Process.get :'$max_threads' do
       worker = self()
       state = Process.get :'$state'
 
       Task.start_link fn ->
         result = Callback.run fun, [state]
         GenServer.reply from, result
-        unless t_limit == :infinity do
-          send worker, :done
-        end
+        send worker, :done
       end
-      dec :'$threads_limit'
+      inc :'$threads'
     else
       state = Process.get :'$state'
       result = Callback.run fun, [state]
@@ -129,11 +109,8 @@ defmodule AgentMap.Worker do
   end
 
 
-  defp process(:done), do: inc :'$threads_limit'
-  defp process(:done_on_server) do
-    process :done
-    inc :'$max_threads'
-  end
+  defp process(:done), do: dec :'$threads'
+  defp process(:done_on_server), do: inc :'$max_threads'
 
 
   ##
@@ -198,19 +175,20 @@ defmodule AgentMap.Worker do
   # main
   def loop( server, key, nil), do: loop server, key, fmt %Value{}
   def loop( server, key, {state, late_call, max_threads}) do
-    if state = Callback.parse state do
+    if state do
+      {:state, state} = state
       Process.put :'$state', state
     end
 
     Process.put :'$key', key
     Process.put :'$late_call', late_call
     Process.put :'$max_threads', max_threads
-    Process.put :'$threads_limit', max_threads-1
+    Process.put :'$threads', 1 # the process that runs loop
     Process.put :'$gen_server', server
     Process.put :'$wait', @wait+rand(25)
     Process.put :'$selective_receive', true
 
-    # :'$wait', :'$threads_limit', :'max_threads', ':'$selective_receive' are
+    # :'$wait', :'$processes', :'max_processes', ':'$selective_receive' are
     # process keys, so they are easy to inspect from outside of the process
     loop() # →
   end

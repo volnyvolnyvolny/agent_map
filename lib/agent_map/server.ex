@@ -1,11 +1,10 @@
 defmodule AgentMap.Server do
   @moduledoc false
 
-  alias AgentMap.{Callback, Worker, Req, Value}
+  alias AgentMap.{Callback, Req, Value}
 
-  import Worker, only: [inc: 1]
   import Req, only: [fetch: 2, handle: 2]
-  import Value, only: [fmt: 1]
+  import Value, only: [fmt: 1, inc: 1]
 
   import Enum, only: [uniq: 1]
   import Map, only: [delete: 2]
@@ -35,7 +34,7 @@ defmodule AgentMap.Server do
   end
 
   ##
-  ## Map functions
+  ## HELPERS
   ##
 
   defp has_key?( map, key) do
@@ -45,7 +44,9 @@ defmodule AgentMap.Server do
     end
   end
 
+  ##
   ## IMMEDIATE REPLY
+  ##
 
   def handle_call(:keys,_from, map) do
     keys = for key <- Map.keys( map),
@@ -83,7 +84,7 @@ defmodule AgentMap.Server do
   end
 
   ##
-  ## Handle Reqs
+  ## MAY RETURN `{:noreply, …}`
   ##
 
   def handle_call({:flag, key, flag, value}=msg, from, map) do
@@ -137,7 +138,7 @@ defmodule AgentMap.Server do
 
 
   ##
-  ## Info
+  ## INFO
   ##
 
   defp update_or_cast?(act) when is_atom(act), do: act not in [:get, :done, :id]
@@ -154,7 +155,6 @@ defmodule AgentMap.Server do
   end
 
 
-  # `get`-callback was executed on server
   def handle_info({:done_on_server, key}, map) do
     def_value = fmt %Value{}
     map = case map do
@@ -165,8 +165,8 @@ defmodule AgentMap.Server do
       %{^key => ^def_value} ->
         delete map, key
 
-      %{^key => {state, late_call, max_threads}} ->
-        %{map | key => {state, late_call, inc max_threads}}
+      %{^key => {state, late_call, quota}} ->
+        %{map | key => {state, late_call, inc quota}}
 
       _ -> map
     end

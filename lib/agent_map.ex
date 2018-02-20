@@ -9,6 +9,8 @@ defmodule AgentMap do
 
   import Callback, only: :macros
 
+  @max_threads 50
+
 
   @moduledoc """
   AgentMap is an abstraction around **group** of states. Often in Elixir there
@@ -231,10 +233,10 @@ defmodule AgentMap do
   # common for start_link and start
   defp separate( funs_and_opts) do
     {opts, funs} =
-      Enum.reverse( funs_and_opts) |>
+      Enum.reverse(funs_and_opts) |>
       Enum.split_while( fn {_,v} -> not fun?(v,0) end)
 
-    {Enum.reverse( funs), opts}
+    {Enum.reverse(funs), opts}
   end
 
 
@@ -364,11 +366,11 @@ defmodule AgentMap do
       iex> AgentMap.get pid, :nosuchkey, & &1
       nil
   """
-  @spec start_link( [{key, fun_arg( any)} | GenServer.option]) :: on_start
+  @spec start_link([{key, fun_arg(any)} | GenServer.option]) :: on_start
   def start_link( funs_and_opts \\ [timeout: 5000]) do
     {funs, opts} = separate funs_and_opts
     timeout = opts[:timeout] || 5000
-    opts = Keyword.put opts, :timeout, :infinity # turn off global timeout
+    opts = Keyword.put(opts, :timeout, :infinity) # turn off global timeout
     GenServer.start_link Server, {funs, timeout}, opts
   end
 
@@ -397,11 +399,11 @@ defmodule AgentMap do
       iex> exception
       %RuntimeError{ message: "oops"}
   """
-  @spec start( [{key, fun_arg( any)} | GenServer.option]) :: on_start
+  @spec start( [{key, fun_arg(any)} | GenServer.option]) :: on_start
   def start( funs_and_opts \\ [timeout: 5000]) do
     {funs, opts} = separate funs_and_opts
     timeout = opts[:timeout] || 5000
-    opts = Keyword.put opts, :timeout, :infinity # turn off global timeout
+    opts = Keyword.put(opts, :timeout, :infinity) # turn off global timeout
     GenServer.start Server, {funs, timeout}, opts
   end
 
