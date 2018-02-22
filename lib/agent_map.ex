@@ -9,8 +9,6 @@ defmodule AgentMap do
 
   import Callback, only: :macros
 
-  @max_threads 50
-
 
   @moduledoc """
   AgentMap is an abstraction around **group** of states. Often in Elixir there
