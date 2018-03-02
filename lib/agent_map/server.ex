@@ -59,6 +59,19 @@ defmodule AgentMap.Server do
     {:reply, has_key?(map, key), map}
   end
 
+  def handle_call({:queue_len, key},_from, map) do
+    case map do
+      %{^key => {:pid, worker}} ->
+        {:messages, queue} = Process.info worker, :messages
+        num = Enum.count queue, fn msg ->
+          msg not in [:done, :done_on_server]
+        end
+        {:reply, num, map}
+      _ ->
+        {:reply, 0, map}
+    end
+  end
+
   def handle_call({:!, {:fetch, key}},_from, map) do
     {:reply, fetch(map, key), map}
   end

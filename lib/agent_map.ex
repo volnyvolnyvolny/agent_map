@@ -9,8 +9,6 @@ defmodule AgentMap do
 
   import Callback, only: :macros
 
-  @max_threads 50
-
 
   @moduledoc """
   AgentMap is an abstraction around **group** of states. Often in Elixir there
@@ -1318,6 +1316,27 @@ defmodule AgentMap do
   @spec keys( agentmap) :: [key]
   def keys( agentmap) do
     GenServer.call pid(agentmap), :keys
+  end
+
+
+  @doc """
+  Length of the queue for `key`.
+
+  ## Examples
+
+  iex> mag = AgentMap.new a: 1, b: 2
+  iex> AgentMap.queue_len mag, :a
+  0
+  iex> AgentMap.update mag, :a, fn _ -> :timer.sleep(100) end
+  iex> AgentMap.update mag, :a, fn _ -> :timer.sleep(100) end
+  iex> AgentMap.queue_len mag, :a
+  1
+  iex> AgentMap.queue_len mag, :b
+  0
+  """
+  @spec queue_len(agentmap, key) :: non_neg_integer
+  def queue_len(agentmap, key) do
+    GenServer.call pid(agentmap), {:queue_len, key}
   end
 
 
