@@ -219,10 +219,9 @@ defmodule AgentMap.Server do
 
       send worker, :die!
 
-      unless Keyword.has_key? dict, :'$state' do
-        #
-        # TODO: remember changed state
-        #
+      if :'$state' not in Keyword.keys dict
+      && %Value{}.late_call == dict[:'$late_call']
+      && %Value{}.max_threads == dict[:'$max_threads'] do
         {:noreply, delete( map, key)} #GC
       else
         max_t = dict[:'$max_threads']
