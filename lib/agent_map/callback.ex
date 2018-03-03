@@ -10,6 +10,25 @@ defmodule AgentMap.Callback do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
+  # run group of funs. Params are funs_with_ids and timeout
+  def safe_run(funs, timeout) do
+    Keyword.values(funs)
+    |> Enum.map(&Task.async( fn -> safe_run(&1) end))
+    |> Task.yield_many( timeout)
+    |> Enum.map(fn {task, res} ->
+         res || Task.shutdown( task, :brutal_kill)
+       end)
+    |> Enum.map(fn
+         {:ok, result} -> result
+         nil -> {:error, :timeout}
+         exit -> {:error, exit}
+       end)
+    |> Enum.zip(Keyword.keys(funs))
+    |> Enum.reduce({:ok, %{}}, fn {r, k}, acc ->
+         decorate(k, r, acc)
+    end)
+  end
+
 
   defguard is_fun(f, arity) when
     is_function(f, arity) or
@@ -29,23 +48,4 @@ defmodule AgentMap.Callback do
   defp decorate(key, {:error, reason}, {:error, errs}), do: {:error, errs++[{key, reason}]}
   defp decorate(_, {:ok, _}, errors), do: errors
 
-
-  # run group of funs. Params are funs_with_ids and timeout
-  def safe_run(funs, timeout) do
-    Keyword.values(funs)
-    |> Enum.map(&Task.async( fn -> safe_run(&1) end))
-    |> Task.yield_many( timeout)
-    |> Enum.map( fn {task, res} ->
-         res || Task.shutdown( task, :brutal_kill)
-       end)
-    |> Enum.map( fn
-         {:ok, result} -> result
-         nil -> {:error, :timeout}
-         exit -> {:error, exit}
-       end)
-    |> Enum.zip( Keyword.keys(funs))
-    |> Enum.reduce( {:ok, %{}}, fn {r, k}, acc ->
-         decorate( k, r, acc)
-    end)
-  end
 end

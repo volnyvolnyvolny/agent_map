@@ -193,11 +193,6 @@ defmodule AgentMap do
 
   defguardp is_timeout(t) when t == :infinity or is_integer( t) and t >= 0
 
-  defp expires( timeout) do
-    System.system_time +
-    System.convert_time_unit( timeout, :millisecond, :native)
-  end
-
   defp batch( mag, req, timeout \\ nil) do
     mag = pid(mag)
     results =
@@ -209,7 +204,7 @@ defmodule AgentMap do
           %{action: :cast} ->
             GenServer.cast mag, req
           _ ->
-            GenServer.call mag, %{req | expires: expires(timeout)}, timeout
+            GenServer.call mag, req, timeout
         end
       end) |>
       Task.yield_many(timeout) |>
@@ -472,15 +467,15 @@ defmodule AgentMap do
       iex> AgentMap.get mag, :!, :key, & &1
       43
   """
-  @spec get( agentmap, :!, fun_arg([state], a), [key], timeout) :: a when a: var
-  @spec get( agentmap, :!, key, fun_arg(state, a), timeout) :: a when a: var
+  @spec get(agentmap, :!, fun_arg([state], a), [key], timeout) :: a when a: var
+  @spec get(agentmap, :!, key, fun_arg(state, a), timeout) :: a when a: var
 
   # 5
-  def get( agentmap, :!, fun, keys, timeout) when is_fun(fun, 1) and is_list(keys) do
+  def get(agentmap, :!, fun, keys, timeout) when is_fun(fun, 1) and is_list(keys) do
     mag = pid agentmap
     GenServer.call mag, %Req{!: true, action: :get, data: {fun,keys}}, timeout
   end
-  def get( agentmap, :!, key, fun, timeout) when is_fun(fun, 1) do
+  def get(agentmap, :!, key, fun, timeout) when is_fun(fun, 1) do
     mag = pid agentmap
     GenServer.call mag, %Req{!: true, action: :get, data: {key,fun}}, timeout
   end
@@ -489,56 +484,55 @@ defmodule AgentMap do
   @doc """
   See `get/5`.
   """
-  @spec get( agentmap, :!, timeout, [{key, fun_arg(state, any)}]) :: [any]
-  @spec get( agentmap, :!, fun_arg([state], a), [key]) :: a when a: var
-  @spec get( agentmap, :!, key, fun_arg(state, a)) :: a when a: var
+  @spec get(agentmap, :!, timeout, [{key, fun_arg(state, any)}]) :: [any]
+  @spec get(agentmap, :!, fun_arg([state], a), [key]) :: a when a: var
+  @spec get(agentmap, :!, key, fun_arg(state, a)) :: a when a: var
 
-  @spec get( agentmap, fun_arg([state], a), [key], timeout) :: a when a: var
-  @spec get( agentmap, key, fun_arg(state, a), timeout) :: a when a: var
+  @spec get(agentmap, fun_arg([state], a), [key], timeout) :: a when a: var
+  @spec get(agentmap, key, fun_arg(state, a), timeout) :: a when a: var
 
   # 4
-  def get( agentmap, :!, timeout, funs) when is_timeout(timeout) and is_list(funs) do
+  def get(agentmap, :!, timeout, funs) when is_timeout(timeout) and is_list(funs) do
     batch agentmap, %Req{!: true, action: :get, data: funs}, timeout
   end
-  def get( agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
+  def get(agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
     get agentmap, :!, fun, keys, 5000
   end
-  def get( agentmap, :!, key, fun) when is_fun(fun,1) do
+  def get(agentmap, :!, key, fun) when is_fun(fun,1) do
     get agentmap, :!, key, fun, 5000
   end
 
-  def get( agentmap, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
+  def get(agentmap, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
     mag = pid agentmap
     GenServer.call mag, %Req{action: :get, data: {fun,keys}}, timeout
   end
-  def get( agentmap, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
+  def get(agentmap, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
     mag = pid(agentmap)
     GenServer.call mag, %Req{action: :get,
-                             data: {key,fun},
-                             expires: expires(timeout)}, timeout
+                             data: {key,fun}}, timeout
   end
 
-  @spec get( agentmap, fun_arg([state], a), [key]) :: a when a: var
-  @spec get( agentmap, key, fun_arg(state, a)) :: a when a: var
-  @spec get( agentmap, :!, [{key, fun_arg(state, any)}]) :: [any]
-  @spec get( agentmap, timeout, [{key, fun_arg(state, any)}]) :: [any]
-  @spec get( agentmap, key, fun_arg(state, a) | a) :: state | a when a: var
+  @spec get(agentmap, fun_arg([state], a), [key]) :: a when a: var
+  @spec get(agentmap, key, fun_arg(state, a)) :: a when a: var
+  @spec get(agentmap, :!, [{key, fun_arg(state, any)}]) :: [any]
+  @spec get(agentmap, timeout, [{key, fun_arg(state, any)}]) :: [any]
+  @spec get(agentmap, key, fun_arg(state, a) | a) :: state | a when a: var
 
   # 3
-  def get( agentmap, key, default)
+  def get(agentmap, key, default)
 
-  def get( agentmap, :!, funs) when is_list(funs) do
+  def get(agentmap, :!, funs) when is_list(funs) do
     get agentmap, :!, 5000, funs
   end
-  def get( agentmap, timeout, funs) when is_timeout(timeout) and is_list(funs) do
+  def get(agentmap, timeout, funs) when is_timeout(timeout) and is_list(funs) do
     batch agentmap, %Req{action: :get, data: funs}, timeout
   end
 
-  def get( agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
+  def get(agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
     get agentmap, fun, keys, 5000
   end
 
-  def get( agentmap, key, fun) when is_fun(fun,1) do
+  def get(agentmap, key, fun) when is_fun(fun,1) do
     get agentmap, key, fun, 5000
   end
 
@@ -567,8 +561,8 @@ defmodule AgentMap do
       iex> AgentMap.get mag, alice: & &1, bob: & &1
       [32, 34]
   """
-  @spec get( agentmap, [{key, fun_arg(state, any)}]) :: [any]
-  def get( agentmap, funs) when is_list(funs) do
+  @spec get(agentmap, [{key, fun_arg(state, any)}]) :: [any]
+  def get(agentmap, funs) when is_list(funs) do
     if Enum.any? funs, fn {_k,f} -> !fun?(f,1) end do
       key = funs # ambiguity fix
       get agentmap, key, nil
@@ -577,8 +571,8 @@ defmodule AgentMap do
     end
   end
 
-  @spec get( agentmap, key) :: state | nil
-  def get( agentmap, key), do: get agentmap, key, nil
+  @spec get(agentmap, key) :: state | nil
+  def get(agentmap, key), do: get agentmap, key, nil
 
 
   @doc """
@@ -719,8 +713,7 @@ defmodule AgentMap do
     mag = pid agentmap
     GenServer.call mag, %Req{!: true,
                              action: :get_and_update,
-                             data: {key,fun},
-                             expires: expires(timeout)}, timeout
+                             data: {key,fun}}, timeout
   end
 
   #4
@@ -762,8 +755,7 @@ defmodule AgentMap do
   def get_and_update( agentmap, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
     mag = pid agentmap
     GenServer.call mag, %Req{action: :get_and_update,
-                             data: {key,fun},
-                             expires: expires(timeout)}, timeout
+                             data: {key,fun}}, timeout
   end
 
 
@@ -903,8 +895,7 @@ defmodule AgentMap do
   def update( agentmap, :!, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
     GenServer.call pid(agentmap), %Req{!: true,
                                          action: :update,
-                                         data: {key,fun},
-                                         expires: expires(timeout)}, timeout
+                                         data: {key,fun}}, timeout
   end
 
   # 4
@@ -924,14 +915,13 @@ defmodule AgentMap do
   @spec update( agentmap, fun_arg([state], [state] | :drop), [key], timeout) :: :ok
   def update( agentmap, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
     GenServer.call pid(agentmap), %Req{action: :update,
-                                         data: {fun,keys}}, timeout
+                                       data: {fun,keys}}, timeout
   end
 
   @spec update( agentmap, key, fun_arg(state, state), timeout) :: :ok
   def update( agentmap, key, fun, timeout) when is_fun(fun,1) and is_timeout(timeout) do
     GenServer.call pid(agentmap), %Req{action: :update,
-                                         data: {key,fun},
-                                         expires: expires(timeout)}, timeout
+                                       data: {key,fun}}, timeout
   end
 
   @spec update( agentmap, :!, timeout, [{key, fun_arg( state, state)}]) :: :ok
@@ -991,15 +981,15 @@ defmodule AgentMap do
   @spec cast( agentmap, :!, fun_arg([state], [state] | :drop), [key]) :: :ok
   def cast( agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
     GenServer.cast pid(agentmap), %Req{!: true,
-                                         action: :cast,
-                                         data: {fun,keys}}
+                                       action: :cast,
+                                       data: {fun,keys}}
   end
 
   @spec cast( agentmap, :!, key, fun_arg(state, state)) :: :ok
   def cast( agentmap, :!, key, fun) when is_fun(fun,1) do
     GenServer.cast pid(agentmap), %Req{!: true,
-                                         action: :cast,
-                                         data: {key,fun}}
+                                       action: :cast,
+                                       data: {key,fun}}
   end
 
   # 3
@@ -1007,13 +997,13 @@ defmodule AgentMap do
   @spec cast( agentmap, fun_arg([state], [state] | :drop), [key]) :: :ok
   def cast( agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
     GenServer.cast pid(agentmap), %Req{action: :cast,
-                                         data: {fun,keys}}
+                                       data: {fun,keys}}
   end
 
   @spec cast( agentmap, key, fun_arg(state, state)) :: :ok
   def cast( agentmap, key, fun) when is_fun(fun,1) do
     GenServer.cast pid(agentmap), %Req{action: :cast,
-                                         data: {key,fun}}
+                                       data: {key,fun}}
   end
 
   @spec cast( agentmap, :!, [{key, fun_arg( state, state)}]) :: :ok
@@ -1037,37 +1027,34 @@ defmodule AgentMap do
 
 
   @doc """
-  Sets the given `flag` to state with given `key`.
-  Returns the old value of flag for this `key`.
+  Sets the `:max_threads` value of the state with given `key`. Returns the old
+  value.
 
-  ## Flags
-
-  `:late_call` option specifies should agentmap execute functions that are
-  expired. This happend when caller timeout is took place while callback is
-  still in the queue. By default it is set to `false`, so callback will never be
-  called after timeout.
-
-  Agentmap can execute `get` calls on the same key in parallel. `max_threads`
-  option specifies number of threads per key used, minus one thread that is the
-  process holding the queue. By default four `get` calls on the same state could
+  `agentmap` can execute `get` calls on the same key in parallel. `max_threads`
+  option specifies number of threads per key used, minus one thread for the
+  process holding the queue. By default five `get` calls on the same state could
   be executed, so
 
-      sleep100ms = fn _ ->
-        :timer.sleep 100
-      end
-      List.duplicate( fn ->
-        AgentMap.get agentmap, :key, sleep100ms
-      end, 4)
-      |> Enum.map(&Task.async/1)
-      |> Enum.map(&Task.await/1)
+      iex> sleep100ms = fn _ ->
+      ...>   :timer.sleep 100
+      ...> end
+      iex> mag = AgentMap.new key: 42
+      iex> for _ <- 1..4, do: spawn fn ->
+      ...>   AgentMap.get mag, :key, sleep100ms
+      ...> end
+      iex> AgentMap.get mag, :key, sleep100ms
+      :ok
 
   will be executed in around of 100 ms, not 500. Be aware, that this call:
 
-      Task.start fn ->
-        get agentmap, :k, sleep100ms
-      end
-      get_and_update agentmap, :k, sleep100ms
-      get_and_update agentmap, :k, sleep100ms
+      iex> sleep100ms = fn _ ->
+      ...>   :timer.sleep 100
+      ...> end
+      iex> mag = AgentMap.new key: 42
+      iex> AgentMap.get mag, :key, sleep100ms
+      iex> AgentMap.cast mag, :key, sleep100ms
+      iex> AgentMap.cast mag, :key, sleep100ms
+      :ok
 
   will be executed in around of 200 ms because `agentmap` can parallelize any
   sequence of `get/3` calls ending with `get_and_update/3`, `update/3` or
@@ -1078,56 +1065,14 @@ defmodule AgentMap do
   ## Examples
 
       iex> mag = AgentMap.new()
-      iex> AgentMap.cast mag, :key, fn _ ->
-      ...>   :timer.sleep 100 #!!!
-      ...>   42
-      ...> end
-      iex> AgentMap.update mag, :k, fn _ -> 0 end, 50
-      iex> AgentMap.get mag, :k # late_call==false
+      iex> AgentMap.max_threads mag, :a, 42
+      5
+      iex> AgentMap.max_threads mag, :a, :infinity
       42
-      ##
-      ## BUT:
-      ##
-      iex> AgentMap.flag mag, :key, :late_call, true
-      false
-      iex> AgentMap.cast mag, :key, fn _ ->
-      ...>   :timer.sleep 100 #!!!
-      ...>   43
-      ...> end
-      iex> AgentMap.update mag, :k, fn _ -> 0 end, 50
-      iex> AgentMap.get mag, :k # late_call==true
-      0
   """
-  @spec flag( agentmap, key, :late_call, boolean) :: boolean
-  @spec flag( agentmap, key, :max_threads, pos_integer | :infinity) :: pos_integer | :infinity
-  def flag( agentmap, key, flag, value) do
-    GenServer.call pid(agentmap), {:flag, key, flag, value}
-  end
-
-
-  @doc """
-  See `flag/4`.
-
-  ## Examples
-
-      iex> mag = AgentMap.new()
-      iex> AgentMap.get mag, :key, & &1
-      nil
-      iex> AgentMap.flags mag, :key
-      [late_call: false, max_threads: 4]
-      iex> AgentMap.flag mag, :key, :late_call, true
-      false
-      iex> AgentMap.flags mag, :key
-      [late_call: true, max_threads: 4]
-      iex> AgentMap.flag mag, :key, :max_threads, 1
-      4
-      iex> AgentMap.flags mag, :key
-      [late_call: true, max_threads: 1]
-  """
-  @spec flags( agentmap, key) :: [late_call: boolean,
-                                    max_threads: pos_integer | :infinity]
-  def flags( agentmap, key) do
-    GenServer.call pid(agentmap), {:flags, key}
+  @spec max_threads( agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
+  def max_threads( agentmap, key, value) do
+    GenServer.call pid(agentmap), {:max_threads, key, value}
   end
 
 

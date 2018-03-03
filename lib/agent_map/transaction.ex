@@ -1,33 +1,33 @@
 defmodule AgentMap.Transaction do
   @moduledoc false
 
-  alias AgentMap.{Callback, Req, Worker, Value}
+  alias AgentMap.{Callback, Req, Worker}
 
 
   import Enum, only: [uniq: 1]
   import Map, only: [keys: 1]
-  import Value, only: [parse: 1]
 
 
-  def divide( map, keys) do
+  def divide(map, keys) do
     Enum.reduce uniq(keys), {%{}, %{}}, fn key, {known, workers} ->
-      case map do
-        %{^key => {:pid, worker}} ->
-          {known, put_in( workers[key], worker)}
+      case map[key] do
+        {:pid, worker} ->
+          {known, put_in(workers[key], worker)}
 
-        %{^key => {state,_,_}} ->
-          {put_in( known[key], parse state), workers}
+        {{:state, state}, _} ->
+          {put_in(known[key], state), workers}
+
         _ ->
-          {put_in( known[key], nil), workers}
+          {put_in(known[key], nil), workers}
       end
     end
   end
 
 
-  defp collect( known, keys), do: _collect( known, (uniq keys)--keys known)
+  defp collect(known, keys), do: _collect( known, (uniq keys)--keys known)
 
-  defp _collect( known, []), do: known
-  defp _collect( known, keys) do
+  defp _collect(known, []), do: known
+  defp _collect(known, keys) do
     receive do
       msg ->
         {from, state} = case msg do
@@ -80,14 +80,13 @@ defmodule AgentMap.Transaction do
         send worker, Req.to_msg req
         map
 
-      tuple_or_nil ->
-        worker = spawn_link Worker, :loop, [self(), key, tuple_or_nil]
-        map = put_in map[key], {:pid, worker}
+      _ ->
+        map = Req.spawn_worker map, key
         run req, map
     end
   end
 
-  def run( req, map) do
+  def run(req, map) do
     {_, keys} = req.data
 
     unless keys == uniq keys do

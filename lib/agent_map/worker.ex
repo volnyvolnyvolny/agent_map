@@ -1,45 +1,39 @@
 defmodule AgentMap.Worker do
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1}
+  @compile {:inline, rand: 1, dec: 1, inc: 1, _dec: 1, _inc: 1}
 
-  alias AgentMap.{Callback, Value}
-
-  import Value, only: [fmt: 1]
+  alias AgentMap.{Callback}
 
   @wait 10 #milliseconds
+
+  @max_threads 5
 
   ##
   ## HELPERS
   ##
 
-  def dec(key), do: Process.put key, Value.dec Process.get key
-  def inc(key), do: Process.put key, Value.inc Process.get key
+  def _dec(:infinity), do: :infinity
+  def _dec(i), do: i-1
+
+  def _inc(:infinity), do: :infinity
+  def _inc(i), do: i+1
+
+  def dec(key), do: Process.put key, _dec Process.get key
+  def inc(key), do: Process.put key, _inc Process.get key
+
 
   # is OK for numbers < 1000
-  defp rand( to), do: rem System.system_time, to
+  defp rand(to), do: rem System.system_time, to
 
 
   ##
   ## PROCESS MSG
   ##
 
-  defp process({:flag, :late_call, value, from}) do
-    GenServer.reply from, (Process.get(:'$late_call') || false)
-    Process.put :'$late_call', value
-  end
-
-  defp process({:flag, :max_threads, value, from}) do
+  defp process({:max_threads, value, from}) do
     GenServer.reply from, Process.get :'$max_threads'
     Process.put :'$max_threads', value
-  end
-
-
-  defp process({action, fun, from, :infinity}), do: process {action, fun, from}
-  defp process({action, fun, from, expires}) do
-    if Process.get(:'$late_call') || (System.system_time < expires) do
-      process {action, fun, from}
-    end
   end
 
   defp process({:get, fun, from}) do
@@ -81,7 +75,7 @@ defmodule AgentMap.Worker do
 
   defp process({:cast, fun}) do
     state = Process.get :'$state'
-    Process.put :'$state', Callback.run( fun, [state])
+    Process.put :'$state', Callback.run(fun, [state])
   end
 
   defp process(:drop), do: Process.delete :'$state'
@@ -160,8 +154,10 @@ defmodule AgentMap.Worker do
     case Callback.run fun, [[state]] do
       [state] ->
         process {:put, state}
-      c when c in [:drop, :id] -> # :drop, :id
-        process c
+      :drop ->
+        process :drop
+      :id ->
+        process :id
       err ->
         raise """
         Transaction callback for `cast` or `update` is malformed!
@@ -173,15 +169,14 @@ defmodule AgentMap.Worker do
 
 
   # main
-  def loop( server, key, nil), do: loop server, key, fmt %Value{}
-  def loop( server, key, {state, late_call, max_threads}) do
+  def loop(server, key, nil), do: loop server, key, {nil, @max_threads}
+  def loop(server, key, {state, max_threads}) do
     if state do
       {:state, state} = state
       Process.put :'$state', state
     end
 
     Process.put :'$key', key
-    Process.put :'$late_call', late_call
     Process.put :'$max_threads', max_threads
     Process.put :'$threads', 1 # the process that runs loop
     Process.put :'$gen_server', server
@@ -194,7 +189,7 @@ defmodule AgentMap.Worker do
   end
 
 
-  defp _loop( selective \\ true) do
+  defp _loop(selective \\ true) do
     wait = Process.get :'$wait'
     receive do
       {:!, msg} ->
@@ -219,9 +214,9 @@ defmodule AgentMap.Worker do
   end
 
   # →
-  def loop( selective_receive \\ true)
-  def loop( false), do: _loop(false)
-  def loop( true) do
+  def loop(selective_receive \\ true)
+  def loop(false), do: _loop(false)
+  def loop(true) do
     {_, len} = Process.info self(), :message_queue_len
     if len > 100 do
       # turn off selective receive

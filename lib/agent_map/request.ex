@@ -1,52 +1,45 @@
 defmodule AgentMap.Req do
   @moduledoc false
 
-  alias AgentMap.{Callback, Worker, Transaction, Req, Value}
+  alias AgentMap.{Callback, Worker, Transaction, Req}
 
-  import Value, only: [parse: 1, fmt: 1, dec: 1]
-
+  @max_threads 5
 
   defstruct [:action,  # :get, :get_and_update, :update, :cast, …
              :data,    # {key, fun}, {fun, keys}, {key, fun, opts}
              :from,
-             :expires, # date to which timeout is active
              !: false] # is not urgent by default
 
 
   def to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | !: false}}
-  def to_msg(%Req{action: a, data: {_, fun}})
-    when a in [:cast, {:one_key_t, :cast}], do: {a, fun}
-  def to_msg(%Req{data: {_, fun}}=req), do: {req.action, fun, req.from, req.expires}
 
-
-  def lookup( key, {:'$gen_call', _, req}), do: lookup key, req
-  def lookup( key, {:'$gen_cast', req}), do: lookup key, req
-  def lookup( key, %Req{data: {key,_}}=req) do
-    if req.action in [:get_and_update, :update, :cast], do: :update, else: 1
+  def to_msg(%Req{action: :cast, data: {_, fun}}) do
+    {:cast, fun}
   end
-  def lookup( key, %Req{data: {_,keys}}=req) when is_list( keys) do
-    if req.action in [:get_and_update, :update, :cast] do
-      :update
-    else
-      if key in keys, do: 1, else: 0
-    end
+  def to_msg(%Req{action: {:one_key_t, :cast}, data: {_, fun}}) do
+    {{:one_key_t, :cast}, fun}
   end
-  def lookup(_key,_req), do: 0
+
+  def to_msg(%Req{data: {_, fun}}=req), do: {req.action, fun, req.from}
 
 
-  def fetch( map, key) do
-    case map do
-      %{^key => {:pid, worker}} ->
+  def fetch(map, key) do
+    case map[key] do
+      {:pid, worker} ->
         {_, dict} = Process.info worker, :dictionary
         Keyword.fetch dict, :'$state'
 
-      %{^key => {{:state, state},_,_}} ->
+      {{:state, state}, _} ->
         {:ok, state}
 
-      _ -> :error
+      nil -> :error
     end
   end
 
+  def spawn_worker(map, key) do
+    worker = spawn_link Worker, :loop, [self(), key, map[key]]
+    put_in map[key], {:pid, worker}
+  end
 
   # →
   def handle(%Req{action: :get, data: {fun, [key]}}=req, map) do
@@ -59,6 +52,7 @@ defmodule AgentMap.Req do
 
   def handle(%Req{action: :get, !: true}=req, map) do
     {key, fun} = req.data
+
     Task.start_link fn ->
       state = case fetch map, key do
         {:ok, state} -> state
@@ -75,54 +69,62 @@ defmodule AgentMap.Req do
     {key,fun} = req.data
 
     case map[key] do
+
       {:pid, worker} ->
         send worker, to_msg req
         {:noreply, map}
 
-      {state, late_call, quota} when quota > 1 ->
-        server = self()
-        Task.start_link fn ->
-          GenServer.reply req.from, Callback.run(fun, [parse state])
+      {_, 1} -> # cannot spawn more Task's
+        map = spawn_worker map, key
+        handle req, map
 
-          unless quota == :infinity do
-            send server, {:done_on_server, key}
-          end
+      {state, :infinity} ->
+        state = if state do {:state, s} = state; s end
+
+        Task.start_link fn ->
+          GenServer.reply req.from, Callback.run(fun, [state])
         end
+        {:noreply, map}
 
-        {:noreply, put_in( map[key], {state, late_call, dec quota})}
-
-      nil -> # no such key
+      {state, quota} when quota > 1 ->
         server = self()
+        state = if state do {:state, s} = state; s end
+
         Task.start_link fn ->
-          GenServer.reply req.from, Callback.run(fun, [nil])
+          GenServer.reply req.from, Callback.run(fun, [state])
           send server, {:done_on_server, key}
         end
 
-        {:noreply, put_in( map[key], fmt %Value{})}
+        map = put_in map[key], {state, quota-1}
+        {:noreply, map}
 
-      {_, _, 1}=tuple -> # max_threads forbids to spawn more Task's
-        worker = spawn_link Worker, :loop, [self(), key, tuple]
-        send worker, to_msg req
-
-        {:noreply, put_in( map[key], {:pid, worker})}
+      nil -> # no such key
+        map = put_in map[key], {nil, @max_threads}
+        handle req, map
     end
   end
 
   def handle(%Req{action: :put}=req, map) do
     {key, state} = req.data
 
-    map = case map do
-      %{^key => {{:state, _}, lc, quota}} ->
-        %{map | key => {{:state, state}, lc, quota}}
+    case map[key] do
+      {{:state, _}, quota} ->
+        map = put_in map[key], {{:state, state}, quota}
+        {:noreply, map}
 
-      %{^key => {:pid, worker}} ->
+      {:pid, worker} ->
         send worker, to_msg %{req | action: :cast}
-        map
-      _ ->
-        put_in map[key], fmt %Value{state: {:state, state}}
-    end
+        {:noreply, map}
 
-    {:noreply, map}
+      {nil, max_t} ->
+        value = {{:state, state}, max_t}
+        map = put_in map[key], value
+        {:noreply, map}
+
+      nil ->
+        map = put_in map[key], {nil, @max_threads}
+        handle req, map
+    end
   end
 
   def handle(%Req{action: :pop}=req, map) do
@@ -130,15 +132,16 @@ defmodule AgentMap.Req do
 
     case fetch map, key do
       {:ok, _} ->
-        handle %{req | action: :get_and_update,
-                       data: {key, fn _ -> :pop end}}, map
+        req = %{req | action: :get_and_update,
+                      data: {key, fn _ -> :pop end}}
+        handle req, map
+
       :error ->
         {:reply, default, map}
     end
   end
 
-
-  def handle( req, map) do
+  def handle(req, map) do
     {key,_} = req.data
 
     case map[key] do
@@ -146,10 +149,9 @@ defmodule AgentMap.Req do
         send worker, to_msg req
         {:noreply, map}
 
-      tuple ->
-        worker = spawn_link Worker, :loop, [self(), key, tuple]
-        send worker, to_msg req
-        {:noreply, put_in( map[key], {:pid, worker})}
+      _ ->
+        map = spawn_worker map, key
+        handle req, map
     end
   end
 
