@@ -113,7 +113,7 @@ defmodule AgentMap.Req do
         {:noreply, map}
 
       {:pid, worker} ->
-        send worker, to_msg %{req | action: :cast}
+        send worker, {:put, state}
         {:noreply, map}
 
       {nil, max_t} ->
