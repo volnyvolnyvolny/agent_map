@@ -17,70 +17,73 @@ defmodule AgentMap do
   are two main solutions: (1) use a group of `Agent`s; or (2) a
   `GenServer`/`Agent` that hold states in some key-value storage and provides
   concurrent access for different states. The `AgentMap` module follows the
-  latter approach. It stores states in a `Map` and when a changing state
-  callback comes in (see `update`, `get_and_update`, `cast` and derivative),
-  special temporary process (called "worker") that stores queue is created.
-  `AgentMap` respects order in which callbacks arrives and supports transactions
-  — operations that simultaniously change group of states.
+  latter approach.
 
-  Module provides a basic server implementation that allows states to be
-  retrieved and updated via an API similar to the one of `Agent` and `Map`
-  modules. Special struct can be made via `new/1` function. That allows to use
-  `Enum` module and `[]` operator.
+  `AgentMap` stores states in a `Map` and when a changing state callback comes
+  in (see `update`, `get_and_update`, `cast` and derivative), special temporary
+  process (called "worker") that stores queue is created. `AgentMap` respects
+  order in which callbacks arrives and supports transactions — operations that
+  simultaniously change group of states.
+
+  Module API is in fact a copy of the `Agent`'s and `Map`'s modules. Special
+  struct that allows to use `Enum` module and `[]` operator can be created via
+  `new/1` function.
+
+  In fact, `AgentMap` is at the same time a stateful `Map` and `Agent` that
+  holds `Map`.
 
   ## Examples
 
-  For example, let us manage tasks and projects. Each task can be in `:added`,
-  `:started` or `:done` states. This is easy to do with a `AgentMap`:
+  Let us manage tasks and projects. Each task can be in `:added`, `:started` or
+  `:done` states. This is easy to do with a `AgentMap`:
 
       defmodule TasksServer do
         use AgentMap
 
-        def start_link do
-          AgentMap.start_link( name: __MODULE__)
+        def start_link() do
+          AgentMap.start_link name: __MODULE__
         end
 
         @doc "Add new project task"
-        def add( project, task) do
+        def add(project, task) do
           AgentMap.init __MODULE__, {project, task}, fn -> :added end
         end
 
         @doc "Returns state of given task"
-        def state( project, task) do
+        def state(project, task) do
           AgentMap.get __MODULE__, {project, task}, & &1
         end
 
         @doc "Returns list of all project tasks"
-        def list( project) do
+        def list(project) do
           tasks = AgentMap.keys __MODULE__
           for {^project, task} <- tasks, do: task
         end
 
         @doc "Returns list of project tasks in given state"
-        def list( project, state: state) do
+        def list(project, state: state) do
           tasks = AgentMap.keys __MODULE__
           for {^project, task} <- tasks,
               state( project, task) == state, do: task
         end
 
         @doc "Updates project task"
-        def update( project, task, new_state) do
+        def update(project, task, new_state) do
           AgentMap.update __MODULE__, {project, task}, fn _ -> new_state end
         end
 
         @doc "Deletes given project task, returning state"
-        def pop( project, task) do
+        def pop(project, task) do
           AgentMap.pop __MODULE__, {project, task}
         end
       end
 
-  As in `Agent` module case, `AgentMap` provide a segregation between the
-  client and server APIs (similar to `GenServer`s). In particular, any changing
-  state anonymous functions given to the `AgentMap` is executed inside the
-  agentmap (the server) and effectively block execution of any other function
-  **on the same state** until the request is fulfilled. So it's important to
-  avoid use of expensive operations inside the agentmap. See corresponding
-  `Agent` docs section.
+  `AgentMap` provide a segregation between the client and server APIs (similar
+  to the `GenServer` and `Agent`). In particular, any changing state anonymous
+  functions given to the `AgentMap` is executed inside the agentmap (the server)
+  and effectively block execution of any other function **on the same state**
+  until the request is fulfilled. So it's important to avoid use of expensive
+  operations inside the agentmap. See corresponding `Agent` docs section.
 
   Finally note that `use AgentMap` defines a `child_spec/1` function, allowing
   the defined module to be put under a supervision tree. The generated
@@ -96,6 +99,32 @@ defmodule AgentMap do
       use AgentMap, restart: :transient, shutdown: 10_000
 
   See the `Supervisor` docs for more information.
+
+
+  
+  ## Urgent (`:!`) calls
+
+  `AgentMap` supports so-called "urgent" (out of turn calls) for `get`
+
+  ## Batch calls
+
+
+  
+  ## `get`, `get_and_update`, `update`, `cast`
+
+  Every one of this methods has three different forms multiply two for urgent/or
+  not calls. For example:
+
+      get agentmap, key1: fn state -> fun.(state) end
+                  , key2: fn state -> fun.(state) end
+
+  is `get/2` form used for batch processing.
+
+      get agentmap, :key, fn state -> fun.(state) end
+
+  `get/3`
+  
+  
 
   ## Name registration
 
@@ -119,21 +148,24 @@ defmodule AgentMap do
   The agentmap's states will be added to the given list of arguments
   (`[%{}]`) as the first argument.
 
-  # Using `Enum` module and `[]`-access operator
+  ## Using `Enum` module and `[]`-access operator
 
-  `AgentMap` defines special struct that contains pid of the agentmap
-  process. `Enumerable` protocol is implemented for this struct, that allows
-  agentmap to be used with `Enum` module.
+  `%AgentMap{}` is a special struct that contains pid of the `agentmap` process
+  and for that `Enumerable` protocol is implemented. So, `Enum` should work as
+  expected:
 
-      iex> AgentMap.new( key: 42) |>
-      ...> Enum.empty?()
+      iex> AgentMap.new() |> Enum.empty?()
+      true
+      iex> AgentMap.new(key: 42) |> Enum.empty?()
       false
 
   Similarly, `AgentMap` follows `Access` behaviour, so `[]` operator could be
   used:
 
-      iex> AgentMap.new( a: 42, b: 24)[:a]
+      iex> AgentMap.new(a: 42, b: 24)[:a]
       42
+
+  except of `put_in` operator.
   """
 
   @typedoc "Return values of `start*` functions"
@@ -238,7 +270,7 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new
+      iex> mag = AgentMap.new()
       iex> Enum.empty? mag
       true
   """
@@ -247,7 +279,7 @@ defmodule AgentMap do
 
 
   @doc """
-  Starts a `AgentMap` via `start_link/1` function. `new/1` returns
+  Starts an `AgentMap` via `start_link/1` function. `new/1` returns
   `AgentMap` **struct** that contains pid of the `AgentMap`.
 
   As the only argument, states keyword can be provided or already started
@@ -285,7 +317,7 @@ defmodule AgentMap do
 
 
   @doc """
-  Creates a agentmap from an `enumerable` via the given transformation
+  Creates an agentmap from an `enumerable` via the given transformation
   function. Duplicated keys are removed; the latest one prevails.
 
   ## Examples
@@ -301,7 +333,7 @@ defmodule AgentMap do
 
 
   @doc """
-  Starts a agentmap linked to the current process with the given function.
+  Starts an agentmap linked to the current process with the given function.
   This is often used to start the agentmap as part of a supervision tree.
 
   The first argument is a list of pairs `{term, fun_arg}` (keyword, in
@@ -369,22 +401,22 @@ defmodule AgentMap do
 
 
   @doc """
-  Starts a agentmap process without links (outside of a supervision tree).
+  Starts an agentmap unlinked process.
 
   See `start_link/2` for details.
 
   ## Examples
 
       iex> AgentMap.start one: 42,
-      ...>                  two: fn -> :timer.sleep(150) end,
-      ...>                  three: fn -> :timer.sleep(:infinity) end,
-      ...>                  timeout: 100
+      ...>                two: fn -> :timer.sleep(150) end,
+      ...>                three: fn -> :timer.sleep(:infinity) end,
+      ...>                timeout: 100
       {:error, [one: :cannot_call, two: :timeout, three: :timeout]}
 
       iex> AgentMap.start one: :foo,
-      ...>                  one: :bar,
-      ...>                  three: fn -> :timer.sleep(:infinity) end,
-      ...>                  timeout: 100
+      ...>                one: :bar,
+      ...>                three: fn -> :timer.sleep(:infinity) end,
+      ...>                timeout: 100
       {:error, [one: :already_exists]}
 
       iex> err = AgentMap.start one: 76, two: fn -> raise "oops" end
@@ -417,11 +449,10 @@ defmodule AgentMap do
       get accounts, &Enum.sum/1, [:alice, :bob]
 
   `timeout` is an integer greater than zero which specifies how many
-  milliseconds are allowed before the agentmap executes the callback and
-  returns the result value, or the atom `:infinity` to wait indefinitely. If no
-  result is received within the specified time, the function call fails and the
-  caller exits. If this happened but callback is so far in the queue it will
-  never be executed.
+  milliseconds are allowed before the agentmap executes the callback and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the function call fails and the caller
+  exits.
 
   ## Examples
 
@@ -537,15 +568,16 @@ defmodule AgentMap do
   end
 
   # Say hi to Access behaviour!
-  def get( agentmap, key, default) do
+  def get(agentmap, key, default) do
     GenServer.call pid(agentmap), {:!, {:get, key, default}}
   end
 
 
   @doc """
   Version of `get/5` to be used for batch processing. As in `get/5`, urgent
-  (`:!`) mark can be provided to make out of turn call. Works the same as
-  `get_and_update/4`, `update/4` and `cast/3`.
+  (`:!`) mark can be provided to make out of turn call.
+
+  See also `get_and_update/2`, `update/2` and `cast/2`.
 
   ## Examples
 
@@ -553,7 +585,7 @@ defmodule AgentMap do
       iex> AgentMap.get mag, alice: & &1, bob: & &1
       [nil, nil]
       iex> AgentMap.update mag, alice: fn nil -> 42 end,
-      ...>                        bob:   fn nil -> 24 end
+      ...>                      bob:   fn nil -> 24 end
       :ok
       iex> AgentMap.get mag, alice: & &1, bob: & &1
       [42, 24]
@@ -693,14 +725,14 @@ defmodule AgentMap do
       [24, :_, nil, nil]
   """
   # 5
-  @spec get_and_update( agentmap, :!, fun_arg([state], [{any, state} | :pop | :id]), [key], timeout)
+  @spec get_and_update(agentmap, :!, fun_arg([state], [{any, state} | :pop | :id]), [key], timeout)
         :: [any | state]
-  @spec get_and_update( agentmap, :!, fun_arg([state], {a, [state] | :pop}), [key], timeout)
+  @spec get_and_update(agentmap, :!, fun_arg([state], {a, [state] | :pop}), [key], timeout)
         :: a when a: var
-  @spec get_and_update( agentmap, :!, fun_arg([state], :pop), [key], timeout)
+  @spec get_and_update(agentmap, :!, fun_arg([state], :pop), [key], timeout)
         :: [state]
 
-  def get_and_update( agentmap, :!, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
+  def get_and_update(agentmap, :!, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) and is_timeout(timeout) do
     mag = pid agentmap
     GenServer.call mag, %Req{!: true,
                              action: :get_and_update,

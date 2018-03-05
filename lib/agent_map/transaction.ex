@@ -71,21 +71,6 @@ defmodule AgentMap.Transaction do
     map
   end
 
-  # One-key transaction
-  def run(%Req{data: {fun, [key]}}=req, map) do
-    case map[key] do
-      {:pid, worker} ->
-        req = %{req | action: {:one_key_t, req.action},
-                      data: {key, &Callback.run(fun, [[&1]])}}
-        send worker, Req.to_msg req
-        map
-
-      _ ->
-        map = Req.spawn_worker map, key
-        run req, map
-    end
-  end
-
   def run(req, map) do
     {_, keys} = req.data
 

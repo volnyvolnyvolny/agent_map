@@ -107,67 +107,6 @@ defmodule AgentMap.Worker do
   defp process(:done_on_server), do: inc :'$max_threads'
 
 
-  ##
-  ## OPTIMIZATION FOR ONE-KEY TRANSACTIONS
-  ##
-  ## This exists so additional process to hold
-  ## transaction will not be spawned and we will
-  ## not have to wait process to reply it's state.
-  ##
-
-  defp process({{:one_key_t, :get_and_update}, fun, from}) do
-    state = Process.get :'$state'
-    case Callback.run fun, [[state]] do
-      [:id] ->
-        GenServer.reply from, [state]
-      [:pop] ->
-        process :drop
-        GenServer.reply from, [state]
-      [{get, state}] ->
-        process {:put, state}
-        GenServer.reply from, [get]
-      {get, [state]} ->
-        process {:put, state}
-        GenServer.reply from, get
-      {get, res} when res in [:drop, :id] ->
-        process res
-        GenServer.reply from, get
-      :pop ->
-        process :drop
-        GenServer.reply from, [state]
-      err ->
-        raise """
-        Transaction callback for `get_and_update` is malformed!
-        See docs for hint. Got: #{inspect err}."
-        """
-        |> String.replace("\n", " ")
-    end
-  end
-
-  defp process({{:one_key_t, :update}, fun, from}) do
-    process {{:one_key_t, :cast}, fun}
-    GenServer.reply from, :ok
-  end
-
-  defp process({{:one_key_t, :cast}, fun}) do
-    state = Process.get :'$state'
-    case Callback.run fun, [[state]] do
-      [state] ->
-        process {:put, state}
-      :drop ->
-        process :drop
-      :id ->
-        process :id
-      err ->
-        raise """
-        Transaction callback for `cast` or `update` is malformed!
-        See docs for hint. Got: #{inspect err}."
-        """
-        |> String.replace("\n", " ")
-    end
-  end
-
-
   # main
   def loop(server, key, nil), do: loop server, key, {nil, @max_threads}
   def loop(server, key, {state, max_threads}) do
