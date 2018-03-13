@@ -59,6 +59,8 @@ defmodule AgentMap.Worker do
   defp process({:get_and_update, fun, from}) do
     state = Process.get :'$state'
     case Callback.run fun, [state] do
+      {get} ->
+        GenServer.reply from, get
       {get, state} ->
         process {:put, state}
         GenServer.reply from, get
