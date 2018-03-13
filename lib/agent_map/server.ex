@@ -29,7 +29,7 @@ defmodule AgentMap.Server do
       {:error, reason} ->
         {:stop, reason}
       dup ->
-        {:stop, for key <- dup do {key, :already_exists} end}
+        {:stop, for key <- dup do {key, :exists} end}
     end
   end
 
@@ -72,10 +72,6 @@ defmodule AgentMap.Server do
     end
   end
 
-  def handle_call({:!, {:fetch, key}},_from, map) do
-    {:reply, fetch(map, key), map}
-  end
-
   def handle_call({:!, {:take, keys}},_from, map) do
     res = Enum.reduce keys, %{}, fn key, res ->
       case fetch map, key do
@@ -85,15 +81,6 @@ defmodule AgentMap.Server do
     end
 
     {:reply, res, map}
-  end
-
-  def handle_call({:!, {:get, key, default}},_from, map) do
-    state = case fetch map, key do
-      {:ok, state} -> state
-      :error -> default
-    end
-
-    {:reply, state, map}
   end
 
   ##
@@ -116,11 +103,11 @@ defmodule AgentMap.Server do
     end
   end
 
-  def handle_call( req, from, map) do
+  def handle_call(req, from, map) do
     handle %{req | :from => from}, map
   end
 
-  def handle_cast( req, map) do
+  def handle_cast(req, map) do
     handle req, map
   end
 

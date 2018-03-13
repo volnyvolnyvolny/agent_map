@@ -4,7 +4,8 @@ defmodule AgentMap.Callback do
   def safe_run(f) do
     {:ok, run(f)}
   rescue
-    [BadFunctionError, BadArityError] -> {:error, :cannot_call}
+    BadFunctionError -> {:error, :badfun}
+    BadArityError -> {:error, :badarity}
     exception -> {:error, {exception, :erlang.get_stacktrace()}}
   catch
     :exit, reason -> {:error, {:exit, reason}}
@@ -13,10 +14,10 @@ defmodule AgentMap.Callback do
   # run group of funs. Params are funs_with_ids and timeout
   def safe_run(funs, timeout) do
     Keyword.values(funs)
-    |> Enum.map(&Task.async( fn -> safe_run(&1) end))
+    |> Enum.map(&Task.async(fn -> safe_run(&1) end))
     |> Task.yield_many( timeout)
     |> Enum.map(fn {task, res} ->
-         res || Task.shutdown( task, :brutal_kill)
+         res || Task.shutdown(task, :brutal_kill)
        end)
     |> Enum.map(fn
          {:ok, result} -> result

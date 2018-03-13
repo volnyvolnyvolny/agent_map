@@ -164,6 +164,12 @@ defmodule AgentMap.Transaction do
         end
         states
 
+      :id ->
+        for key <- keys do
+          send workers[key], :id
+        end
+        states
+
       {get} ->
         for key <- keys do
           send workers[key], :id

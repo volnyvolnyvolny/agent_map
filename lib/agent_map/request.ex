@@ -7,7 +7,7 @@ defmodule AgentMap.Req do
 
   defstruct [:action,  # :get, :get_and_update, :update, :cast, …
              :data,    # {key, fun}, {fun, keys}, {key, fun, opts}
-             :from,
+             from: self(),
              !: false] # is not urgent by default
 
 
@@ -36,12 +36,17 @@ defmodule AgentMap.Req do
     end
   end
 
+
   def spawn_worker(map, key) do
     worker = spawn_link Worker, :loop, [self(), key, map[key]]
     put_in map[key], {:pid, worker}
   end
 
   # →
+  def handle(%Req{action: :fetch, data: key}=req, map) do
+    {:reply, fetch(map, key), map}
+  end
+
   def handle(%Req{action: :get, data: {fun, [key]}}=req, map) do
     handle %{req | data: {key, &Callback.run(fun, [[&1]])}}, map
   end
@@ -69,7 +74,6 @@ defmodule AgentMap.Req do
     {key,fun} = req.data
 
     case map[key] do
-
       {:pid, worker} ->
         send worker, to_msg req
         {:noreply, map}

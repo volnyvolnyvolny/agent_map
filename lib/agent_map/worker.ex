@@ -61,6 +61,8 @@ defmodule AgentMap.Worker do
     case Callback.run fun, [state] do
       {get} ->
         GenServer.reply from, get
+      :id ->
+        GenServer.reply from, state
       {get, state} ->
         process {:put, state}
         GenServer.reply from, get
