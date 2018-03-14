@@ -42,19 +42,67 @@ defmodule AgentMap.Req do
     put_in map[key], {:pid, worker}
   end
 
+
+  ##
+  ## HELPERS
+  ##
+  defp has_key?(map, key), do: match? {:ok, _}, fetch(map, key)
+
   # →
-  def handle(%Req{action: :fetch, data: key}=req, map) do
+  def handle(%Req{action: :keys}, map) do
+    keys = for key <- Map.keys(map),
+               has_key?(map, key), do: key
+
+    {:reply, keys, map}
+  end
+  def handle(%Req{action: :queue_len, data: key}, map) do
+    case map[key] do
+      {:pid, worker} ->
+        {:messages, queue} = Process.info worker, :messages
+        num = Enum.count queue, fn msg ->
+          msg not in [:done, :done_on_server]
+        end
+        {:reply, num, map}
+      _ ->
+        {:reply, 0, map}
+    end
+  end
+  def handle(%Req{action: :take, data: keys}, map) do
+    res = Enum.reduce keys, %{}, fn key, res ->
+      case fetch map, key do
+        {:ok, state} -> put_in res[key], state
+        _ -> res
+      end
+    end
+
+    {:reply, res, map}
+  end
+  def handle(%Req{action: :max_threads}=req, map) do
+    {key, value} = req.data
+
+    case map[key] do
+      {:pid, worker} ->
+        send worker, {:!, {:max_threads, value, req.from}}
+        {:noreply, map}
+
+      {state, mt} ->
+        map = put_in map[key], {state, value}
+        {:reply, mt, map}
+
+      nil ->
+        map = put_in map[key], {nil, value}
+        {:reply, @max_threads, map}
+    end
+  end
+  def handle(%Req{action: :fetch, data: key}, map) do
     {:reply, fetch(map, key), map}
   end
-
   def handle(%Req{action: :get, data: {fun, [key]}}=req, map) do
     handle %{req | data: {key, &Callback.run(fun, [[&1]])}}, map
   end
-
   def handle(%Req{data: {_fun, keys}}=req, map) when is_list(keys) do
     {:noreply, Transaction.run(req, map)}
   end
-
   def handle(%Req{action: :get, !: true}=req, map) do
     {key, fun} = req.data
 
@@ -69,7 +117,6 @@ defmodule AgentMap.Req do
 
     {:noreply, map}
   end
-
   def handle(%Req{action: :get}=req, map) do
     {key,fun} = req.data
 
@@ -107,7 +154,6 @@ defmodule AgentMap.Req do
         handle req, map
     end
   end
-
   def handle(%Req{action: :put}=req, map) do
     {key, state} = req.data
 
@@ -130,7 +176,6 @@ defmodule AgentMap.Req do
         handle req, map
     end
   end
-
   def handle(%Req{action: :pop}=req, map) do
     {key, default} = req.data
 
@@ -144,7 +189,6 @@ defmodule AgentMap.Req do
         {:reply, default, map}
     end
   end
-
   def handle(req, map) do
     {key,_} = req.data
 
@@ -158,5 +202,4 @@ defmodule AgentMap.Req do
         handle req, map
     end
   end
-
 end

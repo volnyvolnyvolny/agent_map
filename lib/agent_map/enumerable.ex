@@ -1,25 +1,23 @@
 defimpl Enumerable, for: AgentMap do
   import AgentMap
 
-
   def count(%AgentMap{link: mag}) do
     {:ok, GenServer.call(mag, :count)}
   end
 
-
-  def member?( mag, {key,state}) do
+  def member?(mag, {key,state}) do
     case fetch( mag, key) do
       {:ok, ^state} -> {:ok, true}
       _ -> {:ok, false}
     end
   end
 
-  def slice( mag) do
+  def slice(mag) do
     map = take mag, keys mag
     {:ok, map_size(map), &Enumerable.List.slice(:maps.to_list(map), &1, &2)}
   end
 
-  def reduce( mag, acc, fun) do
+  def reduce(mag, acc, fun) do
     map = take mag, keys mag
     reduce_list(:maps.to_list(map), acc, fun)
   end

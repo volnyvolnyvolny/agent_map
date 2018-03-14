@@ -3,7 +3,7 @@ defmodule AgentMap.Server do
 
   alias AgentMap.{Callback, Req}
 
-  import Req, only: [fetch: 2, handle: 2]
+  import Req, only: [handle: 2]
 
   import Enum, only: [uniq: 1]
   import Map, only: [delete: 2]
@@ -30,76 +30,6 @@ defmodule AgentMap.Server do
         {:stop, reason}
       dup ->
         {:stop, for key <- dup do {key, :exists} end}
-    end
-  end
-
-  ##
-  ## HELPERS
-  ##
-
-  defp has_key?(map, key) do
-    case fetch map, key do
-      {:ok, _} -> true
-      _ -> false
-    end
-  end
-
-  ##
-  ## IMMEDIATE REPLY
-  ##
-
-  def handle_call(:keys,_from, map) do
-    keys = for key <- Map.keys( map),
-               has_key?(map, key), do: key
-
-    {:reply, keys, map}
-  end
-
-  def handle_call({:has_key?, key},_from, map) do
-    {:reply, has_key?(map, key), map}
-  end
-
-  def handle_call({:queue_len, key},_from, map) do
-    case map[key] do
-      {:pid, worker} ->
-        {:messages, queue} = Process.info worker, :messages
-        num = Enum.count queue, fn msg ->
-          msg not in [:done, :done_on_server]
-        end
-        {:reply, num, map}
-      _ ->
-        {:reply, 0, map}
-    end
-  end
-
-  def handle_call({:!, {:take, keys}},_from, map) do
-    res = Enum.reduce keys, %{}, fn key, res ->
-      case fetch map, key do
-        {:ok, state} -> put_in res[key], state
-        _ -> res
-      end
-    end
-
-    {:reply, res, map}
-  end
-
-  ##
-  ## MAY RETURN `{:noreply, …}`
-  ##
-
-  def handle_call({:max_threads, key, value}, from, map) do
-    case map[key] do
-      {:pid, worker} ->
-        send worker, {:!, {:max_threads, value, from}}
-        {:noreply, map}
-
-      {state, mt} ->
-        map = put_in map[key], {state, value}
-        {:reply, mt, map}
-
-      nil ->
-        map = put_in map[key], {nil, value}
-        {:reply, @max_threads, map}
     end
   end
 
