@@ -230,7 +230,8 @@ defmodule AgentMap do
   @typedoc "Anonymous function with zero arity, pair `{fun/length(args), args}` or corresponding MFA tuple"
   @type a_fun(r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
-
+  @typedoc "Options for :get, :get_and_update, :update and :cast methods"
+  @type options :: [!: boolean, timeout: timeout] | timeout
 
 
   @doc false
@@ -265,6 +266,7 @@ defmodule AgentMap do
 
 
   ## ##
+
 
   # common for start_link and start
   # separate funs from GenServer options
@@ -452,28 +454,24 @@ defmodule AgentMap do
   end
 
 
-  @doc """
-  Call used underneath by `get/3`, `get/4`, `get_and_update/3`,
-  `get_and_update/4`, `update/3`, `update/4` and `cast/3`, `cast/4`.
 
-  `AgentMap.Req.data` field can be in form of `{key, fun}` or `{fun, keys}`.
+  defp call(agentmap, req, opts \\ 5000)
 
-  For ex., call on a single key could be made as:
-
-      AgentMap.call agentmap, %Req{action: :get, data: {:key, & &1}}
-
-  Call on multiple keys, as:
-
-      AgentMap.call agentmap, %Req{action: :get, data: {fn [s1, s2] -> [s2, s1] end, [:key1, :key2]}}
-  """
-  @spec call(a_map, Req.t, timeout) :: :ok | any
-  def call(agentmap, req, timeout \\ 5000)
-
-  def call(agentmap, %Req{action: :cast}=req, _) do
-    GenServer.cast pid(agentmap), req
+  defp call(agentmap, req, :infinity) do
+    call agentmap, req, timeout: :infinity
   end
-  def call(agentmap, req, timeout) do
-    GenServer.call pid(agentmap), req, timeout
+  defp call(agentmap, req, timeout) when is_integer(timeout) do
+    call agentmap, req, timeout: timeout
+  end
+  defp call(agentmap, req, opts) do
+    req = %{req | !: Keyword.get(opts, :!, false)}
+
+    if req.action == :cast do
+      GenServer.cast pid(agentmap), req
+    else
+      timeout = Keyword.get(opts, :timeout, 5000)
+      GenServer.call pid(agentmap), req, timeout
+    end
   end
 
 
@@ -482,84 +480,43 @@ defmodule AgentMap do
   ##
 
   @doc """
-  See `get/3`.
-
-  `get/4` take four forms:
-
-    * `get(a_map, :!, key, fun)` — single urgent call;
-    * `get(a_map, :!, fun, keys)` — transaction urgent call;
-    * `get(a_map, key, fun, timeout)` — single urgent call with timeout;
-    * `get(a_map, fun, keys, timeout)` — transaction call with timeout.
-
-  That are just a syntax sugar for:
-
-    * `call a_map, %Req{action: :get, data: {key, fun}, !: true}`;
-    * `call a_map, %Req{action: :get, data: {fun, keys}, !: true}`;
-    * `call a_map, %Req{action: :get, data: {key, fun}}, timeout`;
-    * `call a_map, %Req{action: :get, data: {fun, keys}}, timeout`.
-  """
-  @spec get(a_map, :!, a_fun([state], a), [key]) :: a when a: var
-  @spec get(a_map, :!, key, a_fun(state, a)) :: a when a: var
-
-  @spec get(a_map, a_fun([state], a), [key], timeout) :: a when a: var
-  @spec get(a_map, key, a_fun(state, a), timeout) :: a when a: var
-
-  # 4
-#  def get(agentmap, urgent, key, fun)
-#  def get(agentmap, urgent, fun, keys)
-
-#  def get(agentmap, key, fun, timeout)
-#  def get(agentmap, fun, keys, timeout)
-
-
-  def get(agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :get, data: {fun,keys}, !: true}
-  end
-  def get(agentmap, :!, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :get, data: {key,fun}, !: true}
-  end
-  def get(agentmap, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :get, data: {fun,keys}}, timeout
-  end
-  def get(agentmap, key, fun, timeout) when is_fun(fun,1) do
-    call agentmap, %Req{action: :get, data: {key,fun}}, timeout
-  end
-
-  @doc """
-  Gets the `agentmap` state with given key. The callback `fun` will be executed
+  Gets the `agentmap` value for given key. The callback `fun` will be executed
   by `agentmap` and the result of invocation will be returned. As the first
-  argument of `fun`, `agentmap` state will be passed. If `agentmap` has no state
-  with such key, `nil` will be passed to `fun`. If worker exists for this key —
-  `fun` will be added to the corresponding execution queue. `get` calls are
-  executed concurrently, in no more than `max_threads` (this can be tweaked via
-  `max_threads/2` call).
+  argument of `fun`, `agentmap` value will be passed (or `nil` if there is no
+  such `key`). If worker exists for this key — `fun` will be added to the
+  corresponding execution queue and executed concurrently, in no more than
+  `max_threads` (this can be tweaked via `max_threads/2` call).
 
-  As for `update`, `get_and_update` and `cast` methods, `get` call has three
+  As for `update`, `get_and_update` and `cast` methods, `get` call has two
   forms:
 
-  * single key calls: `get(agentmap, key1, callback)`, `get(agentmap, :!, key,
-    callback)`;
-
-  * transaction calls: `get(agentmap, callback, [key1, key2, …])`,
-    `get(agentmap, :!, callback, [key1, key2, …])`;
-
-  * batch-calls: `get(agentmap, key1: callback, key2: callback, …)`,
-    `get(agentmap, :!, key1: callback, key2: callback, …)`, see `get/2`.
+  * single key calls: `get(agentmap, key, fun)`;
+  * multiple keys calls (transactions): `get(agentmap, fun, [key1, key2, …])`.
 
   For example, list of keys could be passed to make aggregate function calls:
 
-     `AgentMap.get accounts, &Enum.sum/1, [:alice, :bob]`
+      AgentMap.get accounts, &Enum.sum/1, [:alice, :bob]
+
+  ## Options
 
   `timeout` is an integer greater than zero which specifies how many
-  milliseconds are allowed before the agentmap executes the callback and returns
+  milliseconds are allowed before the `agentmap` executes the `fun` and returns
   the result value, or the atom `:infinity` to wait indefinitely. If no result
-  is received within the specified time, the function call fails and the caller
-  exits. Three forms of `get` calls with timeout could be made:
+  is received within the specified time, the caller exits. By default it's equal
+  to `5000` ms. This value could be given as `:timeout` option, or separately, so:
 
-  * single calls: `get(agentmap, 4000, key1, callback)` for calls with timeout
-    4000 ms;
-  * transaction calls: `get(agentmap, 4000, callback, [key1, key2, …])`;
-  * batch-calls: `get(agentmap, 4000, key1: callback, key2: callback, …)`.
+      AgentMap.get agentmap, :key, fun
+      AgentMap.get agentmap, :key, fun, 5000
+      AgentMap.get agentmap, :key, fun, timeout: 5000
+      AgentMap.get agentmap, :key, fun, timeout: 5000, !: false
+
+  means the same.
+
+  The `:!` option is used to make "urgent" calls. "Urgent" version of `get` can
+  be used to make out of turn async calls. Values could have an associated queue
+  of callbacks, waiting to be executed. "Urgent" version allows to retrive value
+  immediately at the moment of call. Every `fun` is executed in a separate
+  `Task`.
 
   ## Examples
 
@@ -581,38 +538,38 @@ defmodule AgentMap do
       iex> AgentMap.get mag, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice]
       -1
 
-  ## Urgent (`:!`)
-
-  Urgent version of `get` can be used to make out of turn async call. State can
-  have an associated queue of callbacks, waiting to be executed. This version
-  works as `get`, but retrives state immediately at the moment of call. It is
-  always called in a separate `Task`.
-
-  ## Examples
+   "Urgent" calls:
 
       iex> mag = AgentMap.new key: 42
       iex> AgentMap.cast mag, :key, fn _ ->
-      ...>   :timer.sleep( 100)
+      ...>   :timer.sleep(100)
       ...>   43
       ...> end
-      iex> AgentMap.get mag, :!, :key, & &1
+      iex> AgentMap.get mag, :key, & &1, !: true
       42
       iex> mag[:key] # the same
       42
       iex> AgentMap.get mag, :key, & &1
       43
-      iex> AgentMap.get mag, :!, :key, & &1
+      iex> AgentMap.get mag, :key, & &1, !: true
       43
   """
-  # 3
-  @spec get(a_map, a_fun([state], a), [key]) :: a when a: var
-  @spec get(a_map, key, a_fun(state, a)) :: a when a: var
-  @spec get(a_map, key, d) :: state | d when d: var
-  @spec get(a_map, key) :: state | nil
+  @spec get(a_map, a_fun([state], a), [key], options) :: a when a: var
+  @spec get(a_map, key, a_fun(state, a), options) :: a when a: var
 
-  def get(agentmap, key, fun)
+  # 4
+  def get(agentmap, key, fun, opts)
+  def get(agentmap, fun, keys, opts)
+
+  def get(agentmap, fun, keys, opts) when is_fun(fun,1) and is_list(keys) do
+    call agentmap, %Req{action: :get, data: {fun,keys}}, opts
+  end
+  def get(agentmap, key, fun, opts) when is_fun(fun,1) do
+    call agentmap, %Req{action: :get, data: {key,fun}}, opts
+  end
+
+  # 3
   def get(agentmap, key, default)
-  def get(agentmap, fun, keys)
 
   def get(agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
     call agentmap, %Req{action: :get, data: {fun, keys}}
@@ -621,8 +578,11 @@ defmodule AgentMap do
     call agentmap, %Req{action: :get, data: {key, fun}}
   end
 
-
   #
+
+  @spec get(a_map, key, d) :: state | d when d: var
+  @spec get(a_map, key) :: state | nil
+
   def get(agentmap, key, default)
   def get(agentmap, key, default) do
     case fetch agentmap, key do
@@ -655,22 +615,25 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Gets and updates the agentmap state with given key in one operation. The
+  Gets and updates the `agentmap` value with given `key` in one operation. The
   callback `fun` will be sent to the `agentmap`, which will add it to the
-  execution queue for then given key. Before the invocation, the agentmap
-  state will be passed as the first argument. If `agentmap` has no state with
-  such key, `nil` will be passed to the `fun`. The function must return a tuple
-  with two elements, the first being the value to return (that is, the "get"
-  value) and the second one being the new state.
+  execution queue for then given key. Before the invocation, the `agentmap`
+  value will be passed as the first argument. If `agentmap` has no value with
+  such `key`, `nil` will be passed to the `fun`.
 
-  Callback may also return `:pop`. Similar to `Map.get_and_update/3` it returns
-  state with given key and removes it from `agentmap`.
+  The function may return:
+
+  * a two element tuple: `{"get" value, new value}`;
+  * a one element tuple `{"get" value}`;
+  * `:id` to return current value while not changing it;
+  * `:pop`, similar to `Map.get_and_update/3` it returns value with given `key`
+  and removes it from `agentmap`.
 
   Be aware that: (1) anonymous function, `{fun, args}` or MFA tuple can be
-  passed as a callback; (2) every state has it's own FIFO queue of callbacks
+  passed as a callback; (2) every value has it's own FIFO queue of callbacks
   waiting to be executed and all the queues are processed asynchronously; (3) no
-  state changing callbacks (`get_and_update`, `update` or `cast` calls) can be
-  executed in parallel on the same state. This would be done only for `get`
+  value changing callbacks (`get_and_update`, `update` or `cast` calls) can be
+  executed in parallel on the same value. This would be done only for `get`
   calls (see `max_threads` option of `init/4`).
 
   ## Transaction calls
@@ -714,7 +677,7 @@ defmodule AgentMap do
   (!) State changing transaction (such as `get_and_update`) will block all the
   involved states queues until the end of execution. So, for example,
 
-      iex> AgentMap.new( alice: 42, bob: 24, chris: 0) |>
+      iex> AgentMap.new(alice: 42, bob: 24, chris: 0) |>
       ...> AgentMap.get_and_update(&:timer.sleep(1000) && {:slept_well, &1}, [:alice, :bob])
       :slept_well
 
@@ -727,14 +690,26 @@ defmodule AgentMap do
   can be implemented inside callbacks and *Consistency* is out of question here
   as its the application level concept.
 
-  ## Timeout
+  ## Options
 
   `timeout` is an integer greater than zero which specifies how many
-  milliseconds are allowed before the agentmap executes the function and
-  returns the result value, or the atom `:infinity` to wait indefinitely. If no
-  result is received within the specified time, the function call fails and the
-  caller exits. If this happened but callback is so far in the queue, and in
-  `init/4` call `:late_call` flag is set to true, it will still be executed.
+  milliseconds are allowed before the `agentmap` executes the `fun` and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the caller exits. By default it's equal
+  to `5000` ms. This value could be given as `:timeout` option, or separately, so:
+
+      AgentMap.get agentmap, :key, fun
+      AgentMap.get agentmap, :key, fun, 5000
+      AgentMap.get agentmap, :key, fun, timeout: 5000
+      AgentMap.get agentmap, :key, fun, timeout: 5000, !: false
+
+  means the same.
+
+  The `:!` option is used to make "urgent" calls. "Urgent" version of `get` can
+  be used to make out of turn async calls. Values could have an associated queue
+  of callbacks, waiting to be executed. "Urgent" version allows to retrive value
+  immediately at the moment of call. Every `fun` is executed in a separate
+  `Task`.
 
   ## Examples
 
@@ -772,68 +747,22 @@ defmodule AgentMap do
       [24, :_, nil, nil]
   """
   #4
-  @spec get_and_update(a_map, :!, a_fun([state], [{any} | {any, state} | :pop | :id]), [key])
+  @spec get_and_update(a_map, key, a_fun(state, {a} | {a, state} | :pop | :id), options)
+        :: a | state when a: var
+  @spec get_and_update(a_map, a_fun([state], [{any} | {any, state} | :pop | :id]), [key], options)
         :: [any | state]
-  @spec get_and_update(a_map, :!, a_fun([state], {a, [state] | :drop}), [key])
+  @spec get_and_update(a_map, a_fun([state], {a, [state] | :drop}), [key], options)
         :: a when a: var
-  @spec get_and_update(a_map, :!, a_fun([state], :pop), [key])
+  @spec get_and_update(a_map, a_fun([state], :pop), [key], options)
         :: [state]
 
-  def get_and_update(agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :get_and_update, data: {fun, keys}, !: true}
+  def get_and_update(agentmap, key, fun, opts \\ [])
+  def get_and_update(agentmap, fun, keys, opts) when is_fun(fun,1) and is_list(keys) do
+    call agentmap, %Req{action: :get_and_update, data: {fun, keys}}, opts
   end
-
-
-  @spec get_and_update(a_map, :!, key, a_fun(state, {a} | {a, state} | :pop))
-        :: a | state when a: var
-  def get_and_update(agentmap, :!, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :get_and_update, data: {key, fun}, !: true}
+  def get_and_update(agentmap, key, fun, opts) when is_fun(fun,1) do
+    call agentmap, %Req{action: :get_and_update, data: {key, fun}}, opts
   end
-
-  #
-
-  @spec get_and_update(a_map, a_fun([state], [{any} | {any, state} | :pop | :id]), [key], timeout)
-        :: [any | state]
-  @spec get_and_update(a_map, a_fun([state], {a, [state] | :drop}), [key], timeout)
-        :: a when a: var
-  @spec get_and_update(a_map, a_fun([state], :pop), [key], timeout)
-        :: [state]
-
-  def get_and_update(agentmap, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :get_and_update, data: {fun, keys}}, timeout
-  end
-
-  @spec get_and_update(agentmap, key, a_fun(state, {a} | {a, state} | :pop), timeout)
-        :: a | state when a: var
-  def get_and_update(agentmap, key, fun, timeout) when is_fun(fun,1) do
-    call agentmap, %Req{action: :get_and_update, data: {key, fun}}, timeout
-  end
-
-
-  # 3
-  @doc """
-  Version of `get_and_update/5` to be used for batch processing. As in
-  `get_and_update/5`, urgent (`:!`) mark can be provided to make out of turn
-  call. Works the same as `get/4`, `update/4`.
-  """
-
-  @spec get_and_update(agentmap, a_fun([state], [{any} | {any, state} | :pop | :id]), [key])
-        :: [any | state]
-  @spec get_and_update(agentmap, a_fun([state], {a, [state] | :drop}), [key])
-        :: a when a: var
-  @spec get_and_update(agentmap, a_fun([state], :pop), [key])
-        :: [state]
-
-  def get_and_update(agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :get_and_update, data: {fun, keys}}
-  end
-
-  @spec get_and_update(agentmap, key, a_fun(state, {a} | {a, state} | :pop))
-        :: a | state when a: var
-  def get_and_update(agentmap, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :get_and_update, data: {key, fun}}
-  end
-
 
   ##
   ## UPDATE
@@ -910,63 +839,19 @@ defmodule AgentMap do
       42
   """
   # 4
-  @spec update(a_map, :!, a_fun([state], [state] | :drop), [key]) :: :ok
-  def update(agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :update, data: {fun, keys}, !: true}
+  @spec update(a_map, key, a_fun(state, state), options) :: :ok
+  @spec update(a_map, a_fun([state], [state]), [key], options) :: :ok
+  def update(agentmap, key, fun, opts \\ [])
+  def update(agentmap, fun, keys, opts) when is_fun(fun,1) and is_list(keys) do
+    call agentmap, %Req{action: :update, data: {fun, keys}}, opts
   end
-
-
-  @spec update(a_map, :!, key, a_fun(state, state)) :: :ok
-  def update(agentmap, :!, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :update, data: {key, fun}, !: true}
-  end
-
-  #
-
-  @spec update(a_map, a_fun([state], [state] | :drop), [key], timeout) :: :ok
-  def update(agentmap, fun, keys, timeout) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :update, data: {fun, keys}}, timeout
-  end
-
-  @spec update(a_map, key, a_fun(state, state), timeout) :: :ok
-  def update(agentmap, key, fun, timeout) when is_fun(fun,1) do
-    call agentmap, %Req{action: :update, data: {key, fun}}, timeout
-  end
-
-  # 3
-
-  @doc """
-  Version of `get_and_update/5` to be used for batch processing. As in
-  `get_and_update/5`, urgent (`:!`) mark can be provided to make out of turn
-  call. Works the same as `get/4`, `update/4`.
-  """
-
-  @spec update(a_map, a_fun([state], [state] | :drop), [key]) :: :ok
-  def update(agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :update, data: {fun, keys}}
-  end
-
-  @spec update(a_map, key, a_fun(state, state)) :: :ok
-  def update(agentmap, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :update, data: {key, fun}}
+  def update(agentmap, key, fun, opts) when is_fun(fun,1) do
+    call agentmap, %Req{action: :update, data: {key, fun}}, opts
   end
 
   ##
   ## CAST
   ##
-
-  # 4
-  @spec cast(agentmap, :!, a_fun([state], [state] | :drop), [key]) :: :ok
-  def cast(agentmap, :!, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :cast, data: {fun, keys}, !: true}
-  end
-
-  @spec cast(agentmap, :!, key, a_fun(state, state)) :: :ok
-  def cast(agentmap, :!, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :cast, data: {key, fun}, !: true}
-  end
-
-  # 3
 
   @doc """
   Perform `cast` ("fire and forget") `update/3`. See corresponding docs. Returns
@@ -981,14 +866,14 @@ defmodule AgentMap do
     * transaction: `cast(agentmap, a_fun([state], [state]), [key])`;
       `cast(agentmap, :!, a_fun([state], [state]), [key])`.
   """
-  @spec cast(agentmap, a_fun([state], [state] | :drop), [key]) :: :ok
-  def cast(agentmap, fun, keys) when is_fun(fun,1) and is_list(keys) do
-    call agentmap, %Req{action: :cast, data: {fun, keys}}
+  @spec cast(a_map, key, a_fun(state, state), options) :: :ok
+  @spec cast(a_map, a_fun([state], [state]), [key], options) :: :ok
+  def cast(agentmap, key, fun, opts \\ [])
+  def cast(agentmap, fun, keys, opts) when is_fun(fun,1) and is_list(keys) do
+    call agentmap, %Req{action: :cast, data: {fun, keys}}, opts
   end
-
-  @spec cast(agentmap, key, a_fun(state, state)) :: :ok
-  def cast(agentmap, key, fun) when is_fun(fun,1) do
-    call agentmap, %Req{action: :cast, data: {key, fun}}
+  def cast(agentmap, key, fun, opts) when is_fun(fun,1) do
+    call agentmap, %Req{action: :cast, data: {key, fun}}, opts
   end
 
 
