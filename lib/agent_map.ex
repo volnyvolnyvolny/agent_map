@@ -262,7 +262,8 @@ defmodule AgentMap do
 
   # common for start_link and start
   # separate funs from GenServer options
-  defp separate(funs_and_opts) do
+  def separate(funs_and_opts) do
+#    IO.inspect funs_and_opts, label: :separate_args
     {opts, funs} =
       Enum.reverse(funs_and_opts) |>
       Enum.split_while(fn
@@ -407,6 +408,7 @@ defmodule AgentMap do
   @spec start_link([{key, a_fun(any)} | GenServer.option]) :: on_start
   def start_link(funs_and_opts \\ [timeout: 5000]) do
     {funs, opts} = separate funs_and_opts
+    IO.inspect {funs, opts}
     timeout = opts[:timeout] || 5000
     opts = Keyword.put(opts, :timeout, :infinity) # turn off global timeout
     GenServer.start_link Server, {funs, timeout}, opts
@@ -432,7 +434,9 @@ defmodule AgentMap do
       ...>                timeout: 100
       {:error, [one: :exists]}
 
-      iex> err = AgentMap.start one: 76, two: fn -> raise "oops" end
+      iex> err = AgentMap.start one: 76,
+      ...>                      two: fn -> raise "oops"
+      ...>       end
       iex> {:error, [one: :badfun, two: {exception, _stacktrace}]} = err
       iex> exception
       %RuntimeError{message: "oops"}
@@ -519,7 +523,8 @@ defmodule AgentMap do
   ## Examples
 
       iex> mag = AgentMap.new()
-      iex> AgentMap.get mag, :alice, & &1 nil
+      iex> AgentMap.get mag, :alice, & &1
+      nil
       iex> AgentMap.put mag, :alice, 42
       iex> AgentMap.get mag, :alice, & &1+1
       43
@@ -605,7 +610,7 @@ defmodule AgentMap do
       ...> end
       iex> AgentMap.get_lazy mag, :a, fun
       1
-      iex> AgentMap.get_lazy map, :b, fun
+      iex> AgentMap.get_lazy mag, :b, fun
       13
 
   """
@@ -1007,6 +1012,31 @@ defmodule AgentMap do
   @spec max_threads(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
   def max_threads(agentmap, key, value) do
     GenServer.call pid(agentmap), {:max_threads, key, value}
+  end
+
+
+  @doc """
+  Alters the value stored under `key` to `value`, but only
+  if the entry `key` already exists in `map`.
+
+  If `key` is not present in `map`, a `KeyError` exception is raised.
+
+  ## Examples
+
+      iex> mag = AgentMap.new a: 1, b: 2
+      iex> AgentMap.replace! mag, :a, 3
+      iex> AgentMap.take mag, [:a, :b]
+      %{a: 3, b: 2}
+      iex> AgentMap.replace! mag, :c, 3
+      ** (KeyError) key :c not found
+  """
+  @spec replace!(a_map, key, value) :: agentmap
+  def replace!(agentmap, key, value) do
+    case fetch agentmap, key do
+      {:ok, _} -> put agentmap, key, value
+      _ -> raise KeyError, key: key 
+    end
+    agentmap
   end
 
 
