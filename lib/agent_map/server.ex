@@ -22,7 +22,7 @@ defmodule AgentMap.Server do
          {:ok, results} <- Callback.safe_run(funs, timeout) do
 
       map = for {key, s} <- results, into: %{} do
-        {key, {{:state, s}, @max_threads}}
+        {key, {{:value, s}, @max_threads}}
       end
       {:ok, map}
     else
@@ -58,8 +58,8 @@ defmodule AgentMap.Server do
       {_, :infinity} ->
         {:noreply, map}
 
-      {state, quota} ->
-        map = put_in map[key], {state, quota+1}
+      {value, quota} ->
+        map = put_in map[key], {value, quota+1}
         {:noreply, map}
 
       _ ->
@@ -80,27 +80,27 @@ defmodule AgentMap.Server do
       {:noreply, map}
     else
       max_t = dict[:'$max_threads']
-      state = dict[:'$state']
+      value = dict[:'$value']
       key = dict[:'$key']
 
       send worker, :die!
 
-      if {state, max_t} == {nil, @max_threads} do
+      if {value, max_t} == {nil, @max_threads} do
         {:noreply, delete(map, key)} #GC
       else
-        map = put_in map[key], {state, max_t}
+        map = put_in map[key], {value, max_t}
         {:noreply, map}
       end
     end
   end
 
-  def handle_info(msg, state) do
-    super msg, state
+  def handle_info(msg, value) do
+    super msg, value
   end
 
 
-  def code_change(_old, state, fun) do
-    {:ok, Callback.run(fun, [state])}
+  def code_change(_old, value, fun) do
+    {:ok, Callback.run(fun, [value])}
   end
 
 end

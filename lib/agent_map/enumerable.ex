@@ -5,9 +5,9 @@ defimpl Enumerable, for: AgentMap do
     {:ok, GenServer.call(mag, :count)}
   end
 
-  def member?(mag, {key,state}) do
+  def member?(mag, {key,value}) do
     case fetch( mag, key) do
-      {:ok, ^state} -> {:ok, true}
+      {:ok, ^value} -> {:ok, true}
       _ -> {:ok, false}
     end
   end

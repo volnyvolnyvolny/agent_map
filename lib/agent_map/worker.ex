@@ -41,34 +41,34 @@ defmodule AgentMap.Worker do
 
     if threads < Process.get :'$max_threads' do
       worker = self()
-      state = Process.get :'$state'
+      value = Process.get :'$value'
 
       Task.start_link fn ->
-        result = Callback.run fun, [state]
+        result = Callback.run fun, [value]
         GenServer.reply from, result
         send worker, :done
       end
       inc :'$threads'
     else
-      state = Process.get :'$state'
-      result = Callback.run fun, [state]
+      value = Process.get :'$value'
+      result = Callback.run fun, [value]
       GenServer.reply from, result
     end
   end
 
   defp process({:get_and_update, fun, from}) do
-    state = Process.get :'$state'
-    case Callback.run fun, [state] do
+    value = Process.get :'$value'
+    case Callback.run fun, [value] do
       {get} ->
         GenServer.reply from, get
       :id ->
-        GenServer.reply from, state
-      {get, state} ->
-        process {:put, state}
+        GenServer.reply from, value
+      {get, value} ->
+        process {:put, value}
         GenServer.reply from, get
       :pop ->
         process :drop
-        GenServer.reply from, state
+        GenServer.reply from, value
     end
   end
 
@@ -78,22 +78,22 @@ defmodule AgentMap.Worker do
   end
 
   defp process({:cast, fun}) do
-    state = Process.get :'$state'
-    Process.put :'$state', Callback.run(fun, [state])
+    value = Process.get :'$value'
+    Process.put :'$value', Callback.run(fun, [value])
   end
 
-  defp process(:drop), do: Process.delete :'$state'
-  defp process({:put, state}), do: Process.put :'$state', state
+  defp process(:drop), do: Process.delete :'$value'
+  defp process({:put, value}), do: Process.put :'$value', value
   defp process(:id), do: :ignore
 
 
   # transaction handler
-  # only send current state
+  # only send current value
   defp process({:t_send, from}) do
-    send from, {self(), Process.get :'$state'}
+    send from, {self(), Process.get :'$value'}
   end
 
-  # receive the new state (maybe)
+  # receive the new value (maybe)
   defp process(:t_get) do
     receive do
       msg -> process msg
@@ -113,10 +113,10 @@ defmodule AgentMap.Worker do
 
   # main
   def loop(server, key, nil), do: loop server, key, {nil, @max_threads}
-  def loop(server, key, {state, max_threads}) do
-    if state do
-      {:state, state} = state
-      Process.put :'$state', state
+  def loop(server, key, {value, max_threads}) do
+    if value do
+      {:value, value} = value
+      Process.put :'$value', value
     end
 
     Process.put :'$key', key

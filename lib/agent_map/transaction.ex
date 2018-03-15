@@ -14,8 +14,8 @@ defmodule AgentMap.Transaction do
         {:pid, worker} ->
           {known, put_in(workers[key], worker)}
 
-        {{:state, state}, _} ->
-          {put_in(known[key], state), workers}
+        {{:value, value}, _} ->
+          {put_in(known[key], value), workers}
 
         _ ->
           {put_in(known[key], nil), workers}
@@ -30,14 +30,14 @@ defmodule AgentMap.Transaction do
   defp _collect(known, keys) do
     receive do
       msg ->
-        {from, state} = case msg do
+        {from, value} = case msg do
           {ref, msg} when is_reference(ref) -> msg
           msg -> msg
         end
 
         {_, dict} = Process.info from, :dictionary
         key = dict[:'$key']
-        known = put_in known[key], state
+        known = put_in known[key], value
        _collect known, keys--[key]
     end
   end
@@ -53,13 +53,12 @@ defmodule AgentMap.Transaction do
 
     known = for {key, w} <- workers, into: known do
       {_, dict} = Process.info w, :dictionary
-      {key, dict[:'$state']}
+      {key, dict[:'$value']}
     end
 
     Task.start_link __MODULE__, :process, [req, known]
     map
   end
-
   def run(%Req{action: :get}=req, map) do
     {_,keys} = req.data
     {known, workers} = divide map, keys
@@ -70,13 +69,12 @@ defmodule AgentMap.Transaction do
     for {_key, w} <- workers, do: send w, {:t_send, tr}
     map
   end
-
   def run(req, map) do
     {_, keys} = req.data
 
     unless keys == uniq keys do
       raise """
-            Expected uniq keys for transactions that changing state
+            Expected uniq keys for transactions that changing value
             (`update`, `get_and_update`, `cast`). Got: #{inspect keys}.
             Please check #{inspect(keys--uniq keys)} keys.
             """
@@ -113,29 +111,27 @@ defmodule AgentMap.Transaction do
 
   def process(%Req{action: :get, !: true}=req, known) do
     {fun, keys} = req.data
-    states = for key <- keys, do: known[key]
-    GenServer.reply req.from, Callback.run(fun, [states])
+    values = for key <- keys, do: known[key]
+    GenServer.reply req.from, Callback.run(fun, [values])
   end
-
   def process(%Req{action: :get}=req, known) do
     {_, keys} = req.data
     process %{req | :! => true}, collect(known, keys)
   end
-
   def process(%Req{action: :cast}=req, known, workers) do
     {fun, keys} = req.data
     known = collect known, keys
-    states = for key <- keys, do: known[key]
+    values = for k <- keys, do: known[k]
 
-    case Callback.run fun, [states] do
-      c when c in [:id, :drop] ->
-        for key <- keys do
-          send workers[key], c
-        end
+    case Callback.run fun, [values] do
+      :id ->
+        for k <- keys, do: send workers[k], :id
+      :drop ->
+        for k <- keys, do: send workers[k], :drop
 
-      results when length(results) == length(keys) ->
-        for {key, state} <- Enum.zip keys, results do
-          send workers[key], {:put, state}
+      values when length(values) == length(keys) ->
+        for {key, value} <- Enum.zip keys, values do
+          send workers[key], {:put, value}
         end
 
       err ->
@@ -146,60 +142,54 @@ defmodule AgentMap.Transaction do
               |> String.replace("\n", " ")
     end
   end
-
   def process(%Req{action: :update}=req, known, workers) do
     process %{req | :action => :cast}, known, workers
     GenServer.reply req.from, :ok
   end
-
   def process(%Req{action: :get_and_update}=req, known, workers) do
     {fun, keys} = req.data
     known = collect known, keys
-    states = for key <- keys, do: known[key]
+    values = for k <- keys, do: known[k]
 
-    case Callback.run fun, [states] do
+    case Callback.run fun, [values] do
       :pop ->
-        for key <- keys do
-          send workers[key], :drop
-        end
-        states
+        for k <- keys, do: send workers[k], :drop
+        values
 
       :id ->
-        for key <- keys do
-          send workers[key], :id
-        end
-        states
+        for k <- keys, do: send workers[k], :id
+        values
 
       {get} ->
-        for key <- keys do
-          send workers[key], :id
-        end
+        for k <- keys, do: send workers[k], :id
         get
 
-      {get, res} when res in [:drop, :id] ->
-        for key <- keys do
-          send workers[key], res
-        end
+      {get, :id} ->
+        for k <- keys, do: send workers[k], :id
         get
 
-      {get, states} when length(states) == length(keys) ->
-        for {key, state} <- Enum.zip keys, states do
-          send workers[key], {:put, state}
+      {get, :drop} ->
+        for k <- keys, do: send workers[k], :drop
+        get
+
+      {get, values} when length(values) == length(keys) ->
+        for {key, value} <- Enum.zip keys, values do
+          send workers[key], {:put, value}
         end
         get
 
       results when length(results) == length(keys) ->
-        for {key, oldstate, result} <- Enum.zip [keys, states, results] do
+        for {key, oldvalue, result} <- Enum.zip [keys, values, results] do
           case result do
-            {get, state} ->
-              send workers[key], {:put, state}
+            {get, value} ->
+              send workers[key], {:put, value}
               get
             :pop ->
               send workers[key], :drop
-              oldstate
+              oldvalue
             :id ->
               send workers[key], :id
-              oldstate
+              oldvalue
           end
         end
 

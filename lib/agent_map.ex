@@ -263,12 +263,11 @@ defmodule AgentMap do
   # common for start_link and start
   # separate funs from GenServer options
   def separate(funs_and_opts) do
-#    IO.inspect funs_and_opts, label: :separate_args
     {opts, funs} =
       Enum.reverse(funs_and_opts) |>
       Enum.split_while(fn
-        {_,f} when not is_fun(f,0) -> true
-        _ -> false
+        {_,f} when is_fun(f,0) -> false
+        _ -> true
       end)
 
     {Enum.reverse(funs), opts}
@@ -390,10 +389,9 @@ defmodule AgentMap do
 
   But it's easy to get `{:error, :badfun}` or `{:error, :badarity}`:
 
-      iex> import AgentMap
-      iex> start_link key: 42
+      iex> AgentMap.start_link key: 42
       {:error, :badfun}
-      iex> start_link key: {fn -> Enum.empty? [] end, [:extraarg]}
+      iex> AgentMap.start_link key: {fn -> Enum.empty? [] end, [:extraarg]}
       {:error, :badarity}
       # … and so on
 
@@ -408,7 +406,6 @@ defmodule AgentMap do
   @spec start_link([{key, a_fun(any)} | GenServer.option]) :: on_start
   def start_link(funs_and_opts \\ [timeout: 5000]) do
     {funs, opts} = separate funs_and_opts
-    IO.inspect {funs, opts}
     timeout = opts[:timeout] || 5000
     opts = Keyword.put(opts, :timeout, :infinity) # turn off global timeout
     GenServer.start_link Server, {funs, timeout}, opts
@@ -938,7 +935,7 @@ defmodule AgentMap do
   """
   # 4
   @spec update(a_map, key, a_fun(value, value), options) :: :ok
-  @spec update(a_map, a_fun([value], [value]), [key], options) :: :ok
+  @spec update(a_map, a_fun([value], [value] | :drop | :id), [key], options) :: :ok
   def update(agentmap, key, fun, opts \\ [])
   def update(agentmap, fun, keys, opts) when is_fun(fun,1) and is_list(keys) do
     call agentmap, %Req{action: :update, data: {fun, keys}}, opts
@@ -956,7 +953,7 @@ defmodule AgentMap do
   but returns `:ok` immediately.
   """
   @spec cast(a_map, key, a_fun(value, value), options) :: :ok
-  @spec cast(a_map, a_fun([value], [value]), [key], options) :: :ok
+  @spec cast(a_map, a_fun([value], [value] | :drop | :id), [key], options) :: :ok
   def cast(agentmap, key, fun, opts \\ [])
   def cast(agentmap, fun, keys, opts) when is_fun(fun,1) and is_list(keys) do
     call agentmap, %Req{action: :cast, data: {fun, keys}}, opts
@@ -1011,7 +1008,7 @@ defmodule AgentMap do
   """
   @spec max_threads(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
   def max_threads(agentmap, key, value) do
-    GenServer.call pid(agentmap), {:max_threads, key, value}
+    call agentmap, %Req{action: :max_threads, data: {key, value}}
   end
 
 
@@ -1034,7 +1031,7 @@ defmodule AgentMap do
   def replace!(agentmap, key, value) do
     case fetch agentmap, key do
       {:ok, _} -> put agentmap, key, value
-      _ -> raise KeyError, key: key 
+      _ -> raise KeyError, key: key
     end
     agentmap
   end
@@ -1189,7 +1186,7 @@ defmodule AgentMap do
   """
   @spec delete(agentmap, key) :: agentmap
   def delete(agentmap, key) do
-    get_and_update agentmap, :!, key, fn _ -> :pop end
+    get_and_update agentmap, key, fn _ -> :pop end, !: true
     agentmap
   end
 
@@ -1211,7 +1208,7 @@ defmodule AgentMap do
   """
   @spec drop(agentmap, Enumerable.t()) :: agentmap
   def drop(agentmap, keys) do
-    get_and_update agentmap, :!, fn _ -> :pop end, keys
+    get_and_update agentmap, fn _ -> :pop end, keys, !: true
     agentmap
   end
 
@@ -1255,10 +1252,10 @@ defmodule AgentMap do
   iex> mag = AgentMap.new a: 1, b: 2
   iex> AgentMap.queue_len mag, :a
   0
-  iex> AgentMap.update mag, :a, fn _ -> :timer.sleep(100) end
-  iex> AgentMap.update mag, :a, fn _ -> :timer.sleep(100) end
+  iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
+  iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
   iex> AgentMap.queue_len mag, :a
-  1
+  2
   iex> AgentMap.queue_len mag, :b
   0
   """
@@ -1288,4 +1285,5 @@ defmodule AgentMap do
   def stop(agentmap, reason \\ :normal, timeout \\ :infinity) do
     GenServer.stop pid(agentmap), reason, timeout
   end
+
 end
