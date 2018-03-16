@@ -10,11 +10,11 @@ use Mix.Config
 
 # You can configure your application as:
 #
-#     config :multi_agent, key: :value
+#     config :agent_map, key: :value
 #
 # and access this configuration in your application as:
 #
-#     Application.get_env(:multi_agent, :key)
+#     Application.get_env(:agent_map, :key)
 #
 # You can also configure a 3rd-party app:
 #
