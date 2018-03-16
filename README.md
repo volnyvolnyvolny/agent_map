@@ -16,7 +16,7 @@
   struct that allows to use `Enum` module and `[]` operator can be created via
   `new/1` function.
 
-  ## Examples
+### Examples
 
   Let's create an accounting.
 
@@ -152,16 +152,16 @@
 
   See the `Supervisor` docs for more information.
 
-  ## Name registration
+### Name registration
 
   An agentmap is bound to the same name registration rules as GenServers. Read
   more about it in the `GenServer` documentation.
 
-  ## A word on distributed agents/agentmaps
+### A word on distributed agents/agentmaps
 
   See corresponding `Agent` module section.
 
-  ## Hot code swapping
+### Hot code swapping
 
   A agentmap can have its code hot swapped live by simply passing a module,
   function, and arguments tuple to the update instruction. For example, imagine
@@ -174,7 +174,7 @@
   The agentmap's states will be added to the given list of arguments
   (`[%{}]`) as the first argument.
 
-  ## Using `Enum` module and `[]`-access operator
+### Using `Enum` module and `[]`-access operator
 
   `%AgentMap{}` is a special struct that contains pid of the `agentmap` process
   and for that `Enumerable` protocol is implemented. So, `Enum` should work as
