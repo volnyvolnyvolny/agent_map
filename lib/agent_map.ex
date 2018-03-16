@@ -798,7 +798,7 @@ defmodule AgentMap do
   # 4
   @spec get_and_update(a_map, key, a_fun(value, {a} | {a, value}), options) :: a | value
         when a: var
-  @spec get_and_update(a_map, key, a_fun(value, :pop | :id), options) :: a | value
+  @spec get_and_update(a_map, key, a_fun(value, :pop | :id), options) :: value
         when a: var
   @spec get_and_update(a_map, a_fun([value], [{any} | {any, value} | :pop | :id]), [key], options) ::
           [any | value]
