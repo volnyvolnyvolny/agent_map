@@ -49,8 +49,8 @@ defmodule AgentMap do
           AgentMap.get_and_update __MODULE__, account, fn
             nil ->     # no such account
               {:error} # (!) returning {:error, nil} would create key with nil value
-            value when value > amount ->
-              {{:ok, value-amount}, value-amount}
+            balance when balance > amount ->
+              {{:ok, balance-amount}, balance-amount}
             _ ->
               {:error}
           end
@@ -63,8 +63,8 @@ defmodule AgentMap do
           AgentMap.get_and_update __MODULE__, account, fn
             nil ->
               {:error}
-            amount ->
-              {{:ok, value+amount}, value+amount}
+            balance ->
+              {{:ok, balance+amount}, balance+amount}
           end
         end
 
@@ -99,7 +99,7 @@ defmodule AgentMap do
         `:ok` in other case.
         \"""
         def open(account) do
-          AgentMap.get_and_update __MODULE__, account, fn ->
+          AgentMap.get_and_update __MODULE__, account, fn
             nil -> {:ok, 0} # set balance to 0, while returning :ok
             _   -> {:error} # return :error, do not change balance
           end
@@ -114,6 +114,9 @@ defmodule AgentMap do
         def start_link() do
           AgentMap.start_link name: __MODULE__
         end
+
+        def stop(), do: AgentMap.stop __MODULE__
+
 
         @doc \"""
         If `{task, arg}` key is known — return it, else, invoke given `fun` as
@@ -131,10 +134,10 @@ defmodule AgentMap do
       end
 
       defmodule Calc do
-        def fib(0), do: 1
+        def fib(0), do: 0
         def fib(1), do: 1
         def fib(n) when n >= 0 do
-          Memo.calc(:fib, n, fn -> fib(n-1)+fib(n-2) end)
+          Memo.calc(:fib, n, fn n -> fib(n-1)+fib(n-2) end)
         end
       end
 

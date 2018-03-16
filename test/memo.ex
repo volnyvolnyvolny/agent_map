@@ -5,6 +5,9 @@ defmodule Memo do
     AgentMap.start_link name: __MODULE__
   end
 
+  def stop(), do: AgentMap.stop __MODULE__
+
+
   @doc """
   If `{task, arg}` key is known — return it, else, invoke given `fun` as
   a Task, writing result under `{task, arg}`.
@@ -21,7 +24,7 @@ defmodule Memo do
 end
 
 defmodule Calc do
-  def fib(0), do: 1
+  def fib(0), do: 0
   def fib(1), do: 1
   def fib(n) when n >= 0 do
     Memo.calc(:fib, n, fn n -> fib(n-1)+fib(n-2) end)

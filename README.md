@@ -27,41 +27,41 @@
           AgentMap.start_link name: __MODULE__
         end
 
-        @doc \"""
+        @doc """
         Returns `{:ok, balance}` for account or `:error` if account
         is unknown.
-        \"""
+        """
         def balance(account), do: AgentMap.fetch __MODULE__, account
 
-        @doc \"""
+        @doc """
         Withdraw. Returns `{:ok, new_amount}` or `:error`.
-        \"""
+        """
         def withdraw(account, amount) do
           AgentMap.get_and_update __MODULE__, account, fn
             nil ->     # no such account
               {:error} # (!) returning {:error, nil} would create key with nil value
-            value when value > amount ->
-              {{:ok, value-amount}, value-amount}
+            balance when balance > amount ->
+              {{:ok, balance-amount}, balance-amount}
             _ ->
               {:error}
           end
         end
 
-        @doc \"""
+        @doc """
         Deposit. Returns `{:ok, new_amount}` or `:error`.
-        \"""
+        """
         def deposit(account, amount) do
           AgentMap.get_and_update __MODULE__, account, fn
             nil ->
               {:error}
-            amount ->
-              {{:ok, value+amount}, value+amount}
+            balance ->
+              {{:ok, balance+amount}, balance+amount}
           end
         end
 
-        @doc \"""
+        @doc """
         Trasfer money. Returns `:ok` or `:error`.
-        \"""
+        """
         def transfer(from, to, amount) do
           AgentMap.get_and_update __MODULE__, fn # transaction call
             [nil, _] -> {:error}
@@ -72,10 +72,10 @@
           end, [from, to]
         end
 
-        @doc \"""
+        @doc """
         Close account. Returns `:ok` if account exists or
         `:error` in other case.
-        \"""
+        """
         def close(account) do
           if AgentMap.has_key? __MODULE__, account do
             AgentMap.delete __MODULE__, account
@@ -85,12 +85,12 @@
           end
         end
 
-        @doc \"""
+        @doc """
         Open account. Returns `:error` if account exists or
         `:ok` in other case.
-        \"""
+        """
         def open(account) do
-          AgentMap.get_and_update __MODULE__, account, fn ->
+          AgentMap.get_and_update __MODULE__, account, fn
             nil -> {:ok, 0} # set balance to 0, while returning :ok
             _   -> {:error} # return :error, do not change balance
           end
@@ -106,10 +106,13 @@
           AgentMap.start_link name: __MODULE__
         end
 
-        @doc \"""
+        def stop(), do: AgentMap.stop __MODULE__
+
+
+        @doc """
         If `{task, arg}` key is known — return it, else, invoke given `fun` as
         a Task, writing result under `{task, arg}`.
-        \"""
+        """
         def calc(task, arg, fun) do
           AgentMap.get_and_update __MODULE__, {task, arg}, fn
             nil ->
@@ -122,10 +125,10 @@
       end
 
       defmodule Calc do
-        def fib(0), do: 1
+        def fib(0), do: 0
         def fib(1), do: 1
         def fib(n) when n >= 0 do
-          Memo.calc(:fib, n, fn -> fib(n-1)+fib(n-2) end)
+          Memo.calc(:fib, n, fn n -> fib(n-1)+fib(n-2) end)
         end
       end
 
