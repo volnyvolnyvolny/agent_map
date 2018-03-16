@@ -27,13 +27,13 @@ defmodule AgentMap.Worker do
   defp unbox({:value, value}), do: value
 
 
-  def get_value(worker) do
+  def value(worker) do
     {_, dict} = Process.info worker, :dictionary
     value = dict[:'$value']
     unless value do
       unbox value
     else
-      get_value worker
+      value worker
     end
   end
 

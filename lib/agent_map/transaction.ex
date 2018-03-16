@@ -52,7 +52,7 @@ defmodule AgentMap.Transaction do
     {known, workers} = divide map, keys
 
     known = for {key, w} <- workers, into: known do
-      {key, Worker.get_value w}
+      {key, Worker.value w}
     end
 
     Task.start_link __MODULE__, :process, [req, known]

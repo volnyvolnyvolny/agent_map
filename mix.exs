@@ -4,7 +4,7 @@ defmodule AgentMap.Mixfile do
   def project do
     [
       app: :agent_map,
-      version: "1.0.0",
+      version: "1.0.1",
       elixir: "~> 1.6.0-rc",
       start_permanent: Mix.env == :prod,
       deps: deps()
@@ -21,6 +21,6 @@ defmodule AgentMap.Mixfile do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [{:earmark, "~> 1.2", only: :dev},
-     {:ex_doc, "~> 0.18.3", only: :dev}]
+     {:ex_doc, "~> 0.18", only: :dev}]
   end
 end
