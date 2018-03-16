@@ -24,7 +24,7 @@ defmodule AgentMap.Transaction do
   end
 
 
-  defp collect(known, keys), do: _collect( known, (uniq keys)--keys known)
+  defp collect(known, keys), do: _collect(known, (uniq keys)--keys known)
 
   defp _collect(known, []), do: known
   defp _collect(known, keys) do
@@ -52,8 +52,7 @@ defmodule AgentMap.Transaction do
     {known, workers} = divide map, keys
 
     known = for {key, w} <- workers, into: known do
-      {_, dict} = Process.info w, :dictionary
-      {key, dict[:'$value']}
+      {key, Worker.get_value w}
     end
 
     Task.start_link __MODULE__, :process, [req, known]

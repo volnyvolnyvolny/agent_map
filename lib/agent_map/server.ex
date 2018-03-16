@@ -85,7 +85,7 @@ defmodule AgentMap.Server do
 
       send worker, :die!
 
-      if {value, max_t} == {nil, @max_threads} do
+      if {value, max_t} == {:no, @max_threads} do
         {:noreply, delete(map, key)} #GC
       else
         map = put_in map[key], {value, max_t}
@@ -93,7 +93,6 @@ defmodule AgentMap.Server do
       end
     end
   end
-
   def handle_info(msg, value) do
     super msg, value
   end

@@ -12,36 +12,31 @@ defmodule AgentMap.Req do
 
 
   def to_msg(%Req{!: true}=req), do: {:!, to_msg %{req | !: false}}
-
-  def to_msg(%Req{action: :cast, data: {_, fun}}) do
-    {:cast, fun}
-  end
-  def to_msg(%Req{action: {:one_key_t, :cast}, data: {_, fun}}) do
-    {{:one_key_t, :cast}, fun}
-  end
-
-  def to_msg(%Req{data: {_, fun}}=req), do: {req.action, fun, req.from}
-
-
-  def fetch(map, key) do
-    case map[key] do
-      {:pid, worker} ->
-        {_, dict} = Process.info worker, :dictionary
-        Keyword.fetch dict, :'$value'
-
-      {{:value, value}, _} ->
-        {:ok, value}
-
-      nil -> :error
-    end
-  end
-
+  def to_msg(%Req{data: {_,fun}, action: :cast}), do: {:cast, fun}
+  def to_msg(%Req{data: {_,fun}}=req), do: {req.action, fun, req.from}
 
   def spawn_worker(map, key) do
     worker = spawn_link Worker, :loop, [self(), key, map[key]]
     put_in map[key], {:pid, worker}
   end
 
+  def fetch(map, key) do
+    case map[key] do
+      {:pid, worker} ->
+        {_, dict} = Process.info worker, :dictionary
+        case dict[:'$value'] do
+          nil -> fetch(map, key)
+          :no -> :error
+          {:value, value} -> {:ok, value}
+        end
+
+      {{:value, value}, _} ->
+        {:ok, value}
+
+      {nil, _} -> :error
+      nil -> :error
+    end
+  end
 
   ##
   ## HELPERS
@@ -81,19 +76,19 @@ defmodule AgentMap.Req do
     {:reply, res, map}
   end
   def handle(%Req{action: :max_threads}=req, map) do
-    {key, value} = req.data
+    {key, max_t} = req.data
 
     case map[key] do
       {:pid, worker} ->
-        send worker, {:!, {:max_threads, value, req.from}}
+        send worker, {:!, {:max_threads, max_t, req.from}}
         {:noreply, map}
 
-      {value, mt} ->
-        map = put_in map[key], {value, value}
-        {:reply, mt, map}
+      {value, oldmax_t} ->
+        map = put_in map[key], {value, max_t}
+        {:reply, oldmax_t, map}
 
       nil ->
-        map = put_in map[key], {nil, value}
+        map = put_in map[key], {nil, max_t}
         {:reply, @max_threads, map}
     end
   end
@@ -121,7 +116,7 @@ defmodule AgentMap.Req do
     {:noreply, map}
   end
   def handle(%Req{action: :get}=req, map) do
-    {key,fun} = req.data
+    {key, fun} = req.data
 
     case map[key] do
       {:pid, worker} ->
@@ -188,7 +183,7 @@ defmodule AgentMap.Req do
         {:reply, default, map}
     end
   end
-  def handle(req, map) do
+  def handle(req, map) do # :cast, :update, :get_and_update
     {key,_} = req.data
 
     case map[key] do

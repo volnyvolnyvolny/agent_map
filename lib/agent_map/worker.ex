@@ -3,7 +3,7 @@ defmodule AgentMap.Worker do
 
   @compile {:inline, rand: 1, dec: 1, inc: 1, _dec: 1, _inc: 1}
 
-  alias AgentMap.{Callback}
+  alias AgentMap.Callback
 
   @wait 10 #milliseconds
 
@@ -23,6 +23,21 @@ defmodule AgentMap.Worker do
   def inc(key), do: Process.put key, _inc Process.get key
 
 
+  defp unbox(:no), do: nil
+  defp unbox({:value, value}), do: value
+
+
+  def get_value(worker) do
+    {_, dict} = Process.info worker, :dictionary
+    value = dict[:'$value']
+    unless value do
+      unbox value
+    else
+      get_value worker
+    end
+  end
+
+
   # is OK for numbers < 1000
   defp rand(to), do: rem System.system_time, to
 
@@ -31,18 +46,16 @@ defmodule AgentMap.Worker do
   ## PROCESS MSG
   ##
 
-  defp process({:max_threads, value, from}) do
+  defp process({:max_threads, max_t, from}) do
     GenServer.reply from, Process.get :'$max_threads'
-    Process.put :'$max_threads', value
+    Process.put :'$max_threads', max_t
   end
-
   defp process({:get, fun, from}) do
     threads = Process.get :'$threads'
+    value = unbox Process.get :'$value'
 
     if threads < Process.get :'$max_threads' do
       worker = self()
-      value = Process.get :'$value'
-
       Task.start_link fn ->
         result = Callback.run fun, [value]
         GenServer.reply from, result
@@ -50,47 +63,42 @@ defmodule AgentMap.Worker do
       end
       inc :'$threads'
     else
-      value = Process.get :'$value'
       result = Callback.run fun, [value]
       GenServer.reply from, result
     end
   end
-
   defp process({:get_and_update, fun, from}) do
-    value = Process.get :'$value'
+    value = unbox Process.get :'$value'
     case Callback.run fun, [value] do
       {get} ->
         GenServer.reply from, get
-      :id ->
-        GenServer.reply from, value
       {get, value} ->
         process {:put, value}
         GenServer.reply from, get
+      :id ->
+        GenServer.reply from, value
       :pop ->
         process :drop
         GenServer.reply from, value
     end
   end
-
   defp process({:update, fun, from}) do
     process {:cast, fun}
     GenServer.reply from, :ok
   end
-
   defp process({:cast, fun}) do
-    value = Process.get :'$value'
-    Process.put :'$value', Callback.run(fun, [value])
+    value = unbox Process.get :'$value'
+    process {:put, Callback.run(fun, [value])}
   end
-
-  defp process(:drop), do: Process.delete :'$value'
-  defp process({:put, value}), do: Process.put :'$value', value
+  defp process(:drop), do: Process.put :'$value', :no
+  defp process({:put, value}), do: Process.put :'$value', {:value, value}
   defp process(:id), do: :ignore
 
 
   # transaction handler
   # only send current value
   defp process({:t_send, from}) do
-    send from, {self(), Process.get :'$value'}
+    send from, {self(), unbox Process.get :'$value'}
   end
 
   # receive the new value (maybe)
@@ -105,8 +113,6 @@ defmodule AgentMap.Worker do
     process {:t_send, from}
     process :t_get
   end
-
-
   defp process(:done), do: dec :'$threads'
   defp process(:done_on_server), do: inc :'$max_threads'
 
@@ -114,11 +120,7 @@ defmodule AgentMap.Worker do
   # main
   def loop(server, key, nil), do: loop server, key, {nil, @max_threads}
   def loop(server, key, {value, max_threads}) do
-    if value do
-      {:value, value} = value
-      Process.put :'$value', value
-    end
-
+    Process.put :'$value', (if value, do: value, else: :no)
     Process.put :'$key', key
     Process.put :'$max_threads', max_threads
     Process.put :'$threads', 1 # the process that runs loop

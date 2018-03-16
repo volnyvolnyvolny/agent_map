@@ -262,12 +262,11 @@ defmodule AgentMap do
 
   # common for start_link and start
   # separate funs from GenServer options
-  def separate(funs_and_opts) do
+  defp separate(funs_and_opts) do
     {opts, funs} =
       Enum.reverse(funs_and_opts) |>
       Enum.split_while(fn
-        {_,f} when is_fun(f,0) -> false
-        _ -> true
+        {k,_} -> k in [:name, :timeout, :debug, :spawn_opt]
       end)
 
     {Enum.reverse(funs), opts}
@@ -389,10 +388,10 @@ defmodule AgentMap do
 
   But it's easy to get `{:error, :badfun}` or `{:error, :badarity}`:
 
-      iex> AgentMap.start_link key: 42
-      {:error, :badfun}
-      iex> AgentMap.start_link key: {fn -> Enum.empty? [] end, [:extraarg]}
-      {:error, :badarity}
+      iex> AgentMap.start key: 42
+      {:error, [key: :badfun]}
+      iex> AgentMap.start key: {fn -> Enum.empty? [] end, [:extraarg]}
+      {:error, [key: :badarity]}
       # … and so on
 
   ## Examples
@@ -544,7 +543,7 @@ defmodule AgentMap do
       ...>   :timer.sleep(100)
       ...>   43
       ...> end
-      iex> AgentMap.get mag, :key, & &1, !: true
+      iex> (AgentMap.get mag, :key, & &1, !: true) || (IO.inspect(AgentMap.get mag, :key, & &1, !: true); :timer.sleep(10); IO.inspect(AgentMap.get mag, :key, & &1, !: true))
       42
       iex> mag[:key] # the same
       42
