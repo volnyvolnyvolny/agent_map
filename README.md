@@ -1,3 +1,4 @@
+
 # AgentMap
 
   `AgentMap` is a `GenServer` that holds `Map` and provides concurrent access
@@ -40,8 +41,10 @@
           AgentMap.get_and_update __MODULE__, account, fn
             nil ->     # no such account
               {:error} # (!) returning {:error, nil} would create key with nil value
+
             balance when balance > amount ->
               {{:ok, balance-amount}, balance-amount}
+            
             _ ->
               {:error}
           end
@@ -54,8 +57,9 @@
           AgentMap.get_and_update __MODULE__, account, fn
             nil ->
               {:error}
+            
             balance ->
-              {{:ok, balance+amount}, balance+amount}
+              {{:ok, balance + amount}, balance + amount}
           end
         end
 
@@ -63,11 +67,15 @@
         Trasfer money. Returns `:ok` or `:error`.
         """
         def transfer(from, to, amount) do
-          AgentMap.get_and_update __MODULE__, fn # transaction call
+          # Transaction call.
+          AgentMap.get_and_update __MODULE__, fn
             [nil, _] -> {:error}
+            
             [_, nil] -> {:error}
+            
             [b1, b2] when b1 >= amount ->
-              {:ok, [b1-amount, b2+amount]}
+              {:ok, [b1 - amount, b2 + amount]}
+              
             _ -> {:error}
           end, [from, to]
         end
@@ -108,7 +116,6 @@
 
         def stop(), do: AgentMap.stop __MODULE__
 
-
         @doc """
         If `{task, arg}` key is known — return it, else, invoke given `fun` as
         a Task, writing result under `{task, arg}`.
@@ -118,8 +125,10 @@
             nil ->
               res = fun.(arg)
               {res, res}
+
             _value ->
-              :id # change nothing, return current value
+              # Change nothing, return current value.
+              :id 
           end
         end
       end
@@ -127,8 +136,9 @@
       defmodule Calc do
         def fib(0), do: 0
         def fib(1), do: 1
+        
         def fib(n) when n >= 0 do
-          Memo.calc(:fib, n, fn n -> fib(n-1)+fib(n-2) end)
+          Memo.calc(:fib, n, fn n -> fib(n - 1) + fib(n - 2) end)
         end
       end
 
@@ -201,7 +211,7 @@ by adding `agent_map` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:agent_map, "~> 1.0.0"}
+    {:agent_map, "~> 0.9.0"}
   ]
 end
 ```
