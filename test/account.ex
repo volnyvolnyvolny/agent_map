@@ -2,52 +2,68 @@ defmodule Account do
   use AgentMap
 
   def start_link() do
-    AgentMap.start_link name: __MODULE__
+    AgentMap.start_link(name: __MODULE__)
   end
 
   @doc """
   Returns `{:ok, balance}` for account or `:error` if account
   is unknown.
   """
-  def balance(account), do: AgentMap.fetch __MODULE__, account
+  def balance(account), do: AgentMap.fetch(__MODULE__, account)
 
   @doc """
   Withdraw. Returns `{:ok, new_amount}` or `:error`.
   """
   def withdraw(account, amount) do
-    AgentMap.get_and_update __MODULE__, account, fn
-      nil ->     # no such account
-        {:error} # (!) returning {:error, nil} would create key with nil value
+    AgentMap.get_and_update(__MODULE__, account, fn
+      # no such account
+      nil ->
+        # (!) returning {:error, nil} would create key with nil value
+        {:error}
+
       balance when balance > amount ->
-        {{:ok, balance-amount}, balance-amount}
+        {{:ok, balance - amount}, balance - amount}
+
       _ ->
         {:error}
-    end
+    end)
   end
 
   @doc """
   Deposit. Returns `{:ok, new_amount}` or `:error`.
   """
   def deposit(account, amount) do
-    AgentMap.get_and_update __MODULE__, account, fn
+    AgentMap.get_and_update(__MODULE__, account, fn
       nil ->
         {:error}
+
       balance ->
-        {{:ok, balance+amount}, balance+amount}
-    end
+        {{:ok, balance + amount}, balance + amount}
+    end)
   end
 
   @doc """
   Trasfer money. Returns `:ok` or `:error`.
   """
   def transfer(from, to, amount) do
-    AgentMap.get_and_update __MODULE__, fn # transaction call
-      [nil, _] -> {:error}
-      [_, nil] -> {:error}
-      [b1, b2] when b1 >= amount ->
-        {:ok, [b1-amount, b2+amount]}
-      _ -> {:error}
-    end, [from, to]
+    # transaction call
+    AgentMap.get_and_update(
+      __MODULE__,
+      fn
+        [nil, _] ->
+          {:error}
+
+        [_, nil] ->
+          {:error}
+
+        [b1, b2] when b1 >= amount ->
+          {:ok, [b1 - amount, b2 + amount]}
+
+        _ ->
+          {:error}
+      end,
+      [from, to]
+    )
   end
 
   @doc """
@@ -55,8 +71,8 @@ defmodule Account do
   `:error` in other case.
   """
   def close(account) do
-    if AgentMap.has_key? __MODULE__, account do
-      AgentMap.delete __MODULE__, account
+    if AgentMap.has_key?(__MODULE__, account) do
+      AgentMap.delete(__MODULE__, account)
       :ok
     else
       :error
@@ -68,9 +84,14 @@ defmodule Account do
   `:ok` in other case.
   """
   def open(account) do
-    AgentMap.get_and_update __MODULE__, account, fn
-      nil -> {:ok, 0} # set balance to 0, while returning :ok
-      _   -> {:error} # return :error, do not change balance
-    end
+    AgentMap.get_and_update(__MODULE__, account, fn
+      # set balance to 0, while returning :ok
+      nil ->
+        {:ok, 0}
+
+      # return :error, do not change balance
+      _ ->
+        {:error}
+    end)
   end
 end

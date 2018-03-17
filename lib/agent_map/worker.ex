@@ -80,6 +80,11 @@ defmodule AgentMap.Worker do
         process({:put, value})
         GenServer.reply(from, get)
 
+      {:chain, {key, fun}, value} ->
+        process({:put, value})
+        server = Process.get(:"$gen_server")
+        send(server, {:chain, {key, fun}, from})
+
       :id ->
         GenServer.reply(from, value)
 

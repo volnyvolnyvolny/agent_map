@@ -174,16 +174,13 @@ defmodule AgentMap do
 
   ## Hot code swapping
 
-  A agentmap can have its code hot swapped live by simply passing a module,
+  `AgentMap` can have its code hot swapped live by simply passing a module,
   function, and arguments tuple to the update instruction. For example, imagine
-  you have a agentmap named `:sample` and you want to convert all its inner
-  states from a keyword list to a map. It can be done with the following
+  you have an `AgentMap` named `:sample` and you want to convert all its inner
+  values from a keyword list to a map. It can be done with the following
   instruction:
 
       {:update, :sample, {:advanced, {Enum, :into, [%{}]}}}
-
-  The agentmap's states will be added to the given list of arguments
-  (`[%{}]`) as the first argument.
 
   ## Using `Enum` module and `[]`-access operator
 
@@ -674,6 +671,12 @@ defmodule AgentMap do
     * `:pop`, similar to `Map.get_and_update/3` it returns value with given
       `key` and removes it from `agentmap`.
 
+    * `{:chain, {key, fun}, new_value}` — to not return value, but initiate
+      another `get_and_update/4` with given `key` and `fun` pair;
+    * `{:chain, {fun, keys}, new_value}` — to not return value, but initiate
+      transaction call `get_and_update/4` with given `fun` and `keys` pair.
+
+
   While in transaction (group/multiple keys) calls `fun` may return:
 
     * a two element tuple `{"get" value, [new values]}`;
@@ -691,7 +694,12 @@ defmodule AgentMap do
 
     * `:id` to return values while not changing it;
     * `:pop` to return values while with given `keys` while removing them from
-      `agentmap`.
+      `agentmap`';
+
+    * `{:chain, {key, fun}, new_value}` — to not return value, but initiate
+      another `get_and_update/4` with given `key` and `fun` pair;
+    * `{:chain, {fun, keys}, new_value}` — to not return value, but initiate
+      transaction call `get_and_update/4` with given `fun` and `keys` pair.
 
   All lists returned by transaction call should have length equal to the number
   of keys given.
@@ -750,8 +758,8 @@ defmodule AgentMap do
 
   The `:!` option is used to make "urgent" calls. Values could have an
   associated queue of callbacks, awaiting of execution. If such queue exists,
-  "urgent" version will add call to the begining of the queue (selective receive
-  used).
+  "urgent" version will add call to the begining of the queue (via "selective
+  receive").
 
   Be aware that: (1) anonymous function, `{fun, args}` or MFA tuple can be
   passed as a callback; (2) every value has it's own FIFO queue of callbacks
@@ -763,51 +771,112 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
-      iex> mag = new uno: 22, dos: 24, tres: 42, cuatro: 44
+      iex> mag = new uno: 22
       iex> get_and_update mag, :uno, & {&1, &1 + 1}
       22
-      iex> get mag, :uno, & &1
+      iex> get mag, :uno
       23
-      #
-      iex> get_and_update mag, :tres, fn _ -> :pop end
-      42
-      iex> get mag, :tres, & &1
+      iex> get_and_update mag, :uno, fn _ -> :pop end
+      23
+      iex> has_key? mag, :uno
+      false
+      iex> get_and_update mag, :uno, fn _ -> :id end
       nil
-      #
-      # transaction calls:
-      #
+      iex> has_key? mag, :uno
+      false
+      iex> get_and_update mag, :uno, fn v -> {v,v} end
+      nil
+      iex> has_key? mag, :uno
+      true
+
+  Transactions:
+
+      iex> import AgentMap
+      iex> mag = new uno: 22, dos: 24
       iex> get_and_update mag, fn [u, d] ->
       ...>   [{u, d}, {d, u}]
       ...> end, [:uno, :dos]
-      [23, 24]
+      [22, 24]
       iex> get mag, & &1, [:uno, :dos]
-      [24, 23]
+      [24, 22]
       #
       iex> get_and_update mag, fn _ -> :pop end, [:dos]
-      [23]
-      iex> get mag, & &1, [:uno, :dos, :tres, :cuatro]
-      [24, nil, nil, 44]
+      [22]
+      iex> has_key? mag, :dos
+      false
       #
+      iex> get_and_update mag, :dos, fn _ -> {:get} end
+      :get
+      iex> has_key? mag, :dos
+      false
+      #
+      iex> put mag, :tres, 42
+      iex> put mag, :cuatro, 44
       iex> get_and_update mag, fn _ ->
       ...>   [:id, {nil, :_}, {:_, nil}, :pop]
       ...> end, [:uno, :dos, :tres, :cuatro]
       [24, nil, :_, 44]
       iex> get mag, & &1, [:uno, :dos, :tres, :cuatro]
       [24, :_, nil, nil]
+
+  Chain calls (used rarely):
+
+      iex> import AgentMap
+      iex> mag = new uno: 24, dos: 33, tres: 42
+      iex> call = {:dos, fn _ -> {:get, :dos} end}
+      iex> get_and_update mag, :uno, fn _ ->
+      ...>   {:chain, call, :uno}
+      ...> end
+      :get
+      iex> get mag, & &1, [:uno, :dos]
+      [:uno, :dos]
+      #
+      # transaction chain calls:
+      #
+      iex> call = {fn _ -> {:get, [2,3]} end, [:dos, :tres]}
+      iex> get_and_update mag, :uno, fn _ ->
+      ...>   {:chain, call, 1}
+      ...> end
+      :get
+      iex> get mag, & &1, [:uno, :dos, :tres]
+      [1, 2, 3]
+      #
+      iex> call = {:uno, fn _ -> {:get, :u} end}
+      iex> get_and_update mag, fn _ ->
+      ...>   {:chain, call, [:d, :t]}
+      ...> end, [:dos, :tres]
+      :get
+      iex> get mag, & &1, [:uno, :dos, :tres]
+      [:u, :d, :t]
   """
   # 4
-  @spec get_and_update(a_map, key, a_fun(value, {a} | {a, value}), options) :: a | value
+  @type callback(a) ::
+          a_fun(
+            value,
+            {a}
+            | {a, value}
+            | :pop
+            | :id
+            | {:chain, {key, callback(a)}, value}
+            | {:chain, {callback_t(a), [key]}, value}
+          )
+
+  @type callback_t(a) ::
+          a_fun(
+            [value],
+            {a}
+            | {a, [value] | :drop | :id}
+            | [{any} | {any, value} | :pop | :id]
+            | :pop
+            | :id
+            | {:chain, {key, callback(a)}, value}
+            | {:chain, {callback_t(a), [key]}, value}
+          )
+
+  @spec get_and_update(a_map, key, callback(a), options) :: a | value
         when a: var
-  @spec get_and_update(a_map, key, a_fun(value, :pop | :id), options) :: value
+  @spec get_and_update(a_map, callback_t(a), [key], options) :: a | [value]
         when a: var
-  @spec get_and_update(a_map, a_fun([value], [{any} | {any, value} | :pop | :id]), [key], options) ::
-          [any | value]
-  @spec get_and_update(a_map, a_fun([value], {a, [value]}), [key], options) :: a
-        when a: var
-  @spec get_and_update(a_map, a_fun([value], {a, :drop | :id}), [key], options) :: a
-        when a: var
-  @spec get_and_update(a_map, a_fun([value], {a}), [key], options) :: a when a: var
-  @spec get_and_update(a_map, a_fun([value], :pop | :id), [key], options) :: [value]
 
   def get_and_update(agentmap, key, fun, opts \\ [])
 

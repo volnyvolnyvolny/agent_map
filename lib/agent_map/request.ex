@@ -153,6 +153,7 @@ defmodule AgentMap.Req do
     case map[key] do
       {:pid, worker} ->
         send(worker, to_msg(req))
+
         {:noreply, map}
 
       # Cannot spawn more Task's.
@@ -176,6 +177,7 @@ defmodule AgentMap.Req do
         end)
 
         map = put_in(map[key], {value, quota - 1})
+
         {:noreply, map}
 
       # No such key.

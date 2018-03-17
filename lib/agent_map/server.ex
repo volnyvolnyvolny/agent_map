@@ -38,7 +38,7 @@ defmodule AgentMap.Server do
   end
 
   def handle_call(req, from, map) do
-    Req.handle(%{req | :from => from}, map)
+    Req.handle(%{req | from: from}, map)
   end
 
   def handle_cast(req, map) do
@@ -70,7 +70,12 @@ defmodule AgentMap.Server do
     end
   end
 
-  # worker asks to exit
+  def handle_info({:chain, data, from}, map) do
+    req = %Req{action: :get_and_update, data: data, from: from}
+    Req.handle(req, map)
+  end
+
+  # Worker asks to exit.
   def handle_info({worker, :mayidie?}, map) do
     {_, dict} = Process.info(worker, :dictionary)
 
@@ -102,7 +107,12 @@ defmodule AgentMap.Server do
     super(msg, value)
   end
 
-  def code_change(_old, value, fun) do
-    {:ok, Callback.run(fun, [value])}
+  def code_change(_old, map, fun) do
+    for key <- Map.keys(map) do
+      req = %Req{action: :cast, data: {key, fun}}
+      Req.handle(req, map)
+    end
+
+    {:ok, map}
   end
 end

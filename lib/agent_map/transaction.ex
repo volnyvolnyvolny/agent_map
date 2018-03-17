@@ -100,7 +100,13 @@ defmodule AgentMap.Transaction do
         {k, {:pid, rec_workers[k]}}
       end
 
-    {:ok, tr} = Task.start_link(__MODULE__, :process, [req, known, rec_workers])
+    server = self()
+
+    {:ok, tr} =
+      Task.start_link(fn ->
+        Process.put(:"$gen_server", server)
+        __MODULE__.process(req, known, rec_workers)
+      end)
 
     if req.! do
       for {_, w} <- workers, do: send(w, {:!, {:t_send_and_get, tr}})
@@ -166,47 +172,60 @@ defmodule AgentMap.Transaction do
       case Callback.run(fun, [values]) do
         :pop ->
           for k <- keys, do: send(workers[k], :drop)
-          values
+          {:reply, values}
 
         :id ->
           for k <- keys, do: send(workers[k], :id)
-          values
+          {:reply, values}
 
         {get} ->
           for k <- keys, do: send(workers[k], :id)
-          get
+          {:reply, get}
+
+        {:chain, {fun, new_keys}, values} ->
+          gen_server = Process.get(:"$gen_server")
+
+          for {k, value} <- Enum.zip(keys, values) do
+            send(workers[k], {:put, value})
+          end
+
+          send(gen_server, {:chain, {fun, new_keys}, req.from})
+          :noreply
 
         {get, :id} ->
           for k <- keys, do: send(workers[k], :id)
-          get
+          {:reply, get}
 
         {get, :drop} ->
           for k <- keys, do: send(workers[k], :drop)
-          get
+          {:reply, get}
 
         {get, values} when length(values) == length(keys) ->
-          for {key, value} <- Enum.zip(keys, values) do
-            send(workers[key], {:put, value})
+          for {k, value} <- Enum.zip(keys, values) do
+            send(workers[k], {:put, value})
           end
 
-          get
+          {:reply, get}
 
         results when length(results) == length(keys) ->
-          for {key, oldvalue, result} <- Enum.zip([keys, values, results]) do
-            case result do
-              {get, value} ->
-                send(workers[key], {:put, value})
-                get
+          result =
+            for {k, oldvalue, result} <- Enum.zip([keys, values, results]) do
+              case result do
+                {get, value} ->
+                  send(workers[k], {:put, value})
+                  get
 
-              :pop ->
-                send(workers[key], :drop)
-                oldvalue
+                :pop ->
+                  send(workers[k], :drop)
+                  oldvalue
 
-              :id ->
-                send(workers[key], :id)
-                oldvalue
+                :id ->
+                  send(workers[k], :id)
+                  oldvalue
+              end
             end
-          end
+
+          {:reply, result}
 
         err ->
           raise """
@@ -216,6 +235,8 @@ defmodule AgentMap.Transaction do
                 |> String.replace("\n", " ")
       end
 
-    GenServer.reply(req.from, result)
+    with {:reply, result} <- result do
+      GenServer.reply(req.from, result)
+    end
   end
 end
