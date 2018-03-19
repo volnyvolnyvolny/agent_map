@@ -5,7 +5,6 @@ defmodule AgentMap.Mixfile do
     [
       app: :agent_map,
       name: "AgentMap",
-
       description: """
         `AgentMap` is a `GenServer` that holds `Map` and provides concurrent access
         via `Agent` API for operations made on different keys. Basically, it can be

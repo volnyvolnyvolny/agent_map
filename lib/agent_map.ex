@@ -1180,6 +1180,7 @@ defmodule AgentMap do
   have `Access.pop/2` callback.
 
   ## Examples
+
       iex> mag = AgentMap.new a: 1
       iex> AgentMap.pop mag, :a
       1
@@ -1201,6 +1202,7 @@ defmodule AgentMap do
   Puts the given `value` under `key` in `agentmap`.
 
   ## Examples
+
       iex> mag = AgentMap.new a: 1
       iex> AgentMap.put(mag, :b, 2) |>
       ...> AgentMap.take([:a, :b])
@@ -1221,6 +1223,7 @@ defmodule AgentMap do
   ignored.
 
   ## Examples
+
       iex> AgentMap.new(a: 1, b: 2, c: 3) |>
       ...> AgentMap.take([:a, :c, :e])
       %{a: 1, c: 3}
@@ -1279,9 +1282,9 @@ defmodule AgentMap do
 
   ## Examples
 
-  iex> AgentMap.new(a: 1, b: 2, c: 3) |>
-  ...> AgentMap.keys()
-  [:a, :b, :c]
+      iex> AgentMap.new(a: 1, b: 2, c: 3) |>
+      ...> AgentMap.keys()
+      [:a, :b, :c]
   """
   @spec keys(agentmap) :: [key]
   def keys(agentmap) do
@@ -1293,9 +1296,9 @@ defmodule AgentMap do
 
   ## Examples
 
-  iex> AgentMap.new(a: 1, b: 2, c: 3) |>
-  ...> AgentMap.values()
-  [1, 2, 3]
+      iex> AgentMap.new(a: 1, b: 2, c: 3) |>
+      ...> AgentMap.values()
+      [1, 2, 3]
   """
   @spec values(agentmap) :: [value]
   def values(agentmap) do
@@ -1309,15 +1312,15 @@ defmodule AgentMap do
 
   ## Examples
 
-  iex> mag = AgentMap.new a: 1, b: 2
-  iex> AgentMap.queue_len mag, :a
-  0
-  iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
-  iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
-  iex> AgentMap.queue_len mag, :a
-  2
-  iex> AgentMap.queue_len mag, :b
-  0
+      iex> mag = AgentMap.new a: 1, b: 2
+      iex> AgentMap.queue_len mag, :a
+      0
+      iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
+      iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
+      iex> AgentMap.queue_len mag, :a
+      2
+      iex> AgentMap.queue_len mag, :b
+      0
   """
   @spec queue_len(agentmap, key) :: non_neg_integer
   def queue_len(agentmap, key) do
@@ -1336,9 +1339,9 @@ defmodule AgentMap do
 
   ## Examples
 
-  iex> {:ok, pid} = AgentMap.start_link()
-  iex> AgentMap.stop pid
-  :ok
+      iex> {:ok, pid} = AgentMap.start_link()
+      iex> AgentMap.stop pid
+      :ok
   """
   @spec stop(agentmap, reason :: term, timeout) :: :ok
   def stop(agentmap, reason \\ :normal, timeout \\ :infinity) do
