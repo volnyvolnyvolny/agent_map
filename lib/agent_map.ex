@@ -275,7 +275,7 @@ defmodule AgentMap do
   ## Examples
 
       iex> mag = AgentMap.new()
-      iex> Enum.empty? mag
+      iex> Enum.empty?(mag)
       true
   """
   @spec new :: agentmap
@@ -290,15 +290,15 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 42, b: 24
+      iex> mag = AgentMap.new(a: 42, b: 24)
       iex> mag[:a]
       42
-      iex> AgentMap.keys mag
+      iex> AgentMap.keys(mag)
       [:a, :b]
 
       iex> {:ok, pid} = AgentMap.start_link()
-      iex> mag = AgentMap.new pid
-      iex> AgentMap.put mag, :a, 1
+      iex> mag = AgentMap.new(pid)
+      iex> AgentMap.put(mag, :a, 1)
       iex> mag[:a]
       1
   """
@@ -327,8 +327,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new [:a, :b], fn x -> {x, x} end
-      iex> AgentMap.take mag, [:a, :b]
+      iex> mag = AgentMap.new([:a, :b], fn x -> {x, x} end)
+      iex> AgentMap.take(mag, [:a, :b])
       %{a: :a, b: :b}
   """
   @spec new(Enumerable.t(), (term -> {key, value})) :: a_map
@@ -375,27 +375,27 @@ defmodule AgentMap do
   would be returned. So you can write:
 
       iex> import AgentMap
-      iex> {:ok,_pid} = start_link key: fn -> Enum.empty? [:v] end
-      iex> {:ok,_} = start_link k: {&Enum.empty?/1, [[:v]]}
-      iex> {:ok,_} = start_link k: {Enum, :empty?, [[:v]]}
-      iex> {:ok,_} = start_link k: {fn -> Enum.empty? [:v] end, []}
-      iex> match?({:ok,_}, start_link k: {& &1+1, [42]})
+      iex> {:ok,_pid} = start_link(key: fn -> Enum.empty? [:v] end)
+      iex> {:ok,_} = start_link(k: {&Enum.empty?/1, [[:v]]})
+      iex> {:ok,_} = start_link(k: {Enum, :empty?, [[:v]]})
+      iex> {:ok,_} = start_link(k: {fn -> Enum.empty? [:v] end, []})
+      iex> match?({:ok,_}, start_link(k: {& &1+1, [42]}))
       true
 
   But it's easy to get `{:error, :badfun}` or `{:error, :badarity}`:
 
-      iex> AgentMap.start key: 42
+      iex> AgentMap.start(key: 42)
       {:error, [key: :badfun]}
-      iex> AgentMap.start key: {fn -> Enum.empty? [] end, [:extraarg]}
+      iex> AgentMap.start(key: {fn -> Enum.empty? [] end, [:extraarg]})
       {:error, [key: :badarity]}
       # … and so on
 
   ## Examples
 
-      iex> {:ok, pid} = AgentMap.start_link key: fn -> 42 end
-      iex> AgentMap.get pid, :key, & &1
+      iex> {:ok, pid} = AgentMap.start_link(key: fn -> 42 end)
+      iex> AgentMap.get(pid, :key, & &1)
       42
-      iex> AgentMap.get pid, :nosuchkey, & &1
+      iex> AgentMap.get(pid, :nosuchkey, & &1)
       nil
   """
   @spec start_link([{key, a_fun(any)} | GenServer.option()]) :: on_start
@@ -414,21 +414,20 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> AgentMap.start one: 42,
+      iex> AgentMap.start(one: 42,
       ...>                two: fn -> :timer.sleep(150) end,
       ...>                three: fn -> :timer.sleep(:infinity) end,
-      ...>                timeout: 100
+      ...>                timeout: 100)
       {:error, [one: :badfun, two: :timeout, three: :timeout]}
 
-      iex> AgentMap.start one: :foo,
+      iex> AgentMap.start(one: :foo,
       ...>                one: :bar,
       ...>                three: fn -> :timer.sleep(:infinity) end,
-      ...>                timeout: 100
+      ...>                timeout: 100)
       {:error, [one: :exists]}
 
-      iex> err = AgentMap.start one: 76,
-      ...>                      two: fn -> raise "oops"
-      ...>       end
+      iex> err = AgentMap.start(one: 76,
+      ...>                      two: fn -> raise "oops" end)
       iex> {:error, [one: :badfun, two: {exception, _stacktrace}]} = err
       iex> exception
       %RuntimeError{message: "oops"}
@@ -485,8 +484,8 @@ defmodule AgentMap do
 
   For example, compare two calls:
 
-      AgentMap.get Account, &Enum.sum/1, [:alice, :bob]
-      AgentMap.get Account, :alice, & &1
+      AgentMap.get(Account, &Enum.sum/1, [:alice, :bob])
+      AgentMap.get(Account, :alice, & &1)
 
   — the first one returns sum of Alice and Bob balances in one operation, while
   the second one returns amount of money Alice has.
@@ -500,10 +499,10 @@ defmodule AgentMap do
   to `5000` ms. This value could be given as `:timeout` option, or separately,
   so:
 
-      AgentMap.get agentmap, :key, fun
-      AgentMap.get agentmap, :key, fun, 5000
-      AgentMap.get agentmap, :key, fun, timeout: 5000
-      AgentMap.get agentmap, :key, fun, timeout: 5000, !: false
+      AgentMap.get(agentmap, :key, fun)
+      AgentMap.get(agentmap, :key, fun, 5000)
+      AgentMap.get(agentmap, :key, fun, timeout: 5000)
+      AgentMap.get(agentmap, :key, fun, timeout: 5000, !: false)
 
   means the same.
 
@@ -515,37 +514,37 @@ defmodule AgentMap do
   ## Examples
 
       iex> mag = AgentMap.new()
-      iex> AgentMap.get mag, :alice, & &1
+      iex> AgentMap.get(mag, :alice, & &1)
       nil
-      iex> AgentMap.put mag, :alice, 42
-      iex> AgentMap.get mag, :alice, & &1+1
+      iex> AgentMap.put(mag, :alice, 42)
+      iex> AgentMap.get(mag, :alice, & &1+1)
       43
       #
       # aggregate calls:
       #
-      iex> AgentMap.put mag, :bob, 43
-      iex> AgentMap.get mag, &Enum.sum/1, [:alice, :bob]
+      iex> AgentMap.put(mag, :bob, 43)
+      iex> AgentMap.get(mag, &Enum.sum/1, [:alice, :bob])
       85
       # order matters:
-      iex> AgentMap.get mag, {&Enum.reduce/3, [0, &-/2]}, [:alice, :bob]
+      iex> AgentMap.get(mag, {&Enum.reduce/3, [0, &-/2]}, [:alice, :bob])
       1
-      iex> AgentMap.get mag, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice]
+      iex> AgentMap.get(mag, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice])
       -1
 
    "Urgent" calls:
 
-      iex> mag = AgentMap.new key: 42
-      iex> AgentMap.cast mag, :key, fn _ ->
+      iex> mag = AgentMap.new(key: 42)
+      iex> AgentMap.cast(mag, :key, fn _ ->
       ...>   :timer.sleep(100)
       ...>   43
-      ...> end
-      iex> (AgentMap.get mag, :key, & &1, !: true) || (IO.inspect(AgentMap.get mag, :key, & &1, !: true); :timer.sleep(10); IO.inspect(AgentMap.get mag, :key, & &1, !: true))
+      ...> end)
+      iex> AgentMap.get(mag, :key, & &1, !: true)
       42
       iex> mag[:key] # the same
       42
-      iex> AgentMap.get mag, :key, & &1
+      iex> AgentMap.get(mag, :key, & &1)
       43
-      iex> AgentMap.get mag, :key, & &1, !: true
+      iex> AgentMap.get(mag, :key, & &1, !: true)
       43
   """
   @spec get(a_map, a_fun([value], a), [key], options) :: a when a: var
@@ -598,14 +597,14 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 1
+      iex> mag = AgentMap.new(a: 1)
       iex> fun = fn ->
       ...>   # some expensive operation here
       ...>   13
       ...> end
-      iex> AgentMap.get_lazy mag, :a, fun
+      iex> AgentMap.get_lazy(mag, :a, fun)
       1
-      iex> AgentMap.get_lazy mag, :b, fun
+      iex> AgentMap.get_lazy(mag, :b, fun)
       13
 
   """
@@ -622,12 +621,12 @@ defmodule AgentMap do
   such `key`, `nil` is returned. It is a clone of `Map.get/3` function, so as
   the third argument, `default` value could be provided:
 
-      iex> mag = AgentMap.new a: 42
-      iex> AgentMap.get mag, :a
+      iex> mag = AgentMap.new(a: 42)
+      iex> AgentMap.get(mag, :a)
       42
-      iex> AgentMap.get mag, :b
+      iex> AgentMap.get(mag, :b)
       nil
-      iex> AgentMap.get mag, :b, :error
+      iex> AgentMap.get(mag, :b, :error)
       :error
 
   so it is fully compatible with `Access` behaviour. See `Access.get/3`.
@@ -656,8 +655,8 @@ defmodule AgentMap do
 
   For example, compare two calls:
 
-      AgentMap.get_and_update Account, fn [a,b] -> {:swapped, [b,a]} end, [:alice, :bob]
-      AgentMap.get_and_update Account, :alice, & {&1, &1+1000000}
+      AgentMap.get_and_update(Account, fn [a,b] -> {:swapped, [b,a]} end, [:alice, :bob])
+      AgentMap.get_and_update(Account, :alice, & {&1, &1+1000000})
 
   — the first swapes balances of Alice and Bob balances, returning `:swapped`
   atom, while the second one returns current Alice balance and deposits 1000000
@@ -705,7 +704,7 @@ defmodule AgentMap do
 
   For ex.:
 
-      get_and_update agentmap, fn [a, b] ->
+      get_and_update(agentmap, fn [a, b] ->
         if a > 10 do
           a = a-10
           b = b+10
@@ -713,14 +712,14 @@ defmodule AgentMap do
         else
           {{:error, "Alice does not have 10$ to give to Bob!"}, [a,b]} # {get, [new_state]}
         end
-      end, [:alice, :bob]
+      end, [:alice, :bob])
 
   or:
 
-      iex> mag = AgentMap.new alice: 42, bob: 24
-      iex> AgentMap.get_and_update mag, fn _ -> [:pop, :id] end, [:alice, :bob]
+      iex> mag = AgentMap.new(alice: 42, bob: 24)
+      iex> AgentMap.get_and_update(mag, fn _ -> [:pop, :id] end, [:alice, :bob])
       [42, 24]
-      iex> AgentMap.get mag, & &1, [:alice, :bob]
+      iex> AgentMap.get(mag, & &1, [:alice, :bob])
       [nil, 24]
 
   (!) State changing transaction (such as `get_and_update`) will block value the
@@ -748,10 +747,10 @@ defmodule AgentMap do
   to `5000` ms. This value could be given as `:timeout` option, or separately,
   so:
 
-      AgentMap.get_and_update agentmap, :key, fun
-      AgentMap.get_and_update agentmap, :key, fun, 5000
-      AgentMap.get_and_update agentmap, :key, fun, timeout: 5000
-      AgentMap.get_and_update agentmap, :key, fun, timeout: 5000, !: false
+      AgentMap.get_and_update(agentmap, :key, fun)
+      AgentMap.get_and_update(agentmap, :key, fun, 5000)
+      AgentMap.get_and_update(agentmap, :key, fun, timeout: 5000)
+      AgentMap.get_and_update(agentmap, :key, fun, timeout: 5000, !: false)
 
   means the same.
 
@@ -770,82 +769,82 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
-      iex> mag = new uno: 22
-      iex> get_and_update mag, :uno, & {&1, &1 + 1}
+      iex> mag = new(uno: 22)
+      iex> get_and_update(mag, :uno, & {&1, &1 + 1})
       22
-      iex> get mag, :uno
+      iex> get(mag, :uno)
       23
-      iex> get_and_update mag, :uno, fn _ -> :pop end
+      iex> get_and_update(mag, :uno, fn _ -> :pop end)
       23
-      iex> has_key? mag, :uno
+      iex> has_key?(mag, :uno)
       false
-      iex> get_and_update mag, :uno, fn _ -> :id end
+      iex> get_and_update(mag, :uno, fn _ -> :id end)
       nil
-      iex> has_key? mag, :uno
+      iex> has_key?(mag, :uno)
       false
-      iex> get_and_update mag, :uno, fn v -> {v,v} end
+      iex> get_and_update(mag, :uno, fn v -> {v,v} end)
       nil
-      iex> has_key? mag, :uno
+      iex> has_key?(mag, :uno)
       true
 
   Transactions:
 
       iex> import AgentMap
-      iex> mag = new uno: 22, dos: 24
-      iex> get_and_update mag, fn [u, d] ->
+      iex> mag = new(uno: 22, dos: 24)
+      iex> get_and_update(mag, fn [u, d] ->
       ...>   [{u, d}, {d, u}]
-      ...> end, [:uno, :dos]
+      ...> end, [:uno, :dos])
       [22, 24]
-      iex> get mag, & &1, [:uno, :dos]
+      iex> get(mag, & &1, [:uno, :dos])
       [24, 22]
       #
-      iex> get_and_update mag, fn _ -> :pop end, [:dos]
+      iex> get_and_update(mag, fn _ -> :pop end, [:dos])
       [22]
-      iex> has_key? mag, :dos
+      iex> has_key?(mag, :dos)
       false
       #
-      iex> get_and_update mag, :dos, fn _ -> {:get} end
+      iex> get_and_update(mag, :dos, fn _ -> {:get} end)
       :get
-      iex> has_key? mag, :dos
+      iex> has_key?(mag, :dos)
       false
       #
-      iex> put mag, :tres, 42
-      iex> put mag, :cuatro, 44
-      iex> get_and_update mag, fn _ ->
+      iex> put(mag, :tres, 42)
+      iex> put(mag, :cuatro, 44)
+      iex> get_and_update(mag, fn _ ->
       ...>   [:id, {nil, :_}, {:_, nil}, :pop]
-      ...> end, [:uno, :dos, :tres, :cuatro]
+      ...> end, [:uno, :dos, :tres, :cuatro])
       [24, nil, :_, 44]
-      iex> get mag, & &1, [:uno, :dos, :tres, :cuatro]
+      iex> get(mag, & &1, [:uno, :dos, :tres, :cuatro])
       [24, :_, nil, nil]
 
   Chain calls (used rarely):
 
       iex> import AgentMap
-      iex> mag = new uno: 24, dos: 33, tres: 42
+      iex> mag = new(uno: 24, dos: 33, tres: 42)
       iex> call = {:dos, fn _ -> {:get, :dos} end}
-      iex> get_and_update mag, :uno, fn _ ->
+      iex> get_and_update(mag, :uno, fn _ ->
       ...>   {:chain, call, :uno}
-      ...> end
+      ...> end)
       :get
-      iex> get mag, & &1, [:uno, :dos]
+      iex> get(mag, & &1, [:uno, :dos])
       [:uno, :dos]
       #
       # transaction chain calls:
       #
       iex> call = {fn _ -> {:get, [2,3]} end, [:dos, :tres]}
-      iex> get_and_update mag, :uno, fn _ ->
+      iex> get_and_update(mag, :uno, fn _ ->
       ...>   {:chain, call, 1}
-      ...> end
+      ...> end)
       :get
-      iex> get mag, & &1, [:uno, :dos, :tres]
+      iex> get(mag, & &1, [:uno, :dos, :tres])
       [1, 2, 3]
       #
       iex> call = {:uno, fn _ -> {:get, :u} end}
-      iex> get_and_update mag, fn _ ->
+      iex> get_and_update(mag, fn _ ->
       ...>   {:chain, call, [:d, :t]}
-      ...> end, [:dos, :tres]
+      ...> end, [:dos, :tres])
       :get
-      iex> get mag, & &1, [:uno, :dos, :tres]
+      iex> get(mag, & &1, [:uno, :dos, :tres])
       [:u, :d, :t]
   """
   # 4
@@ -908,8 +907,8 @@ defmodule AgentMap do
 
   For example, compare two calls:
 
-      AgentMap.update Account, fn [a,b] -> [b,a] end, [:alice, :bob]
-      AgentMap.update Account, :alice, & &1+1000000
+      AgentMap.update(Account, fn [a,b] -> [b,a] end, [:alice, :bob])
+      AgentMap.update(Account, :alice, & &1+1000000)
 
   — the first swapes balances of Alice and Bob balances, while the second one
   deposits 1000000 dollars to Alices balance.
@@ -923,17 +922,17 @@ defmodule AgentMap do
 
   For ex.:
 
-      iex> mag = AgentMap.new alice: 42, bob: 24, chris: 33, dunya: 51
-      iex> AgentMap.update mag, &Enum.reverse/1, [:alice, :bob]
+      iex> mag = AgentMap.new(alice: 42, bob: 24, chris: 33, dunya: 51)
+      iex> AgentMap.update(mag, &Enum.reverse/1, [:alice, :bob])
       :ok
-      iex> AgentMap.get mag, & &1, [:alice, :bob]
+      iex> AgentMap.get(mag, & &1, [:alice, :bob])
       [24, 42]
-      iex> AgentMap.update mag, fn _ -> :drop end, [:alice, :bob]
-      iex> AgentMap.keys mag
+      iex> AgentMap.update(mag, fn _ -> :drop end, [:alice, :bob])
+      iex> AgentMap.keys(mag)
       [:chris, :dunya]
-      iex> AgentMap.update mag, fn _ -> :drop end, [:chris]
-      iex> AgentMap.update mag, :dunya, fn _ -> :drop end
-      iex> AgentMap.get mag, & &1, [:chris, :dunya]
+      iex> AgentMap.update(mag, fn _ -> :drop end, [:chris])
+      iex> AgentMap.update(mag, :dunya, fn _ -> :drop end)
+      iex> AgentMap.get(mag, & &1, [:chris, :dunya])
       [nil, :drop]
 
   (!) State changing transaction (such as `get_and_update`) will block value the
@@ -962,12 +961,12 @@ defmodule AgentMap do
   the result value, or the atom `:infinity` to wait indefinitely. If no result
   is received within the specified time, the caller exits. By default it's equal
   to `5000` ms. This value could be given as `:timeout` option, or separately,
-  so:
+  so:[
 
-      AgentMap.get_and_update agentmap, :key, fun
-      AgentMap.get_and_update agentmap, :key, fun, 5000
-      AgentMap.get_and_update agentmap, :key, fun, timeout: 5000
-      AgentMap.get_and_update agentmap, :key, fun, timeout: 5000, !: false
+      AgentMap.get_and_update(agentmap, :key, fun)
+      AgentMap.get_and_update(agentmap, :key, fun, 5000)
+      AgentMap.get_and_update(agentmap, :key, fun, timeout: 5000)
+      AgentMap.get_and_update(agentmap, :key, fun, timeout: 5000, !: false)
 
   means the same.
 
@@ -993,16 +992,26 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> {:ok, pid} = AgentMap.start_link key: fn -> 42 end
-      iex> AgentMap.update pid, :key, & &1+1
+      iex> {:ok, pid} = AgentMap.start_link(key: fn -> 42 end)
+      iex> AgentMap.update(pid, :key, & &1+1)
       :ok
-      iex> AgentMap.get pid, :key, & &1
+      iex> AgentMap.get(pid, :key, & &1)
       43
       #
-      iex> AgentMap.update pid, :otherkey, fn nil -> 42 end
+      iex> AgentMap.update(pid, :otherkey, fn nil -> 42 end)
       :ok
-      iex> AgentMap.get pid, :otherkey, & &1
+      iex> AgentMap.get(pid, :otherkey, & &1)
       42
+
+
+  Also, for compatibility with `Map` API (and `Map.update/4` fun),
+  `update(agentmap, key, initial, fun)` call exists.
+
+      iex> mag = AgentMap.new(a: 42)
+      iex> AgentMap.update(mag, :a, :value, & &1+1)
+      iex> AgentMap.update(mag, :b, :value, & &1+1)
+      iex> AgentMap.take(mag, [:a,:b])
+      %{a: 43, b: :value}
   """
   # 4
   @spec update(a_map, key, a_fun(value, value), options) :: :ok
@@ -1016,6 +1025,22 @@ defmodule AgentMap do
 
   def update(agentmap, key, fun, opts) when is_fun(fun, 1) do
     call(agentmap, %Req{action: :update, data: {key, fun}}, opts)
+  end
+
+  def update(agentmap, key, initial, fun) when is_fun(fun, 1) do
+    update(agentmap, key, fn
+      value ->
+        if value do
+          Callback.run(fun, [value])
+        else
+          case Process.get(:'$value') do
+            {:value, value} ->
+              Callback.run(fun, [value])
+            :no ->
+              initial
+          end
+        end
+    end)
   end
 
   ##
@@ -1048,24 +1073,24 @@ defmodule AgentMap do
   be executed, so
 
       iex> sleep100ms = fn _ ->
-      ...>   :timer.sleep 100
+      ...>   :timer.sleep(100)
       ...> end
-      iex> mag = AgentMap.new key: 42
-      iex> for _ <- 1..4, do: spawn fn ->
-      ...>   AgentMap.get mag, :key, sleep100ms
-      ...> end
-      iex> AgentMap.get mag, :key, sleep100ms
+      iex> mag = AgentMap.new(key: 42)
+      iex> for _ <- 1..4, do: spawn(fn ->
+      ...>   AgentMap.get(mag, :key, sleep100ms)
+      ...> end)
+      iex> AgentMap.get(mag, :key, sleep100ms)
       :ok
 
   will be executed in around of 100 ms, not 500. Be aware, that this call:
 
       iex> sleep100ms = fn _ ->
-      ...>   :timer.sleep 100
+      ...>   :timer.sleep(100)
       ...> end
-      iex> mag = AgentMap.new key: 42
-      iex> AgentMap.get mag, :key, sleep100ms
-      iex> AgentMap.cast mag, :key, sleep100ms
-      iex> AgentMap.cast mag, :key, sleep100ms
+      iex> mag = AgentMap.new(key: 42)
+      iex> AgentMap.get(mag, :key, sleep100ms)
+      iex> AgentMap.cast(mag, :key, sleep100ms)
+      iex> AgentMap.cast(mag, :key, sleep100ms)
       :ok
 
   will be executed in around of 200 ms because `agentmap` can parallelize any
@@ -1077,9 +1102,9 @@ defmodule AgentMap do
   ## Examples
 
       iex> mag = AgentMap.new()
-      iex> AgentMap.max_threads mag, :a, 42
+      iex> AgentMap.max_threads(mag, :a, 42)
       5
-      iex> AgentMap.max_threads mag, :a, :infinity
+      iex> AgentMap.max_threads(mag, :a, :infinity)
       42
   """
   @spec max_threads(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
@@ -1087,30 +1112,6 @@ defmodule AgentMap do
     call(agentmap, %Req{action: :max_threads, data: {key, value}})
   end
 
-  @doc """
-  Alters the value stored under `key` to `value`, but only
-  if the entry `key` already exists in `map`.
-
-  If `key` is not present in `map`, a `KeyError` exception is raised.
-
-  ## Examples
-
-      iex> mag = AgentMap.new a: 1, b: 2
-      iex> AgentMap.replace! mag, :a, 3
-      iex> AgentMap.take mag, [:a, :b]
-      %{a: 3, b: 2}
-      iex> AgentMap.replace! mag, :c, 3
-      ** (KeyError) key :c not found
-  """
-  @spec replace!(a_map, key, value) :: agentmap
-  def replace!(agentmap, key, value) do
-    case fetch(agentmap, key) do
-      {:ok, _} -> put(agentmap, key, value)
-      _ -> raise KeyError, key: key
-    end
-
-    agentmap
-  end
 
   @doc """
   Fetches the value for a specific `key` in the given `agentmap`.
@@ -1121,9 +1122,9 @@ defmodule AgentMap do
   Examples
 
       iex> mag = AgentMap.new(a: 1)
-      iex> AgentMap.fetch mag, :a
+      iex> AgentMap.fetch(mag, :a)
       {:ok, 1}
-      iex> AgentMap.fetch mag, :b
+      iex> AgentMap.fetch(mag, :b)
       :error
   """
   @spec fetch(agentmap, key) :: {:ok, value} | :error
@@ -1139,10 +1140,10 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 1
-      iex> AgentMap.fetch! mag, :a
+      iex> mag = AgentMap.new(a: 1)
+      iex> AgentMap.fetch!(mag, :a)
       1
-      iex> AgentMap.fetch! mag, :b
+      iex> AgentMap.fetch!(mag, :b)
       ** (KeyError) key :b not found
   """
   @spec fetch!(agentmap, key) :: value | no_return
@@ -1181,16 +1182,16 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 1
-      iex> AgentMap.pop mag, :a
+      iex> mag = AgentMap.new(a: 1)
+      iex> AgentMap.pop(mag, :a)
       1
-      iex> AgentMap.pop mag, :a
+      iex> AgentMap.pop(mag, :a)
       nil
-      iex> AgentMap.pop mag, :b
+      iex> AgentMap.pop(mag, :b)
       nil
-      iex> AgentMap.pop mag, :b, :error
+      iex> AgentMap.pop(mag, :b, :error)
       :error
-      iex> Enum.empty? mag
+      iex> Enum.empty?(mag)
       true
   """
   @spec pop(agentmap, key, any) :: value | any
@@ -1203,7 +1204,7 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 1
+      iex> mag = AgentMap.new(a: 1)
       iex> AgentMap.put(mag, :b, 2) |>
       ...> AgentMap.take([:a, :b])
       %{a: 1, b: 2}
@@ -1235,13 +1236,18 @@ defmodule AgentMap do
 
   @doc """
   Deletes the entry in `agentmap` for a specific `key`. Always returns
-  `agentmap` to support chaining.
+  `agentmap` to support piping.
 
-  Syntax sugar for `get_and_update agentmap, :!, key, fn _ -> :pop end`.
+  ## Options
+
+  The `:!` option is used to make "urgent" delete call. Values could have an
+  associated queue of callbacks, awaiting of execution. If such queue exists,
+  "urgent" version will add call to the begining of the queue (selective receive
+  used.
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 1, b: 2
+      iex> mag = AgentMap.new(a: 1, b: 2)
       iex> AgentMap.delete(mag, :a) |>
       ...> AgentMap.take([:a, :b])
       %{b: 2}
@@ -1250,9 +1256,10 @@ defmodule AgentMap do
       ...> AgentMap.take([:a, :b])
       %{b: 2}
   """
-  @spec delete(agentmap, key) :: agentmap
-  def delete(agentmap, key) do
-    get_and_update(agentmap, key, fn _ -> :pop end, !: true)
+  @spec delete(agentmap, key, !: boolean) :: agentmap
+  def delete(agentmap, key, opts \\ [!: false]) do
+    [!: urgent] = opts
+    GenServer.cast(pid(agentmap), %Req{action: :delete, data: key, !: urgent})
     agentmap
   end
 
@@ -1260,9 +1267,12 @@ defmodule AgentMap do
   Drops the given `keys` from `agentmap`. If `keys` contains keys that are not
   in `agentmap`, they're simply ignored.
 
-  Syntax sugar for transaction call
+  ## Options
 
-      get_and_update agentmap, :!, fn _ -> :pop end, keys
+  The `:!` option is used to make "urgent" drop call. Values could have an
+  associated queue of callbacks, awaiting of execution. If such queue exists,
+  "urgent" version will add call to the begining of the queue (selective receive
+  used.
 
   ## Examples
 
@@ -1271,9 +1281,10 @@ defmodule AgentMap do
       ...> AgentMap.keys()
       [:a, :c]
   """
-  @spec drop(agentmap, Enumerable.t()) :: agentmap
-  def drop(agentmap, keys) do
-    get_and_update(agentmap, fn _ -> :pop end, keys, !: true)
+  @spec drop(agentmap, Enumerable.t(), !: boolean) :: agentmap
+  def drop(agentmap, keys, opts \\ [!: false]) do
+    [!: urgent] = opts
+    GenServer.cast(pid(agentmap), %Req{action: :drop, data: keys, !: urgent})
     agentmap
   end
 
@@ -1312,14 +1323,14 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> mag = AgentMap.new a: 1, b: 2
-      iex> AgentMap.queue_len mag, :a
+      iex> mag = AgentMap.new(a: 1, b: 2)
+      iex> AgentMap.queue_len(mag, :a)
       0
-      iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
-      iex> AgentMap.cast mag, :a, fn _ -> :timer.sleep(100) end
-      iex> AgentMap.queue_len mag, :a
+      iex> AgentMap.cast(mag, :a, fn _ -> :timer.sleep(100) end)
+      iex> AgentMap.cast(mag, :a, fn _ -> :timer.sleep(100) end)
+      iex> AgentMap.queue_len(mag, :a)
       2
-      iex> AgentMap.queue_len mag, :b
+      iex> AgentMap.queue_len(mag, :b)
       0
   """
   @spec queue_len(agentmap, key) :: non_neg_integer
@@ -1340,7 +1351,7 @@ defmodule AgentMap do
   ## Examples
 
       iex> {:ok, pid} = AgentMap.start_link()
-      iex> AgentMap.stop pid
+      iex> AgentMap.stop(pid)
       :ok
   """
   @spec stop(agentmap, reason :: term, timeout) :: :ok

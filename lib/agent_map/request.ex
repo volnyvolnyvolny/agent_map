@@ -101,6 +101,41 @@ defmodule AgentMap.Req do
     {:reply, res, map}
   end
 
+  def handle(%Req{action: :drop, data: keys, !: urgent}, map) do
+    map =
+      Enum.reduce(keys, map, fn key, map ->
+        {:noreply, map} = handle(%Req{action: :delete, data: key, !: urgent}, map)
+        map
+      end)
+
+    {:noreply, map}
+  end
+
+  def handle(%Req{action: :delete, data: key, !: urgent}, map) do
+    case map[key] do
+      {:pid, worker} ->
+        if urgent do
+          send(worker, {:!, :drop})
+        else
+          send(worker, :drop)
+        end
+
+        {:noreply, map}
+
+      {{:value, _}, @max_threads} ->
+        {:noreply, Map.delete(map, key)}
+
+      {{:value, _}, mt} ->
+        {:noreply, put_in(map[key], {nil, mt})}
+
+      {nil, _} ->
+        {:noreply, map}
+
+      nil ->
+        {:noreply, map}
+    end
+  end
+
   def handle(%Req{action: :max_threads} = req, map) do
     {key, max_t} = req.data
 
