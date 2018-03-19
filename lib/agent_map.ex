@@ -11,7 +11,7 @@ defmodule AgentMap do
   @moduledoc """
   `AgentMap` is a `GenServer` that holds `Map` and provides concurrent access
   via `Agent` API for operations made on different keys. Basically, it can be
-  used as a cache, memoization and computational framework and, sometimes, as a
+  used as a cache, memoization and computational framework or, sometimes, as a
   `GenServer` replacement.
 
   `AgentMap` can be seen as a `Map`, each value of that is an `Agent`. When a
@@ -675,7 +675,6 @@ defmodule AgentMap do
       another `get_and_update/4` with given `key` and `fun` pair;
     * `{:chain, {fun, keys}, new_value}` — to not return value, but initiate
       transaction call `get_and_update/4` with given `fun` and `keys` pair.
-
 
   While in transaction (group/multiple keys) calls `fun` may return:
 

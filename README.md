@@ -3,7 +3,7 @@
 
   `AgentMap` is a `GenServer` that holds `Map` and provides concurrent access
   via `Agent` API for operations made on different keys. Basically, it can be
-  used as a cache, memoization and computational framework and, sometimes, as a
+  used as a cache, memoization and computational framework or, sometimes, as a
   `GenServer` replacement.
 
   `AgentMap` can be seen as a `Map`, each value of that is an `Agent`. When a
@@ -17,7 +17,7 @@
   struct that allows to use `Enum` module and `[]` operator can be created via
   `new/1` function.
 
-### Examples
+## Examples
 
   Let's create an accounting.
 
