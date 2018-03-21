@@ -8,7 +8,7 @@ defmodule AgentMap.Req do
   # action: :get, :get_and_update, :update, :cast, :keys, …
   # data: {key, fun}, {fun, keys}, …
   # from: pid
-  # urgent: true | false
+  # !(urgent): true | false
   defstruct [
     :action,
     :data,

@@ -1028,19 +1028,103 @@ defmodule AgentMap do
   end
 
   def update(agentmap, key, initial, fun) when is_fun(fun, 1) do
-    update(agentmap, key, fn
-      value ->
-        if value do
-          Callback.run(fun, [value])
-        else
-          case Process.get(:'$value') do
-            {:value, value} ->
-              Callback.run(fun, [value])
-            :no ->
-              initial
-          end
+    update(agentmap, key, fn value ->
+      if value do
+        Callback.run(fun, [value])
+      else
+        case Process.get(:"$value") do
+          {:value, value} ->
+            Callback.run(fun, [value])
+
+          :no ->
+            initial
         end
+      end
     end)
+  end
+
+  @doc """
+  Updates `key` with the given function.
+
+  If `key` is present in `agentmap` with value `value`, `fun` is invoked with
+  argument `value` and its result is used as the new value of `key`. If `key` is
+  not present in `agentmap`, a `KeyError` exception is raised.
+
+  As in the other functions, `:!` option could be provided to make "out of
+  turn" calls.
+
+  ## Examples
+
+      iex> mag = AgentMap.new(a: 1)
+      iex> ^mag = AgentMap.update!(mag, :a, &(&1 * 2))
+      iex> AgentMap.get(mag, :a)
+      2
+      iex> AgentMap.update!(mag, :b, &(&1 * 2))
+      ** (KeyError) key :b not found
+      iex> sleep = & fn _ -> :timer.sleep(&1) end
+      iex> AgentMap.cast(mag, :a, sleep.(50))
+      iex> AgentMap.cast(mag, :a, sleep.(100))
+      iex> AgentMap.update!(mag, :a, fn :ok -> 42 end, !: true)
+      iex> AgentMap.get(mag, :a)
+      42
+      iex> AgentMap.get(mag, :a, & &1)
+      :ok
+  """
+  def update!(agentmap, key, fun, opts \\ [!: false]) when is_fun(fun, 1) do
+    callback = fn value ->
+      case Process.get(:"$value") do
+        :no -> {:error}
+        _ ->
+          {:ok, Callback.run(fun, [value])}
+      end
+    end
+
+    with true <- has_key?(agentmap, key),
+         :ok <- get_and_update(agentmap, key, callback, opts) do
+      agentmap
+    else
+      _ -> raise KeyError, key: key
+    end
+  end
+
+  @doc """
+  Alters the value stored under `key` to `value`, but only if the entry `key`
+  already exists in `agentmap`.
+
+  If `key` is not present in `agentmap`, a `KeyError` exception is raised.
+
+  ## Examples
+
+      iex> mag = AgentMap.new(a: 1, b: 2)
+      iex> ^mag = AgentMap.replace!(mag, :a, 3)
+      iex> AgentMap.take(mag, [:a, :b])
+      %{a: 3, b: 2}
+      iex> AgentMap.replace!(mag, :c, 2)
+      ** (KeyError) key :c not found
+      iex> sleep = & fn _ -> :timer.sleep(&1) end
+      iex> AgentMap.cast(mag, :a, sleep.(50))
+      iex> AgentMap.cast(mag, :a, sleep.(100))
+      iex> AgentMap.replace!(mag, :a, 42, !: true)
+      iex> AgentMap.get(mag, :a)
+      42
+      iex> AgentMap.get(mag, :a, & &1)
+      :ok
+  """
+  @spec replace!(map, key, value) :: map
+  def replace!(agentmap, key, value, opts \\ [!: false]) do
+    fun = fn _ ->
+      case Process.get(:"$value") do
+        :no -> {:error}
+        _ -> {:ok, value}
+      end
+    end
+
+    with true <- has_key?(agentmap, key),
+         :ok <- get_and_update(agentmap, key, fun, opts) do
+      agentmap
+    else
+      _ -> raise KeyError, key: key
+    end
   end
 
   ##
@@ -1111,7 +1195,6 @@ defmodule AgentMap do
   def max_threads(agentmap, key, value) do
     call(agentmap, %Req{action: :max_threads, data: {key, value}})
   end
-
 
   @doc """
   Fetches the value for a specific `key` in the given `agentmap`.
@@ -1327,9 +1410,10 @@ defmodule AgentMap do
       iex> AgentMap.queue_len(mag, :a)
       0
       iex> AgentMap.cast(mag, :a, fn _ -> :timer.sleep(100) end)
+      iex> :timer.sleep(10)
       iex> AgentMap.cast(mag, :a, fn _ -> :timer.sleep(100) end)
       iex> AgentMap.queue_len(mag, :a)
-      2
+      1
       iex> AgentMap.queue_len(mag, :b)
       0
   """
