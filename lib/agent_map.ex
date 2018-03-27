@@ -1202,6 +1202,8 @@ defmodule AgentMap do
   If `agentmap` contains the given `key` with value value, then `{:ok, value}`
   is returned. If `map` doesn’t contain `key`, `:error` is returned.
 
+  Returns value *immediately*.
+
   Examples
 
       iex> mag = AgentMap.new(a: 1)
@@ -1220,6 +1222,8 @@ defmodule AgentMap do
   if `agentmap` doesn't contain `key`. If `agentmap` contains the given `key`,
   the corresponding value is returned. If `agentmap` doesn't contain `key`, a
   `KeyError` exception is raised.
+
+  Returns value *immediately*.
 
   ## Examples
 
@@ -1256,7 +1260,7 @@ defmodule AgentMap do
   @doc """
   Returns and removes the value associated with `key` in `agentmap`. If `key` is
   present in `agentmap` with value `value`, `{value, agentmap}` is returned
-  where `agentmap` is the same agentmap. State with given `key` is returned from
+  where `agentmap` is the same agentmap. Value with given `key` is returned from
   `agentmap`. If `key` is not present in `agentmap`, `{default, agentmap}` is
   returned.
 
@@ -1283,7 +1287,8 @@ defmodule AgentMap do
   end
 
   @doc """
-  Puts the given `value` under `key` in `agentmap`.
+  Puts the given `value` under `key` in `agentmap`. Uses `GenServer.cast/2`
+  internally, so returns *immediately*.
 
   ## Examples
 
@@ -1304,7 +1309,7 @@ defmodule AgentMap do
   @doc """
   Returns a `Map` with all the key-value pairs in `agentmap` where the key is in
   `keys`. If `keys` contains keys that are not in `agentmap`, they're simply
-  ignored.
+  ignored. Returns immediately.
 
   ## Examples
 
@@ -1319,7 +1324,8 @@ defmodule AgentMap do
 
   @doc """
   Deletes the entry in `agentmap` for a specific `key`. Always returns
-  `agentmap` to support piping.
+  `agentmap` to support piping. Uses `GenServer.cast/2` internally, so returns
+  *immediately*.
 
   ## Options
 
@@ -1348,7 +1354,8 @@ defmodule AgentMap do
 
   @doc """
   Drops the given `keys` from `agentmap`. If `keys` contains keys that are not
-  in `agentmap`, they're simply ignored.
+  in `agentmap`, they're simply ignored. Uses `GenServer.cast/2` internally, so
+  returns *immediately*.
 
   ## Options
 
@@ -1381,9 +1388,7 @@ defmodule AgentMap do
       [:a, :b, :c]
   """
   @spec keys(agentmap) :: [key]
-  def keys(agentmap) do
-    call(agentmap, %Req{action: :keys})
-  end
+  def keys(agentmap), do: call(agentmap, %Req{action: :keys})
 
   @doc """
   Returns all values from `agentmap`.
@@ -1397,8 +1402,7 @@ defmodule AgentMap do
   @spec values(agentmap) :: [value]
   def values(agentmap) do
     keys = keys(agentmap)
-    map = take(agentmap, keys)
-    Map.values(map)
+    Map.values(take(agentmap, keys))
   end
 
   @doc """
