@@ -1,6 +1,8 @@
 defmodule AgentMap do
   @behaviour Access
 
+  @compile {:inline, inc: 3, dec: 3}
+
   @enforce_keys [:link]
   defstruct @enforce_keys
 
@@ -1073,7 +1075,9 @@ defmodule AgentMap do
   def update!(agentmap, key, fun, opts \\ [!: false]) when is_fun(fun, 1) do
     callback = fn value ->
       case Process.get(:"$value") do
-        :no -> {:error}
+        :no ->
+          {:error}
+
         _ ->
           {:ok, Callback.run(fun, [value])}
       end
@@ -1424,6 +1428,48 @@ defmodule AgentMap do
   @spec queue_len(agentmap, key) :: non_neg_integer
   def queue_len(agentmap, key) do
     call(agentmap, %Req{action: :queue_len, data: key})
+  end
+
+  @doc """
+  Increment value with given `key`.
+
+  This call is inlined.
+
+  ## Examples
+
+      iex> mag = AgentMap.new(a: 1, b: 2)
+      iex> AgentMap.inc(mag, :a)
+      iex> AgentMap.get(mag, :a)
+      2
+      iex> AgentMap.dec(mag, :b)
+      iex> AgentMap.get(mag, :b)
+      1
+  """
+  @spec inc(agentmap, key, value) :: agentmap
+  def inc(agentmap, key, value \\ 1) do
+    cast(agentmap, key, &(&1 + value))
+    agentmap
+  end
+
+  @doc """
+  Decrement value with given `key`.
+
+  This call is inlined.
+
+  ## Examples
+
+      iex> mag = AgentMap.new(a: 1, b: 2)
+      iex> AgentMap.inc(mag, :a)
+      iex> AgentMap.get(mag, :a)
+      2
+      iex> AgentMap.dec(mag, :b)
+      iex> AgentMap.get(mag, :b)
+      1
+  """
+  @spec dec(agentmap, key, value) :: agentmap
+  def dec(agentmap, key, value \\ 1) do
+    cast(agentmap, key, &(&1 - value))
+    agentmap
   end
 
   @doc """
