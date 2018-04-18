@@ -50,8 +50,8 @@ defmodule AgentMap.Mixfile do
       maintainers: ["Valentin Tumanov"],
       licenses: ["MIT"],
       links: %{
-        "GitHub" => "https://github.com/garyposter/conn-pool",
-        "Docs" => "http://hexdocs.pm/conn_pool"
+        "GitHub" => "https://github.com/zergera/agent_map",
+        "Docs" => "http://hexdocs.pm/agent_map"
       }
     ]
   end
