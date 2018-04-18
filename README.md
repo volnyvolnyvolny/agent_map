@@ -25,20 +25,20 @@
         use AgentMap
 
         def start_link() do
-          AgentMap.start_link name: __MODULE__
+          AgentMap.start_link(name: __MODULE__)
         end
 
         @doc """
         Returns `{:ok, balance}` for account or `:error` if account
         is unknown.
         """
-        def balance(account), do: AgentMap.fetch __MODULE__, account
+        def balance(account), do: AgentMap.fetch(__MODULE__, account)
 
         @doc """
         Withdraw. Returns `{:ok, new_amount}` or `:error`.
         """
         def withdraw(account, amount) do
-          AgentMap.get_and_update __MODULE__, account, fn
+          AgentMap.get_and_update(__MODULE__, account, fn
             nil ->     # no such account
               {:error} # (!) returning {:error, nil} would create key with nil value
 
@@ -47,20 +47,20 @@
             
             _ ->
               {:error}
-          end
+          end)
         end
 
         @doc """
         Deposit. Returns `{:ok, new_amount}` or `:error`.
         """
         def deposit(account, amount) do
-          AgentMap.get_and_update __MODULE__, account, fn
+          AgentMap.get_and_update(__MODULE__, account, fn
             nil ->
               {:error}
             
             balance ->
               {{:ok, balance + amount}, balance + amount}
-          end
+          end)
         end
 
         @doc """
@@ -68,7 +68,7 @@
         """
         def transfer(from, to, amount) do
           # Transaction call.
-          AgentMap.get_and_update __MODULE__, fn
+          AgentMap.get_and_update(__MODULE__, fn
             [nil, _] -> {:error}
             
             [_, nil] -> {:error}
@@ -77,7 +77,7 @@
               {:ok, [b1 - amount, b2 + amount]}
               
             _ -> {:error}
-          end, [from, to]
+          end, [from, to])
         end
 
         @doc """
@@ -85,12 +85,12 @@
         `:error` in other case.
         """
         def close(account) do
-          if AgentMap.has_key? __MODULE__, account do
-            AgentMap.delete __MODULE__, account
+          if AgentMap.has_key?(__MODULE__, account do
+            AgentMap.delete(__MODULE__, account)
             :ok
           else
             :error
-          end
+          end)
         end
 
         @doc """
@@ -98,10 +98,10 @@
         `:ok` in other case.
         """
         def open(account) do
-          AgentMap.get_and_update __MODULE__, account, fn
+          AgentMap.get_and_update(__MODULE__, account, fn
             nil -> {:ok, 0} # set balance to 0, while returning :ok
             _   -> {:error} # return :error, do not change balance
-          end
+          end)
         end
       end
 
@@ -111,17 +111,17 @@
         use AgentMap
 
         def start_link() do
-          AgentMap.start_link name: __MODULE__
+          AgentMap.start_link(name: __MODULE__)
         end
 
-        def stop(), do: AgentMap.stop __MODULE__
+        def stop(), do: AgentMap.stop(__MODULE__)
 
         @doc """
         If `{task, arg}` key is known — return it, else, invoke given `fun` as
         a Task, writing result under `{task, arg}`.
         """
         def calc(task, arg, fun) do
-          AgentMap.get_and_update __MODULE__, {task, arg}, fn
+          AgentMap.get_and_update(__MODULE__, {task, arg}, fn
             nil ->
               res = fun.(arg)
               {res, res}
@@ -129,7 +129,7 @@
             _value ->
               # Change nothing, return current value.
               :id 
-          end
+          end)
         end
       end
 
