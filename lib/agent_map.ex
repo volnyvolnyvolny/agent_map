@@ -173,42 +173,6 @@ defmodule AgentMap do
         end
       end
 
-
-  Similar to `Agent`, any changing state function given to the `AgentMap`
-  effectively blocks execution of any other function **on the same key** until
-  the request is fulfilled. So it's important to avoid use of expensive
-  operations inside the agentmap.
-
-  Finally note that `use AgentMap` defines a `child_spec/1` function, allowing
-  the defined module to be put under a supervision tree. The generated
-  `child_spec/1` can be customized with the following options:
-
-    * `:id` - the child specification id, defauts to the current module
-    * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
-    * `:restart` - when the child should be restarted, defaults to `:permanent`
-    * `:shutdown` - how to shut down the child
-
-  For example:
-
-      use AgentMap, restart: :transient, shutdown: 10_000
-
-  See the `Supervisor` docs for more information.
-
-  ## Name registration
-
-  An agentmap is bound to the same name registration rules as GenServers. Read
-  more about it in the `GenServer` documentation.
-
-  ## Hot code swapping
-
-  `AgentMap` can have its code hot swapped live by simply passing a module,
-  function, and arguments tuple to the update instruction. For example, iamine
-  you have an `AgentMap` named `:sample` and you want to convert all its inner
-  values from a keyword list to a map. It can be done with the following
-  instruction:
-
-      {:update, :sample, {:advanced, {Enum, :into, [%{}]}}}
-
   ## Using `Enum` module and `[]`-access operator
 
   `%AgentMap{}` is a special struct that contains pid of the `agentmap` process
@@ -229,6 +193,71 @@ defmodule AgentMap do
       42
 
   except of `put_in` operator.
+
+  ## Options
+
+  Most of the functions supports additional options: `:!` — make out-of-(make urgent call) and
+
+  The `:!` option is used to make "urgent" delete call. Values could have an
+  associated queue of callbacks, awaiting of execution. If such queue exists,
+  "urgent" version will add call to the begining of the queue (selective receive
+  used.
+
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds are allowed before the `agentmap` executes the `fun` and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the caller exits. By default it's equal
+  to `5000` ms. This value could be given as `:timeout` option, or separately,
+  so:
+
+      AgentMap.get(agentmap, :key, fun)
+      AgentMap.get(agentmap, :key, fun, 5000)
+      AgentMap.get(agentmap, :key, fun, timeout: 5000)
+      AgentMap.get(agentmap, :key, fun, timeout: 5000, !: false)
+
+  means the same.
+
+  The `:!` option is used to make "urgent" calls. Values could have an
+  associated queue of callbacks, awaiting of execution. "Urgent" version allows
+  to retrive value immediately at the moment of call. If this option is
+  provided, `fun` will be always executed in a separate `Task`.
+
+  ## Name registration
+
+  An agentmap is bound to the same name registration rules as GenServers. Read
+  more about it in the `GenServer` documentation.
+
+  ## Hot code swapping
+
+  `AgentMap` can have its code hot swapped live by simply passing a module,
+  function, and arguments tuple to the update instruction. For example, iamine
+  you have an `AgentMap` named `:sample` and you want to convert all its inner
+  values from a keyword list to a map. It can be done with the following
+  instruction:
+
+      {:update, :sample, {:advanced, {Enum, :into, [%{}]}}}
+
+  ## Other
+
+  Similar to `Agent`, any changing state function given to the `AgentMap`
+  effectively blocks execution of any other function **on the same key** until
+  the request is fulfilled. So it's important to avoid use of expensive
+  operations inside the agentmap.
+
+  Finally note that `use AgentMap` defines a `child_spec/1` function, allowing
+  the defined module to be put under a supervision tree. The generated
+  `child_spec/1` can be customized with the following options:
+
+    * `:id` - the child specification id, defauts to the current module
+    * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
+    * `:restart` - when the child should be restarted, defaults to `:permanent`
+    * `:shutdown` - how to shut down the child
+
+  For example:
+
+      use AgentMap, restart: :transient, shutdown: 10_000
+
+  See the `Supervisor` docs for more information.
   """
 
   @typedoc "Return values of `start*` functions"
@@ -726,7 +755,7 @@ defmodule AgentMap do
     * `{:chain, {key, fun}, new_value}` — to not return value, but initiate
       another `get_and_update/4` with given `key` and `fun` pair;
     * `{:chain, {fun, keys}, new_value}` — to not return value, but initiate
-      transaction call `get_and_update/4` with given `fun` and `keys` pair.
+      transaction `get_and_update/4` call with given `fun` and `keys` pair.
 
   All lists returned by transaction call should have length equal to the number
   of keys given.
@@ -1101,12 +1130,10 @@ defmodule AgentMap do
   """
   def update!(agentmap, key, fun, opts \\ [!: false]) when is_fun(fun, 1) do
     callback = fn value ->
-      case Process.get(:"$value") do
-        :no ->
-          {:error}
-
-        _ ->
-          {:ok, Callback.run(fun, [value])}
+      if Process.get(:"$has_value?") do
+        {:ok, Callback.run(fun, [value])}
+      else
+        {:error}
       end
     end
 
@@ -1146,9 +1173,10 @@ defmodule AgentMap do
   @spec replace!(map, key, value) :: map
   def replace!(agentmap, key, value, opts \\ [!: false]) do
     fun = fn _ ->
-      case Process.get(:"$value") do
-        :no -> {:error}
-        _ -> {:ok, value}
+      if Process.get(:"$has_value?") do
+        {:ok, value}
+      else
+        {:error}
       end
     end
 
@@ -1188,8 +1216,8 @@ defmodule AgentMap do
 
   `agentmap` can execute `get` calls on the same key concurrently. `max_threads`
   option specifies number of threads per key used, minus one thread for the
-  process holding the queue. By default five `get` calls on the same state could
-  be executed, so
+  process holding the queue. By default five (5) `get` calls on the same state
+  could be executed, so
 
       iex> sleep100ms = fn _ ->
       ...>   :timer.sleep(100)
@@ -1235,11 +1263,18 @@ defmodule AgentMap do
   Fetches the value for a specific `key` in the given `agentmap`.
 
   If `agentmap` contains the given `key` with value value, then `{:ok, value}`
-  is returned. If `map` doesn’t contain `key`, `:error` is returned.
+  is returned. If it's doesn’t contain `key`, `:error` is returned.
 
-  Returns value *immediately*.
+  Returns value *immediately*, unless `!: false` option is given.
 
-  Examples
+  ## Options
+
+  `!: false` option can be provided, making fetch at the end of the execution
+  queue. See [corresponding section](#module-options) for details.
+
+  Most likely, you do not need to touch this option.
+
+  ## Examples
 
       iex> am = AgentMap.new(a: 1)
       iex> AgentMap.fetch(am, :a)
@@ -1247,9 +1282,10 @@ defmodule AgentMap do
       iex> AgentMap.fetch(am, :b)
       :error
   """
-  @spec fetch(agentmap, key) :: {:ok, value} | :error
-  def fetch(agentmap, key) do
-    call(agentmap, %Req{action: :fetch, data: key})
+  @spec fetch(agentmap, key, [!: boolean]) :: {:ok, value} | :error
+  def fetch(agentmap, key, opts \\ [!: true]) do
+    [!: urgent] = opts
+    call(agentmap, %Req{action: :fetch, data: key, !: urgent})
   end
 
   @doc """
@@ -1258,7 +1294,14 @@ defmodule AgentMap do
   the corresponding value is returned. If `agentmap` doesn't contain `key`, a
   `KeyError` exception is raised.
 
-  Returns value *immediately*.
+  Returns value *immediately*, unless `!: false` option is given.
+
+  ## Options
+
+  `!: false` option can be provided, making fetch at the end of the execution
+  queue. See [corresponding section](#module-options) for details.
+
+  Most likely, you do not need to touch this option.
 
   ## Examples
 
@@ -1268,16 +1311,16 @@ defmodule AgentMap do
       iex> AgentMap.fetch!(am, :b)
       ** (KeyError) key :b not found
   """
-  @spec fetch!(agentmap, key) :: value | no_return
-  def fetch!(agentmap, key) do
-    case fetch(agentmap, key) do
+  @spec fetch!(agentmap, key, [!: boolean]) :: value | no_return
+  def fetch!(agentmap, key, opts \\ [!: true]) do
+    case fetch(agentmap, key, opts) do
       {:ok, value} -> value
       :error -> raise KeyError, key: key
     end
   end
 
   @doc """
-  Returns whether the given `key` exists in the given `agentmap`.
+  *Immediately* returns whether the given `key` exists in the given `agentmap`.
 
   ## Examples
 
@@ -1293,14 +1336,16 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns and removes the value associated with `key` in `agentmap`. If `key` is
-  present in `agentmap` with value `value`, `{value, agentmap}` is returned
-  where `agentmap` is the same agentmap. Value with given `key` is returned from
-  `agentmap`. If `key` is not present in `agentmap`, `{default, agentmap}` is
-  returned.
 
-  Pair with agentmap is returned for compatibility with Access protocol, as it
-  have `Access.pop/2` callback.
+  Removes and returns the value associated with `key` in `agentmap`. If there is
+  no such `key` in `agentmap`, `default` is returned (`nil`).
+
+  ## Options
+
+  `!: false` option can be provided, adding `pop` call to the end of the
+  execution queue. See [corresponding section](#module-options) for details.
+
+  Most likely, you do not need this option.
 
   ## Examples
 
@@ -1316,14 +1361,23 @@ defmodule AgentMap do
       iex> Enum.empty?(am)
       true
   """
-  @spec pop(agentmap, key, any) :: value | any
-  def pop(agentmap, key, default \\ nil) do
-    call(agentmap, %Req{action: :pop, data: {key, default}})
+  @spec pop(agentmap, key, any, [!: boolean]) :: value | any
+  def pop(agentmap, key, default \\ nil, opts \\ [!: true]) do
+    [!: urgent] = opts
+    call(agentmap, %Req{action: :pop, data: {key, default}, !: urgent})
   end
 
   @doc """
-  Puts the given `value` under `key` in `agentmap`. Uses `GenServer.cast/2`
-  internally, so returns *immediately*.
+  Puts the given `value` under the `key` in the `agentmap`.
+
+  Returns *immediately*.
+
+  ## Options
+
+  `!: false` option can be provided, adding `put` call to the end of the
+  execution queue. See [corresponding section](#module-options) for details.
+
+  Most likely, you do not need this option.
 
   ## Examples
 
@@ -1335,49 +1389,76 @@ defmodule AgentMap do
       ...> AgentMap.take([:a, :b])
       %{a: 3, b: 2}
   """
-  @spec put(agentmap, key, value) :: agentmap
-  def put(agentmap, key, value) do
-    GenServer.cast(pid(agentmap), %Req{action: :put, data: {key, value}})
+  @spec put(agentmap, key, value, !: boolean) :: agentmap
+  def put(agentmap, key, value, opts \\ [!: true]) do
+    [!: urgent] = opts
+    GenServer.cast(pid(agentmap), %Req{action: :put, data: {key, value}, !: urgent})
     agentmap
   end
 
   @doc """
-  Returns a `Map` with all the key-value pairs in `agentmap` where the key is in
-  `keys`. If `keys` contains keys that are not in `agentmap`, they're simply
-  ignored. Returns immediately.
-
-  ## Examples
-
-      iex> AgentMap.new(a: 1, b: 2, c: 3) |>
-      ...> AgentMap.take([:a, :c, :e])
-      %{a: 1, c: 3}
-  """
-  @spec take(agentmap, Enumerable.t()) :: map
-  def take(agentmap, keys) do
-    call(agentmap, %Req{action: :take, data: keys})
-  end
-
-  @doc """
-  Deletes the entry in `agentmap` for a specific `key`. Always returns
-  `agentmap` to support piping. Uses `GenServer.cast/2` internally, so returns
-  *immediately*.
+  Returns a `Map` with key-value pairs taken from `agentmap`. Keys that are not
+  in `agentmap` are simply ignored.
 
   ## Options
 
-  The `:!` option is used to make "urgent" delete call. Values could have an
-  associated queue of callbacks, awaiting of execution. If such queue exists,
-  "urgent" version will add call to the begining of the queue (selective receive
-  used.
+  By default, returns **immediately** the snapshot of the `agentmap`. But if `!:
+  false` option is given will wait for execution of all the callbacks for all
+  the `keys` at the moment of call. See [corresponding section](#module-options)
+  for details.
+
+  ## Examples
+
+      iex> AgentMap.new(a: 1, b: 2, c: 3)
+      ...> |> AgentMap.take([:a, :c, :e])
+      %{a: 1, c: 3}
+
+      iex> AgentMap.new(a: 1)
+      ...> |> AgentMap.cast(fn _ -> :timer.sleep(100) end)
+      ...> |> AgentMap.take([:a])
+      %{a: 1}
+
+  But:
+
+      iex> AgentMap.new(a: 1)
+      ...> |> AgentMap.cast(fn _ -> :timer.sleep(100) end)
+      ...> |> AgentMap.take([:a], !: false)
+      %{a: :ok} # &:timer.sleep/1 returns :ok
+  """
+  @spec take(agentmap, Enumerable.t(), !: boolean) :: map
+  def take(agentmap, keys, opts \\ [!: true]) do
+    keys = Enum.to_list(keys)
+
+    [!: urgent] = opts
+
+    if urgent do
+      call(agentmap, %Req{action: :take, data: keys})
+    else
+      get(agentmap, fn _ -> Process.get("$map") end, keys)
+    end
+  end
+
+  @doc """
+  Deletes the entry in `agentmap` for a specific `key`.
+
+  Returns *immediately*, but `key` may still be in list returned by `keys/1`.
+  That is because of the callbacks executing or awaiting of execution, as
+  `delete` does not clear corresponding queue.
+
+  ## Options
+
+  `!: true` option can be provided to make "urgent" delete call. See
+  [corresponding section](#module-options) for details.
 
   ## Examples
 
       iex> am = AgentMap.new(a: 1, b: 2)
-      iex> AgentMap.delete(am, :a) |>
-      ...> AgentMap.take([:a, :b])
+      iex> AgentMap.delete(am, :a)
+      ...> |> AgentMap.take([:a, :b])
       %{b: 2}
       #
-      iex> AgentMap.delete(am, :a) |>
-      ...> AgentMap.take([:a, :b])
+      iex> AgentMap.delete(am, :a)
+      ...> |> AgentMap.take([:a, :b])
       %{b: 2}
   """
   @spec delete(agentmap, key, !: boolean) :: agentmap
@@ -1388,22 +1469,22 @@ defmodule AgentMap do
   end
 
   @doc """
-  Drops the given `keys` from `agentmap`. If `keys` contains keys that are not
-  in `agentmap`, they're simply ignored. Uses `GenServer.cast/2` internally, so
-  returns *immediately*.
+  Drops the given `keys` from `agentmap`.
+
+  Returns *immediately*, but `keys/1` may show some of the droped keys. That is
+  because of the callbacks executing or awaiting of execution, as `drop` does
+  not clears corresponding queues.
 
   ## Options
 
-  The `:!` option is used to make "urgent" drop call. Values could have an
-  associated queue of callbacks, awaiting of execution. If such queue exists,
-  "urgent" version will add call to the begining of the queue (selective receive
-  used.
+  `!: true` option can be provided to make "urgent" drop calls. See
+  [corresponding section](#module-options) for details.
 
   ## Examples
 
-      iex> AgentMap.new(a: 1, b: 2, c: 3) |>
-      ...> AgentMap.drop([:b, :d]) |>
-      ...> AgentMap.keys()
+      iex> AgentMap.new(a: 1, b: 2, c: 3)
+      ...> |> AgentMap.drop([:b, :d])
+      ...> |> AgentMap.keys()
       [:a, :c]
   """
   @spec drop(agentmap, Enumerable.t(), !: boolean) :: agentmap
@@ -1414,24 +1495,26 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns all keys from `agentmap`.
+  *Immediately* returns all the keys from given `agentmap`.
 
   ## Examples
 
-      iex> AgentMap.new(a: 1, b: 2, c: 3) |>
-      ...> AgentMap.keys()
+      iex> AgentMap.new(a: 1, b: 2, c: 3)
+      ...> |> AgentMap.keys()
       [:a, :b, :c]
   """
   @spec keys(agentmap) :: [key]
-  def keys(agentmap), do: call(agentmap, %Req{action: :keys})
+  def keys(agentmap) do
+    call(agentmap, %Req{action: :keys})
+  end
 
   @doc """
   Returns all values from `agentmap`.
 
   ## Examples
 
-      iex> AgentMap.new(a: 1, b: 2, c: 3) |>
-      ...> AgentMap.values()
+      iex> AgentMap.new(a: 1, b: 2, c: 3)
+      ...> |> AgentMap.values()
       [1, 2, 3]
   """
   @spec values(agentmap) :: [value]
@@ -1441,7 +1524,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Length of the queue for `key`.
+  Length of the queue of callbacks waiting for execution on `key`.
 
   ## Examples
 

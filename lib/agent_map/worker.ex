@@ -1,4 +1,6 @@
 defmodule AgentMap.Worker do
+  require Logger
+
   @moduledoc false
 
   @compile {:inline, rand: 1, dec: 1, inc: 1, _dec: 1, _inc: 1}
@@ -37,8 +39,9 @@ defmodule AgentMap.Worker do
     end
   end
 
-  # Is OK for numbers < 1000.
-  defp rand(to), do: rem(System.system_time(), to)
+  defp rand(to) when to < 1000 do
+    rem(System.system_time(), to)
+  end
 
   ##
   ## PROCESS MSG
@@ -55,8 +58,17 @@ defmodule AgentMap.Worker do
 
     if threads < Process.get(:"$max_threads") do
       worker = self()
+      k = Process.get(:"$key")
 
       Task.start_link(fn ->
+        Process.put(:"$key", k)
+
+        if Process.get(:"$value") == :no do
+          Process.put(:"$has_value?", false)
+        else
+          Process.put(:"$has_value?", true)
+        end
+
         result = Callback.run(fun, [value])
         GenServer.reply(from, result)
         send(worker, :done)
@@ -104,18 +116,26 @@ defmodule AgentMap.Worker do
     process({:put, Callback.run(fun, [value])})
   end
 
-  defp process(:drop), do: Process.put(:"$value", :no)
-  defp process({:put, value}), do: Process.put(:"$value", {:value, value})
+  defp process(:drop) do
+    Process.put(:"$value", :no)
+    Process.put(:"$has_value?", false)
+  end
+
+  defp process({:put, value}) do
+    Process.put(:"$value", {:value, value})
+    Process.put(:"$has_value?", true)
+  end
+
   defp process(:id), do: :ignore
 
   # Transaction handler.
-  # Send current value.
+  # Sends current value.
   defp process({:t_send, from}) do
     send(from, {self(), unbox(Process.get(:"$value"))})
   end
 
   # Transaction handler.
-  # Receive the new value (maybe).
+  # Receives the new value (maybe).
   defp process(:t_get) do
     receive do
       msg -> process(msg)
@@ -136,20 +156,32 @@ defmodule AgentMap.Worker do
   ## MAIN
   ##
 
-  def loop(server, key, nil), do: loop(server, key, {nil, @max_threads})
+  # Point of entry. Know nothing about value with given key.
+  def loop(server, key, nil) do
+    loop(server, key, {nil, @max_threads})
+  end
 
+  # → the value is known.
   def loop(server, key, {value, max_threads}) do
-    Process.put(:"$value", if(value, do: value, else: :no))
+    if value do
+      Process.put(:"$value", value)
+      Process.put(:"$has_value?", true)
+    else
+      Process.put(:"$value", :no)
+      Process.put(:"$has_value?", false)
+    end
+
     Process.put(:"$key", key)
     Process.put(:"$max_threads", max_threads)
-    # The process that runs loop.
+
+    # One (1) is for the process that runs loop.
     Process.put(:"$threads", 1)
     Process.put(:"$gen_server", server)
     Process.put(:"$wait", @wait + rand(25))
     Process.put(:"$selective_receive", true)
 
-    # :'$wait', :'$processes', :'max_processes', ':'$selective_receive' are
-    # process keys, so they are easy to inspect from outside of the process.
+    # :'$wait', :'threads', :'max_threads', ':'$selective_receive' are
+    # process keys, so they are easy to inspect from outside.
     # →
     loop()
   end
@@ -173,7 +205,8 @@ defmodule AgentMap.Worker do
           :continue ->
             # 1. next time wait a little bit longer (a few ms)
             Process.put(:"$wait", wait + rand(5))
-            # 2. use selective receive (maybe, again)
+
+            # 2. use selective receive
             Process.put(:"$selective_receive", true)
             loop(true)
 
@@ -183,16 +216,26 @@ defmodule AgentMap.Worker do
     end
   end
 
-  # →
   def loop(selective_receive \\ true)
   def loop(false), do: _loop(false)
 
+  # →
   def loop(true) do
     {_, len} = Process.info(self(), :message_queue_len)
 
     if len > 100 do
       # Turn off selective receive.
       Process.put(:"$selective_receive", false)
+      key = Process.get(:"$key")
+
+      Logger.warn("""
+        Selective receive is turned off for worker with key #{inspect(key)} as
+        it's message queue became too long (#{len} messages). This prevents
+        worker from executing the urgent calls out of turn. Selective receive
+        will be turned on again as the queue became empty. This will not be
+        logged.
+      """)
+
       loop(false)
     end
 

@@ -57,7 +57,9 @@ defmodule AgentMap.Req do
   ## HELPERS
   ##
 
-  defp has_key?(map, key), do: match?({:ok, _}, fetch(map, key))
+  defp has_key?(map, key) do
+    match?({:ok, _}, fetch(map, key))
+  end
 
   defp unbox(nil), do: nil
   defp unbox({:value, value}), do: value
@@ -67,7 +69,10 @@ defmodule AgentMap.Req do
   ##
 
   def handle(%Req{action: :keys}, map) do
-    keys = for key <- Map.keys(map), has_key?(map, key), do: key
+    keys =
+      map
+      |> Map.keys()
+      |> Enum.filter(&has_key?(map, &1))
 
     {:reply, keys, map}
   end
@@ -104,17 +109,22 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :drop, data: keys, !: urgent}, map) do
     map =
       Enum.reduce(keys, map, fn key, map ->
-        {:noreply, map} = handle(%Req{action: :delete, data: key, !: urgent}, map)
+        {_, map} =
+          handle(
+            %Req{action: :delete, data: key, !: urgent},
+            map
+          )
+
         map
       end)
 
     {:noreply, map}
   end
 
-  def handle(%Req{action: :delete, data: key, !: urgent}, map) do
+  def handle(%Req{action: :delete, data: key} = req, map) do
     case map[key] do
       {:pid, worker} ->
-        if urgent do
+        if req[:urgent] do
           send(worker, {:!, :drop})
         else
           send(worker, :drop)
@@ -144,6 +154,19 @@ defmodule AgentMap.Req do
         send(worker, {:!, {:max_threads, max_t, req.from}})
         {:noreply, map}
 
+      {nil, oldmax_t} ->
+        # If there is no value with such key and the new
+        # max_threads == @max_threads (default) — we can remove
+        # it safely as there is no need to store it anymore.
+        map =
+          if max_t == @max_threads do
+            Map.delete(map, key)
+          else
+            put_in(map[key], {nil, max_t})
+          end
+
+        {:reply, oldmax_t, map}
+
       {value, oldmax_t} ->
         map = put_in(map[key], {value, max_t})
         {:reply, oldmax_t, map}
@@ -154,12 +177,39 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :fetch, data: key}, map) do
-    {:reply, fetch(map, key), map}
+  def handle(%Req{action: :fetch, data: key} = req, map) do
+    if req[:!] do
+      {:reply, fetch(map, key), map}
+    else
+      fun = fn v ->
+        if Process.get(:"$has_value?") do
+          {:ok, v}
+        else
+          :error
+        end
+      end
+
+      handle(%Req{action: :get, data: {key, fun}})
+    end
   end
 
   def handle(%Req{action: :get, data: {fun, [key]}} = req, map) do
-    handle(%{req | data: {key, &Callback.run(fun, [[&1]])}}, map)
+    fun = fn v ->
+      Process.put(:"$keys", [key])
+
+      if Process.get(:"$has_value?") do
+        Process.put(:"$map", %{key: v})
+      else
+        Process.put(:"$map", %{})
+      end
+
+      # Transaction call should not has "$has_value?" key.
+      Process.delete(:"$has_value?")
+
+      Callback.run(fun, [[v]])
+    end
+
+    handle(%{req | data: {key, fun}}, map)
   end
 
   def handle(%Req{data: {_fun, keys}} = req, map) when is_list(keys) do
@@ -172,10 +222,15 @@ defmodule AgentMap.Req do
     Task.start_link(fn ->
       value =
         case fetch(map, key) do
-          {:ok, value} -> value
-          :error -> nil
+          {:ok, value} ->
+            Process.put(:"$has_value?", true)
+            value
+          :error ->
+            Process.put(:"$has_value?", false)
+            nil
         end
 
+      Process.put(:"$key", key)
       GenServer.reply(req.from, Callback.run(fun, [value]))
     end)
 
@@ -198,20 +253,36 @@ defmodule AgentMap.Req do
 
       {value, :infinity} ->
         Task.start_link(fn ->
+          Process.put(:"$key", key)
+
+          if value do
+            Process.put(:"$has_value?", true)
+          else
+            Process.put(:"$has_value?", false)
+          end
+
           GenServer.reply(req.from, Callback.run(fun, [unbox(value)]))
         end)
 
         {:noreply, map}
 
-      {value, quota} when quota > 1 ->
+      {value, max_t} when max_t > 1 ->
         server = self()
 
         Task.start_link(fn ->
+          Process.put(:"$key", key)
+
+          if value do
+            Process.put(:"$has_value?", true)
+          else
+            Process.put(:"$has_value?", false)
+          end
+
           GenServer.reply(req.from, Callback.run(fun, [unbox(value)]))
           send(server, {:done_on_server, key})
         end)
 
-        map = put_in(map[key], {value, quota - 1})
+        map = put_in(map[key], {value, max_t - 1})
 
         {:noreply, map}
 
@@ -222,16 +293,21 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :put} = req, map) do
+  def handle(%Req{action: :put, !: urgent} = req, map) do
     {key, value} = req.data
 
     case map[key] do
-      {{:value, _}, quota} ->
-        map = put_in(map[key], {{:value, value}, quota})
+      {{:value, _}, max_t} ->
+        map = put_in(map[key], {{:value, value}, max_t})
         {:noreply, map}
 
       {:pid, worker} ->
-        send(worker, {:put, value})
+        if urgent do
+          send(worker, {:!, {:put, value}})
+        else
+          send(worker, {:put, value})
+        end
+
         {:noreply, map}
 
       {nil, max_t} ->

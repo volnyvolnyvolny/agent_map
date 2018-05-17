@@ -71,8 +71,8 @@ defmodule AgentMap.Server do
   end
 
   def handle_info({:chain, data, from}, map) do
-    req = %Req{action: :get_and_update, data: data, from: from}
-    Req.handle(req, map)
+    %Req{action: :get_and_update, data: data, from: from}
+    |> Req.handle(map)
   end
 
   # Worker asks to exit.
@@ -109,8 +109,8 @@ defmodule AgentMap.Server do
 
   def code_change(_old, map, fun) do
     for key <- Map.keys(map) do
-      req = %Req{action: :cast, data: {key, fun}}
-      Req.handle(req, map)
+      %Req{action: :cast, data: {key, fun}}
+      |> Req.handle(map)
     end
 
     {:ok, map}
