@@ -196,19 +196,35 @@ defmodule AgentMap do
 
   ## Options
 
-  Most of the functions supports additional options: `:!` — make out-of-(make urgent call) and
+  ### "Urgent" (`!: true`) calls
 
-  The `:!` option is used to make "urgent" delete call. Values could have an
-  associated queue of callbacks, awaiting of execution. If such queue exists,
-  "urgent" version will add call to the begining of the queue (selective receive
-  used.
+  In most of the functions, additional `!: true` option to make out-of-turn
+  ("urgent") calls provided.
+
+  If more than `5` callbacks executed simultaniously or change-state call used
+  (`get_and_update`, `update`, `cast`, `put` and so on) — a special worker
+  process is created that became the holder of the execution queue. This process
+  executes callbacks in the order they arrive. This function uses the [selective
+  receive feature](http://learnyousomeerlang.com/more-on-multiprocessing) to
+  provide the possibility for some callbacks to be executed in the order of
+  preference (out-of-turn). For example:
+
+        
+
+  Be aware that selective receive can lead to a performance issues if the
+  message queue became to fat — read the same link for explanation. So it is
+  decided to turn selective receive off every time message queue of the worker
+  process will have length > 100. It will be turned on again on message queue
+  became empty.
+
+  ### Timeout and deadlines
 
   `timeout` is an integer greater than zero which specifies how many
   milliseconds are allowed before the `agentmap` executes the `fun` and returns
-  the result value, or the atom `:infinity` to wait indefinitely. If no result
-  is received within the specified time, the caller exits. By default it's equal
-  to `5000` ms. This value could be given as `:timeout` option, or separately,
-  so:
+  the result value, or the atom `:infinity` to wait indefinitely. By default it
+  is set to `5000 ms` = `5 sec`. If no result is received within the specified
+  time, the caller exits, but the callback will remain in queue or continue it's
+  execution. For example:
 
       AgentMap.get(agentmap, :key, fun)
       AgentMap.get(agentmap, :key, fun, 5000)
@@ -244,7 +260,7 @@ defmodule AgentMap do
   the request is fulfilled. So it's important to avoid use of expensive
   operations inside the agentmap.
 
-  Finally note that `use AgentMap` defines a `child_spec/1` function, allowing
+  Finally, note that `use AgentMap` defines a `child_spec/1` function, allowing
   the defined module to be put under a supervision tree. The generated
   `child_spec/1` can be customized with the following options:
 
