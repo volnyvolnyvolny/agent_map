@@ -59,19 +59,15 @@ defmodule AgentMap.Worker do
     if threads < Process.get(:"$max_threads") do
       worker = self()
       k = Process.get(:"$key")
+      hv? = Process.get(:"$has_value?")
 
       Task.start_link(fn ->
         Process.put(:"$key", k)
-
-        if Process.get(:"$value") == :no do
-          Process.put(:"$has_value?", false)
-        else
-          Process.put(:"$has_value?", true)
-        end
+        Process.put(:"$has_value?", hv?)
 
         result = Callback.run(fun, [value])
         GenServer.reply(from, result)
-        send(worker, :done)
+        send(worker, {:!, :done})
       end)
 
       inc(:"$threads")
@@ -226,10 +222,10 @@ defmodule AgentMap.Worker do
     if len > 100 do
       # Turn off selective receive.
       Process.put(:"$selective_receive", false)
-      key = Process.get(:"$key")
+      k = Process.get(:"$key")
 
       Logger.warn("""
-        Selective receive is turned off for worker with key #{inspect(key)} as
+        Selective receive is turned off for worker with key #{inspect(k)} as
         it's message queue became too long (#{len} messages). This prevents
         worker from executing the urgent calls out of turn. Selective receive
         will be turned on again as the queue became empty. This will not be

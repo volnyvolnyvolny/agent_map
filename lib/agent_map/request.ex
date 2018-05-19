@@ -5,6 +5,8 @@ defmodule AgentMap.Req do
 
   @max_threads 5
 
+  @enforce_keys [:action]
+
   # action: :get, :get_and_update, :update, :cast, :keys, …
   # data: {key, fun}, {fun, keys}, …
   # from: pid
@@ -19,6 +21,8 @@ defmodule AgentMap.Req do
   def to_msg(%Req{!: true} = req) do
     {:!, to_msg(%{req | !: false})}
   end
+
+  def to_msg(%Req{action: :delete}), do: :drop
 
   def to_msg(%Req{data: {_, fun}, action: :cast}), do: {:cast, fun}
 
@@ -42,10 +46,10 @@ defmodule AgentMap.Req do
           {:value, value} -> {:ok, value}
         end
 
-      {{:value, value}, _} ->
+      {{:value, value}, _max_t} ->
         {:ok, value}
 
-      {nil, _} ->
+      {nil, _max_t} ->
         :error
 
       nil ->
@@ -77,14 +81,24 @@ defmodule AgentMap.Req do
     {:reply, keys, map}
   end
 
-  def handle(%Req{action: :queue_len, data: key}, map) do
+  def handle(%Req{action: :queue_len, data: {key, opts}}, map) do
     case map[key] do
       {:pid, worker} ->
         {_, queue} = Process.info(worker, :messages)
 
         num =
           Enum.count(queue, fn msg ->
-            msg not in [:done, :done_on_server]
+            msg not in [{:!, :done}, {:!, :done_on_server}] &&
+              case opts do
+                [!: true] ->
+                  match?({:!, _}, msg)
+
+                [!: false] ->
+                  not match?({:!, _}, msg)
+
+                _ ->
+                  true
+              end
           end)
 
         {:reply, num, map}
@@ -94,26 +108,19 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :take, data: keys}, map) do
-    res =
-      Enum.reduce(keys, %{}, fn key, res ->
-        case fetch(map, key) do
-          {:ok, value} -> put_in(res[key], value)
-          _ -> res
-        end
-      end)
-
-    {:reply, res, map}
+  def handle(%Req{action: :take_all}, map) do
+    {:reply, map, map}
   end
 
-  def handle(%Req{action: :drop, data: keys, !: urgent}, map) do
+  def handle(%Req{action: :take, data: keys}, map) do
+    {:reply, Map.take(map, keys), map}
+  end
+
+  def handle(%Req{action: :drop, data: keys} = req, map) do
     map =
       Enum.reduce(keys, map, fn key, map ->
         {_, map} =
-          handle(
-            %Req{action: :delete, data: key, !: urgent},
-            map
-          )
+          handle(%{req | action: :delete}, map)
 
         map
       end)
@@ -124,12 +131,7 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :delete, data: key} = req, map) do
     case map[key] do
       {:pid, worker} ->
-        if req[:urgent] do
-          send(worker, {:!, :drop})
-        else
-          send(worker, :drop)
-        end
-
+        send(worker, to_msg(req))
         {:noreply, map}
 
       {{:value, _}, @max_threads} ->
@@ -189,7 +191,7 @@ defmodule AgentMap.Req do
         end
       end
 
-      handle(%Req{action: :get, data: {key, fun}})
+      handle(%Req{action: :get, data: {key, fun}}, map)
     end
   end
 
@@ -225,6 +227,7 @@ defmodule AgentMap.Req do
           {:ok, value} ->
             Process.put(:"$has_value?", true)
             value
+
           :error ->
             Process.put(:"$has_value?", false)
             nil

@@ -20,6 +20,9 @@
     `Process.get("$keys")` returns `keys` list given.
   * Single key transactions will be more effective as they will not create
     additional processes.
+  * If selective receive became turned off for worker, warning is emitted.
+  * `take/2`, `value/2` and all `Enum` function will load server a little bit
+    less.
 
 ### New macroses
 
