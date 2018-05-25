@@ -22,9 +22,11 @@ defmodule AgentMap.Req do
     {:!, to_msg(%{req | !: false})}
   end
 
+  def to_msg(%Req{action: :put, data: {_, value}}), do: {:put, value}
+
   def to_msg(%Req{action: :delete}), do: :drop
 
-  def to_msg(%Req{data: {_, fun}, action: :cast}), do: {:cast, fun}
+  def to_msg(%Req{action: :cast, data: {_, fun}}), do: {:cast, fun}
 
   def to_msg(%Req{data: {_, fun}} = req) do
     {req.action, fun, req.from}
@@ -82,11 +84,11 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :queue_len, data: {key, opts}}, map) do
-    case map[key] do
-      {:pid, worker} ->
-        {_, queue} = Process.info(worker, :messages)
+    num =
+      case map[key] do
+        {:pid, worker} ->
+          {_, queue} = Process.info(worker, :messages)
 
-        num =
           Enum.count(queue, fn msg ->
             msg not in [{:!, :done}, {:!, :done_on_server}] &&
               case opts do
@@ -101,11 +103,11 @@ defmodule AgentMap.Req do
               end
           end)
 
-        {:reply, num, map}
+        _ ->
+          0
+      end
 
-      _ ->
-        {:reply, 0, map}
-    end
+    {:reply, num, map}
   end
 
   def handle(%Req{action: :take_all}, map) do
@@ -119,33 +121,43 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :drop, data: keys} = req, map) do
     map =
       Enum.reduce(keys, map, fn key, map ->
-        {_, map} =
-          handle(%{req | action: :delete}, map)
-
-        map
+        %{req | action: :delete}
+        |> handle(map)
+        |> elem(1)
       end)
 
     {:noreply, map}
   end
 
-  def handle(%Req{action: :delete, data: key} = req, map) do
-    case map[key] do
-      {:pid, worker} ->
-        send(worker, to_msg(req))
-        {:noreply, map}
-
-      {{:value, _}, @max_threads} ->
-        {:noreply, Map.delete(map, key)}
-
-      {{:value, _}, mt} ->
-        {:noreply, put_in(map[key], {nil, mt})}
-
-      {nil, _} ->
-        {:noreply, map}
-
-      nil ->
-        {:noreply, map}
+  def handle(%Req{action: :values} = req, map) do
+    fun = fn _ ->
+      Map.values(Process.get(:"$map"))
     end
+
+    handle(%Req{action: :get, data: {fun, Map.keys(map)}})
+  end
+
+  def handle(%Req{action: :delete, data: key} = req, map) do
+    map =
+      case map[key] do
+        {:pid, worker} ->
+          send(worker, to_msg(req))
+          map
+
+        {{:value, _}, @max_threads} ->
+          Map.delete(map, key)
+
+        {{:value, _}, mt} ->
+          put_in(map[key], {nil, mt})
+
+        {nil, _} ->
+          map
+
+        nil ->
+          map
+      end
+
+    {:noreply, map}
   end
 
   def handle(%Req{action: :max_threads} = req, map) do
@@ -153,8 +165,11 @@ defmodule AgentMap.Req do
 
     case map[key] do
       {:pid, worker} ->
+        {_, dict} = Process.info(worker, :dictionary)
+
         send(worker, {:!, {:max_threads, max_t, req.from}})
-        {:noreply, map}
+
+        {:reply, dict[:"$max_threads"], map}
 
       {nil, oldmax_t} ->
         # If there is no value with such key and the new
@@ -180,7 +195,7 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :fetch, data: key} = req, map) do
-    if req[:!] do
+    if req.! do
       {:reply, fetch(map, key), map}
     else
       fun = fn v ->
@@ -195,15 +210,13 @@ defmodule AgentMap.Req do
     end
   end
 
+  # One-key get-transaction!
   def handle(%Req{action: :get, data: {fun, [key]}} = req, map) do
     fun = fn v ->
       Process.put(:"$keys", [key])
 
-      if Process.get(:"$has_value?") do
-        Process.put(:"$map", %{key: v})
-      else
-        Process.put(:"$map", %{})
-      end
+      hv? = Process.get(:"$has_value?")
+      Process.put(:"$map", hv? && %{key: v} || %{})
 
       # Transaction call should not has "$has_value?" key.
       Process.delete(:"$has_value?")
@@ -214,6 +227,7 @@ defmodule AgentMap.Req do
     handle(%{req | data: {key, fun}}, map)
   end
 
+  # Any transaction.
   def handle(%Req{data: {_fun, keys}} = req, map) when is_list(keys) do
     {:noreply, Transaction.run(req, map)}
   end
@@ -246,7 +260,6 @@ defmodule AgentMap.Req do
     case map[key] do
       {:pid, worker} ->
         send(worker, to_msg(req))
-
         {:noreply, map}
 
       # Cannot spawn more Task's.
@@ -291,6 +304,7 @@ defmodule AgentMap.Req do
 
       # No such key.
       nil ->
+        # Let's pretend it's there.
         map = put_in(map[key], {nil, @max_threads})
         handle(req, map)
     end
@@ -305,12 +319,7 @@ defmodule AgentMap.Req do
         {:noreply, map}
 
       {:pid, worker} ->
-        if urgent do
-          send(worker, {:!, {:put, value}})
-        else
-          send(worker, {:put, value})
-        end
-
+        send(worker, to_msg(req))
         {:noreply, map}
 
       {nil, max_t} ->
@@ -329,7 +338,12 @@ defmodule AgentMap.Req do
 
     case fetch(map, key) do
       {:ok, _} ->
-        req = %{req | action: :get_and_update, data: {key, fn _ -> :pop end}}
+        fun = fn _ ->
+          hv? = Process.get(:"$has_value?")
+          hv? && :pop || {default}
+        end
+
+        req = %{req | action: :get_and_update, data: {key, fun}}
         handle(req, map)
 
       :error ->
