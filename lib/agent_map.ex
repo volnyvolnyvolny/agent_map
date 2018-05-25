@@ -194,26 +194,25 @@ defmodule AgentMap do
 
   ## Options
 
-  ### "Urgent" (`!: true`) calls
+  ### Priority calls (`!: true`)
 
-  In most of the functions, additional `!: true` option to make out-of-turn
-  ("urgent") calls provided.
+  Most of the functions support `!: true` option to make out-of-turn
+  ("priority") calls.
 
   If more than `5` callbacks executed simultaniously or change-state call used
-  (`get_and_update`, `update`, `cast`, `put` and so on) — a special worker
+  (`get_and_update`, `update`, `cast`, `put` and so on), a special worker
   process is created that became the holder of the execution queue. This process
-  executes callbacks in the order they arrive. This function uses the [selective
-  receive feature](http://learnyousomeerlang.com/more-on-multiprocessing) to
+  executes callbacks in the order they arrive. But [selective
+  receive](http://learnyousomeerlang.com/more-on-multiprocessing) can be used to
   provide the possibility for some callbacks to be executed in the order of
   preference (out-of-turn). For example:
 
-        
+
 
   Be aware that selective receive can lead to a performance issues if the
-  message queue became to fat — read the same link for explanation. So it is
-  decided to turn selective receive off every time message queue of the worker
-  process will have length > 100. It will be turned on again on message queue
-  became empty.
+  message queue became to fat. So it is decided to turn selective receive off
+  every time message queue of the worker process will have length > 100. It will
+  be turned on again on message queue became empty.
 
   ### Timeout and deadlines
 
@@ -231,8 +230,8 @@ defmodule AgentMap do
 
   means the same.
 
-  The `:!` option is used to make "urgent" calls. Values could have an
-  associated queue of callbacks, awaiting of execution. "Urgent" version allows
+  The `:!` option is used to make "priority" calls. Values could have an
+  associated queue of callbacks, awaiting of execution. "Priority" version allows
   to retrive value immediately at the moment of call. If this option is
   provided, `fun` will be always executed in a separate `Task`.
 
@@ -568,8 +567,8 @@ defmodule AgentMap do
 
   means the same.
 
-  The `:!` option is used to make "urgent" calls. Values could have an
-  associated queue of callbacks, awaiting of execution. "Urgent" version allows
+  The `:!` option is used to make "priority" calls. Values could have an
+  associated queue of callbacks, awaiting of execution. "Priority" version allows
   to retrive value immediately at the moment of call. If this option is
   provided, `fun` will be always executed in a separate `Task`.
 
@@ -606,7 +605,7 @@ defmodule AgentMap do
       iex> AgentMap.get(am, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice])
       -1
 
-   "Urgent" calls:
+   "Priority" calls:
 
       iex> import :timer
       iex> am = AgentMap.new(key: 42)
@@ -642,12 +641,12 @@ defmodule AgentMap do
 
   def get(agentmap, fun, keys) when is_fun(fun, 1) and is_list(keys) do
     req = %Req{action: :get, data: {fun, keys}}
-    _call(agentmap, req)
+    _call(agentmap, req, [])
   end
 
   def get(agentmap, key, fun) when is_fun(fun, 1) do
     req = %Req{action: :get, data: {key, fun}}
-    _call(agentmap, req)
+    _call(agentmap, req, [])
   end
 
   #
@@ -807,8 +806,8 @@ defmodule AgentMap do
       :slept_well
 
   will block the possibility to `get_and_update`, `update`, `cast` and even
-  non-urgent `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values are
-  always available for "urgent" `get` calls and value under the key `:chris` is
+  non-priority `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values are
+  always available for "priority" `get` calls and value under the key `:chris` is
   not blocked.
 
   Transactions are *Isolated* and *Durabled* (see, ACID model). *Atomicity* can
@@ -831,9 +830,9 @@ defmodule AgentMap do
 
   means the same.
 
-  The `:!` option is used to make "urgent" calls. Values could have an
+  The `:!` option is used to make "priority" calls. Values could have an
   associated queue of callbacks, awaiting of execution. If such queue exists,
-  "urgent" version will add call to the begining of the queue (via "selective
+  "priority" version will add call to the begining of the queue (via "selective
   receive").
 
   Be aware that: (1) anonymous function, `{fun, args}` or MFA tuple can be
@@ -1024,8 +1023,8 @@ defmodule AgentMap do
       end, [:alice, :bob])
 
   will block the possibility to `get_and_update`, `update`, `cast` and even
-  non-urgent `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values are
-  always available for "urgent" `get` calls and value under the key `:chris` is
+  non-priority `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values are
+  always available for "priority" `get` calls and value under the key `:chris` is
   not blocked.
 
   Transactions are *Isolated* and *Durabled* (see, ACID model). *Atomicity* can
@@ -1048,9 +1047,9 @@ defmodule AgentMap do
 
   means the same.
 
-  The `:!` option is used to make "urgent" calls. Values could have an
+  The `:!` option is used to make "priority" calls. Values could have an
   associated queue of callbacks, awaiting of execution. If such queue exists,
-  "urgent" version will add call to the begining of the queue (selective receive
+  "priority" version will add call to the begining of the queue (selective receive
   used).
 
   Be aware that: (1) this function always returns `:ok`; (2) anonymous function,
@@ -1272,7 +1271,7 @@ defmodule AgentMap do
   """
   @spec max_threads(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
   def max_threads(agentmap, key, value) do
-    _call(agentmap, %Req{action: :max_threads, data: {key, value}})
+    _call(agentmap, %Req{action: :max_threads, data: {key, value}}, [])
   end
 
   @doc """
@@ -1310,7 +1309,7 @@ defmodule AgentMap do
   def fetch(agentmap, key, opts \\ [!: true]) do
     if Keyword.get(opts, :!, true) do
       req = struct(%Req{action: :fetch, data: key}, opts)
-      _call(agentmap, req, timeout)
+      _call(agentmap, req, opts)
     else
       get(agentmap, key, fn v ->
         hv? = Process.get(:"$has_value?")
@@ -1449,7 +1448,7 @@ defmodule AgentMap do
 
   ## Options
 
-  By default this call is ["urgent"](#module-options), but `!: false` option can
+  By default this call is ["priority"](#module-options), but `!: false` option can
   be provided to add `put` call to the end of the execution queue. Most likely,
   you do not need this.
 
@@ -1569,7 +1568,7 @@ defmodule AgentMap do
 
   ## Options
 
-  `!: true` option can be provided to make "urgent" drop calls. See
+  `!: true` option can be provided to make "priority" drop calls. See
   [corresponding section](#module-options) for details.
 
   `cast: false` option make this call wait until delete is made. By default,
@@ -1628,7 +1627,7 @@ defmodule AgentMap do
 
   ## Options
 
-  `!: true` option can be provided to make "urgent" drop calls. See
+  `!: true` option can be provided to make "priority" drop calls. See
   [corresponding section](#module-options) for details.
 
   `cast: false` option make this call wait until drop is made. As it was sad, by
@@ -1683,7 +1682,7 @@ defmodule AgentMap do
   @doc """
   Returns all values from `agentmap`.
 
-  ## Options
+  ### Options
 
   `!: false` can be given to wait for execution of all callbacks in all the
   queues at the moment of call. This can be helpful if your `agentmap` has a
@@ -1692,7 +1691,7 @@ defmodule AgentMap do
 
   Also, `timeout` can be [provided](#module-timeout).
 
-  ## Examples
+  ### Examples
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
@@ -1722,13 +1721,13 @@ defmodule AgentMap do
   @doc """
   Number of callbacks waiting for execution on given `key`.
 
-  ## Options
+  ### Options
 
-  `!: true` or `!: false` options could be provided to count urgent and not
-  urgent callbacks respectively in the corresponding queue. See [corresponding
+  `!: true` or `!: false` options could be provided to count priority and not
+  priority callbacks respectively in the corresponding queue. See [corresponding
   section](#module-options) for details.
 
-  ## Examples
+  ### Examples
 
       iex> import :timer
       iex> am = AgentMap.new(a: 1, b: 2)
@@ -1750,14 +1749,14 @@ defmodule AgentMap do
   """
   @spec queue_len(agentmap, key, [!: boolean] | []) :: non_neg_integer
   def queue_len(agentmap, key, opts \\ []) do
-    _call(agentmap, %Req{action: :queue_len, data: {key, opts}})
+    _call(agentmap, %Req{action: :queue_len, data: {key, opts}}, [])
   end
 
   @doc """
-  Increment value with given `key`. Returns **immediately** as it uses
+  Increment value with given `key`. Returns **immediately** as it based on
   `GenServer.cast/2`.
 
-  ## Options
+  ### Options
 
   Provide `!: true` to make this cast call a priority. See [corresponding
   section](#module-options) for details.
@@ -1767,7 +1766,7 @@ defmodule AgentMap do
 
   Provide `step` to setup increment step.
 
-  ## Examples
+  ### Examples
 
       iex> am = AgentMap.new(a: 1, b: 2)
       iex> AgentMap.inc(am, :a)
@@ -1790,10 +1789,10 @@ defmodule AgentMap do
   end
 
   @doc """
-  Decrement value with given `key`. Returns **immediately** as it uses
+  Decrement value with given `key`. Returns **immediately** as it is based on
   `GenServer.cast/2`.
 
-  ## Options
+  ### Options
 
   Provide `!: true` to make this cast call a priority. See [corresponding
   section](#module-options) for details.
@@ -1803,7 +1802,7 @@ defmodule AgentMap do
 
   Provide `step` to setup decrement step.
 
-  ## Examples
+  ### Examples
 
       iex> am = AgentMap.new(a: 1, b: 2)
       iex> AgentMap.inc(am, :a)
@@ -1834,7 +1833,7 @@ defmodule AgentMap do
   any other than `:normal`, `:shutdown` or `{:shutdown, _}`, an error report
   will be logged.
 
-  ## Examples
+  ### Examples
 
       iex> {:ok, pid} = AgentMap.start_link()
       iex> AgentMap.stop(pid)

@@ -121,7 +121,7 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :drop, data: keys} = req, map) do
     map =
       Enum.reduce(keys, map, fn key, map ->
-        %{req | action: :delete}
+        %{req | action: :delete, data: key}
         |> handle(map)
         |> elem(1)
       end)
@@ -129,12 +129,12 @@ defmodule AgentMap.Req do
     {:noreply, map}
   end
 
-  def handle(%Req{action: :values} = req, map) do
+  def handle(%Req{action: :values}, map) do
     fun = fn _ ->
       Map.values(Process.get(:"$map"))
     end
 
-    handle(%Req{action: :get, data: {fun, Map.keys(map)}})
+    handle(%Req{action: :get, data: {fun, Map.keys(map)}}, map)
   end
 
   def handle(%Req{action: :delete, data: key} = req, map) do
@@ -310,7 +310,7 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :put, !: urgent} = req, map) do
+  def handle(%Req{action: :put} = req, map) do
     {key, value} = req.data
 
     case map[key] do
