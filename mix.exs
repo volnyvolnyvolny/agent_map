@@ -6,10 +6,10 @@ defmodule AgentMap.Mixfile do
       app: :agent_map,
       name: "AgentMap",
       description: """
-        `AgentMap` is a `GenServer` that holds `Map` and provides concurrent
-        access for operations made on different keys. Basically, it can be used
-        as a cache, memoization and computational framework or, sometimes, as a
-        `GenServer` replacement.
+        `AgentMap` can be seen as a stateful `Map` that parallelize operations
+        made on different keys. Basically, it can be used as a cache,
+        memoization, computational framework and, sometimes, as a `GenServer`
+        replacement.
       """,
       version: "1.0.0",
       elixir: "~> 1.6.0",

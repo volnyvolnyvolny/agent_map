@@ -1,6 +1,8 @@
 defmodule AgentMap.Req do
   @moduledoc false
 
+  require Logger
+
   alias AgentMap.{Callback, Worker, Transaction, Req}
 
   @max_threads 5
@@ -9,12 +11,12 @@ defmodule AgentMap.Req do
 
   # action: :get, :get_and_update, :update, :cast, :keys, …
   # data: {key, fun}, {fun, keys}, …
-  # from: pid
+  # from: nil | GenServer.from
   # !(urgent): true | false
   defstruct [
     :action,
     :data,
-    from: self(),
+    :from,
     !: false
   ]
 
@@ -73,6 +75,55 @@ defmodule AgentMap.Req do
   ##
   ## HANDLERS
   ##
+
+  def handle(%Req{action: :inc, data: {key, step}} = req, map) do
+    case map[key] do
+      {:pid, worker} ->
+        fun = fn
+          v when is_number(v) ->
+            {:ok, v + step}
+
+          _ ->
+            if Process.get(:"$has_value?") do
+              {{:error, %KeyError{key: key}}}
+            else
+              {{:error, %ArithmeticError{}}}
+            end
+        end
+
+        req =
+          if req.from do
+            %{req | action: :get_and_update, data: {key, fun}}
+          else
+            fun = fn [v] ->
+              case fun.(v) do
+                {:ok, v} ->
+                  v
+
+                {{:error, reason}} ->
+                  Logger.error(reason)
+              end
+            end
+
+            %{req | action: :cast, data: {fun, [key]}}
+          end
+
+        send(worker, to_msg(req))
+        {:noreply, map}
+
+      {{:value, v}, mt} when not is_number(v) ->
+        Logger.error(%KeyError{key: key})
+        {:reply, {:error, %ArithmeticError{}}, map}
+
+      {{:value, v}, mt} ->
+        put_in(map[key], {{:value, v + step}, mt})
+        {:reply, :ok, map}
+
+      _ ->
+        Logger.error(%KeyError{key: key})
+        {:reply, {:error, %KeyError{key: key}}, map}
+    end
+  end
 
   def handle(%Req{action: :keys}, map) do
     keys =
@@ -138,26 +189,30 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :delete, data: key} = req, map) do
-    map =
-      case map[key] do
-        {:pid, worker} ->
-          send(worker, to_msg(req))
-          map
+    case map[key] do
+      {:pid, worker} ->
+        send(worker, to_msg(req))
 
-        {{:value, _}, @max_threads} ->
-          Map.delete(map, key)
+        if req.from do
+          send(worker, {:reply, req.from, :ok})
+        end
 
-        {{:value, _}, mt} ->
-          put_in(map[key], {nil, mt})
+        {:noreply, map}
 
-        {nil, _} ->
-          map
+      {{:value, _}, @max_threads} ->
+        map = Map.delete(map, key)
+        {:reply, :ok, map}
 
-        nil ->
-          map
-      end
+      {{:value, _}, mt} ->
+        map = put_in(map[key], {nil, mt})
+        {:reply, :ok, map}
 
-    {:noreply, map}
+      {nil, _} ->
+        {:reply, :ok, map}
+
+      nil ->
+        {:reply, :ok, map}
+    end
   end
 
   def handle(%Req{action: :max_threads} = req, map) do
@@ -216,7 +271,7 @@ defmodule AgentMap.Req do
       Process.put(:"$keys", [key])
 
       hv? = Process.get(:"$has_value?")
-      Process.put(:"$map", hv? && %{key: v} || %{})
+      Process.put(:"$map", (hv? && %{key: v}) || %{})
 
       # Transaction call should not has "$has_value?" key.
       Process.delete(:"$has_value?")
@@ -316,16 +371,21 @@ defmodule AgentMap.Req do
     case map[key] do
       {{:value, _}, max_t} ->
         map = put_in(map[key], {{:value, value}, max_t})
-        {:noreply, map}
+        {:reply, :ok, map}
 
       {:pid, worker} ->
         send(worker, to_msg(req))
+
+        if req.from do
+          send(worker, {:reply, req.from, :ok})
+        end
+
         {:noreply, map}
 
       {nil, max_t} ->
         value = {{:value, value}, max_t}
         map = put_in(map[key], value)
-        {:noreply, map}
+        {:reply, :ok, map}
 
       nil ->
         map = put_in(map[key], {nil, @max_threads})
@@ -340,7 +400,7 @@ defmodule AgentMap.Req do
       {:ok, _} ->
         fun = fn _ ->
           hv? = Process.get(:"$has_value?")
-          hv? && :pop || {default}
+          (hv? && :pop) || {default}
         end
 
         req = %{req | action: :get_and_update, data: {key, fun}}

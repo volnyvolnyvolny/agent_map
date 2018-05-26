@@ -47,6 +47,10 @@ defmodule AgentMap.Worker do
   ## PROCESS MSG
   ##
 
+  # We do not use `%Req{}` here to save silly ~56 bytes
+  # difference between tuple and struct representation.
+  # To translate reqs to messages, `Req.to_msg/1` is used.
+
   defp process({:max_threads, max_t, from}) do
     GenServer.reply(from, Process.get(:"$max_threads"))
     Process.put(:"$max_threads", max_t)
@@ -102,9 +106,13 @@ defmodule AgentMap.Worker do
     end
   end
 
+  defp process({:reply, from, what}) do
+    GenServer.reply(from, what)
+  end
+
   defp process({:update, fun, from}) do
     process({:cast, fun})
-    GenServer.reply(from, :ok)
+    process({:reply, from, :ok})
   end
 
   defp process({:cast, fun}) do

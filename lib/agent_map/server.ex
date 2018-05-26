@@ -1,5 +1,6 @@
 defmodule AgentMap.Server do
   @moduledoc false
+  require Logger
 
   alias AgentMap.{Callback, Req}
 
@@ -42,7 +43,16 @@ defmodule AgentMap.Server do
   end
 
   def handle_cast(req, map) do
-    Req.handle(req, map)
+    map =
+      case Req.handle(req, map) do
+        {:reply, _r, map} ->
+          map
+
+        {_, map} ->
+          map
+      end
+
+    {:noreply, map}
   end
 
   ##
@@ -79,7 +89,7 @@ defmodule AgentMap.Server do
   def handle_info({worker, :mayidie?}, map) do
     {_, dict} = Process.info(worker, :dictionary)
 
-    # Msgs could come during a small delay between
+    # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.
     {_, queue} = Process.info(worker, :messages)
 
