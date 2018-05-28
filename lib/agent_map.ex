@@ -204,7 +204,9 @@ defmodule AgentMap do
 
   (!) except of `put_in` operator.
 
-  ## Priority calls (`!: true`)
+  ## Options
+
+  ### Priority calls (`!: true`)
 
   Most of the functions support `!: true` option to make out-of-turn
   ("priority") calls.
