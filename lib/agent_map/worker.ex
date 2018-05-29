@@ -3,7 +3,7 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Callback, Req, MalformedCallback}
 
-  import Process, only: [get: 1, put: 2, reply: 2, info: 2]
+  import Process, only: [get: 1, put: 2, reply: 2]
   import System, only: [system_time: 0]
   import Req, only: [run: 2]
 
@@ -12,8 +12,6 @@ defmodule AgentMap.Worker do
   @compile {:inline, rand: 1, dec: 1, inc: 1}
 
   @wait 10 #ms
-
-  @max_processes 5
 
   ##
   ## HELPERS
@@ -28,34 +26,17 @@ defmodule AgentMap.Worker do
   def unbox(nil), do: nil
   def unbox({:value, value}), do: value
 
-  def dict(worker) do
-    {_, dict} = info(worker, :dictionary)
-    dict
+  def info(worker, key) do
+    worker
+    |> Process.info(key)
+    |> elem(1)
   end
 
-  def queue(worker) do
-    {_, queue} = info(worker, :messages)
-    queue
-  end
+  def dict(worker), do: info(worker, :dictionary)
 
-  def queue_len(worker \\ self()) do
-    {_, len} = info(worker, :message_queue_len)
-    len
-  end
+  def queue(worker), do: info(worker, :messages)
 
-  defp rand(to) when to < 1000 do
-    rem(system_time(), to)
-  end
-
-  ##
-  ## PROCESS MSG
-  ##
-
-  defp reply(nil, what), do: :nothing
-
-  defp reply({_pid, _tag} = to, what) do
-    GenServer.reply(to, what)
-  end
+  def queue_len(worker \\ self()), do: info(worker, :message_queue_len)
 
   defp reply(to, what) do
     send(to, what)
@@ -241,7 +222,7 @@ defmodule AgentMap.Worker do
         key #{inspect(get(:"$key"))} as it's message queue became too long
         (#{queue_len()} messages). This prevents worker from executing the
         urgent calls out of turn. Selective receive will be turned on again as
-        the queue became empty. This will not be logged.
+        the queue became empty (which will not be shown in logs).
       """
       |> String.replace("\n", " "))
 
