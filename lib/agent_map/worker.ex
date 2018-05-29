@@ -1,217 +1,224 @@
 defmodule AgentMap.Worker do
   require Logger
 
+  alias AgentMap.{Callback, Req, MalformedCallback}
+
+  import Process, only: [get: 1, put: 2, reply: 2, info: 2]
+  import System, only: [system_time: 0]
+  import Req, only: [run: 2]
+
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1, _dec: 1, _inc: 1}
+  @compile {:inline, rand: 1, dec: 1, inc: 1}
 
-  alias AgentMap.Callback
+  @wait 10 #ms
 
-  # milliseconds
-  @wait 10
-
-  @max_threads 5
+  @max_processes 5
 
   ##
   ## HELPERS
   ##
 
-  def _dec(:infinity), do: :infinity
-  def _dec(i), do: i - 1
+  defp add(:infinity, _v), do: :infinity
+  defp add(i, v), do: i + v
 
-  def _inc(:infinity), do: :infinity
-  def _inc(i), do: i + 1
+  def dec(key), do: put(key, add(get(key), -1))
+  def inc(key), do: put(key, add(get(key), +1))
 
-  def dec(key), do: Process.put(key, _dec(Process.get(key)))
-  def inc(key), do: Process.put(key, _inc(Process.get(key)))
+  def unbox(nil), do: nil
+  def unbox({:value, value}), do: value
 
-  defp unbox(:no), do: nil
-  defp unbox({:value, value}), do: value
+  def dict(worker) do
+    {_, dict} = info(worker, :dictionary)
+    dict
+  end
 
-  def value(worker) do
-    {_, dict} = Process.info(worker, :dictionary)
-    value = dict[:"$value"]
+  def queue(worker) do
+    {_, queue} = info(worker, :messages)
+    queue
+  end
 
-    if value do
-      unbox(value)
-    else
-      value(worker)
-    end
+  def queue_len(worker \\ self()) do
+    {_, len} = info(worker, :message_queue_len)
+    len
   end
 
   defp rand(to) when to < 1000 do
-    rem(System.system_time(), to)
+    rem(system_time(), to)
   end
 
   ##
   ## PROCESS MSG
   ##
 
-  # We do not use `%Req{}` here to save silly ~56 bytes
-  # difference between tuple and struct representation.
-  # To translate reqs to messages, `Req.to_msg/1` is used.
+  defp reply(nil, what), do: :nothing
 
-  defp process({:max_threads, max_t, from}) do
-    GenServer.reply(from, Process.get(:"$max_threads"))
-    Process.put(:"$max_threads", max_t)
+  defp reply({_pid, _tag} = to, what) do
+    GenServer.reply(to, what)
   end
 
-  defp process({:get, fun, from}) do
-    threads = Process.get(:"$threads")
-    value = unbox(Process.get(:"$value"))
+  defp reply(to, what) do
+    send(to, what)
+  end
 
-    if threads < Process.get(:"$max_threads") do
+  defp set(value), do: put(:"$value", {:value, value})
+
+  defp handle(%{action: :max_processes} = req) do
+    reply(req.from, get(:"$max_processes"))
+    put(:"$max_processes", req.value)
+  end
+
+  defp process(%{info: :done} = msg) do
+    if msg[:on_server?] do
+      inc(:"$max_processes")
+    else
+      dec(:"$processes")
+    end
+  end
+
+  defp process(%{action: :get} = req) do
+    value = unbox(get(:"$value"))
+
+    if get(:"$processes") < get(:"$max_processes") do
+      k = get(:"$key")
+      v = get(:"$value")
+
       worker = self()
-      k = Process.get(:"$key")
-      hv? = Process.get(:"$has_value?")
 
       Task.start_link(fn ->
-        Process.put(:"$key", k)
-        Process.put(:"$has_value?", hv?)
+        put(:"$key", k)
+        put(:"$value", v)
 
-        result = Callback.run(fun, [value])
-        GenServer.reply(from, result)
-        send(worker, {:!, :done})
+        result = run(req, [value])
+        reply(req.from, result)
+
+        send(worker, %{info: :done, !: true})
       end)
 
-      inc(:"$threads")
+      inc(:"$processes")
     else
-      result = Callback.run(fun, [value])
-      GenServer.reply(from, result)
+      result = run(req, [value])
+      reply(req.from, result)
     end
   end
 
-  defp process({:get_and_update, fun, from}) do
-    value = unbox(Process.get(:"$value"))
+  defp process(%{action: :get_and_update} = req) do
+    value = unbox(get(:"$value"))
 
-    case Callback.run(fun, [value]) do
-      {get} ->
-        GenServer.reply(from, get)
+    with {:ok, reply} <- run(req, [value]) do
+      case reply do
+        {get} ->
+          reply(req.from, get)
 
-      {get, value} ->
-        process({:put, value})
-        GenServer.reply(from, get)
+        {get, value} ->
+          set(value)
+          reply(req.from, get)
 
-      {:chain, {key, fun}, value} ->
-        process({:put, value})
-        server = Process.get(:"$gen_server")
-        send(server, {:chain, {key, fun}, from})
+        {:chain, {_kf, _fks} = d, value} ->
+          set(value)
 
-      :id ->
-        GenServer.reply(from, value)
+          req =
+            req
+            |> Map.delete(:fun)
+            |> Map.put(action: :get_and_update)
+            |> Map.put(data: d)
 
-      :pop ->
-        process(:drop)
-        GenServer.reply(from, value)
+          send(get(:"$gen_server"), req)
+
+        :id ->
+          reply(req.from, value)
+
+        :pop ->
+          delete(:"$value")
+          reply(req.from, value)
+
+        reply ->
+          e = %MalformedCallback{for: :get_and_update, got: r}
+
+          if req.safe? do
+            Logger.error(Exception.message(e))
+          else
+            raise e
+          end
+      end
+    else
+      {:error, r} ->
+        Logger.error(r)
     end
   end
 
-  defp process({:reply, from, what}) do
-    GenServer.reply(from, what)
+  defp process(%{action: :drop}), do: delete(:"$value")
+
+  defp process(%{action: :put} = req), do: set(req.value)
+
+  defp process(%{action: :send} = req) do
+    reply(req.to, {self(), get(:"$value")})
   end
 
-  defp process({:update, fun, from}) do
-    process({:cast, fun})
-    process({:reply, from, :ok})
-  end
-
-  defp process({:cast, fun}) do
-    value = unbox(Process.get(:"$value"))
-    process({:put, Callback.run(fun, [value])})
-  end
-
-  defp process(:drop) do
-    Process.put(:"$value", :no)
-    Process.put(:"$has_value?", false)
-  end
-
-  defp process({:put, value}) do
-    Process.put(:"$value", {:value, value})
-    Process.put(:"$has_value?", true)
-  end
-
-  defp process(:id), do: :ignore
-
-  # Transaction handler.
-  # Sends current value.
-  defp process({:t_send, from}) do
-    send(from, {self(), unbox(Process.get(:"$value"))})
-  end
-
-  # Transaction handler.
-  # Receives the new value (maybe).
-  defp process(:t_get) do
+  defp process(%{action: :receive} = req) do
     receive do
-      msg -> process(msg)
+      :id ->
+        :ignore
+
+      :drop ->
+        delete(:"$value")
+
+      {:value, v} ->
+        set(v)
+
+    after 0 ->
+      process(req)
     end
   end
 
-  # Transaction handler.
-  # Send and receive value.
-  defp process({:t_send_and_get, from}) do
-    process({:t_send, from})
-    process(:t_get)
+  defp process(%{action: :send_and_receive} = req) do
+    process(%{req | action: :send})
+    process(%{req | action: :receive})
   end
-
-  defp process(:done), do: dec(:"$threads")
-  defp process(:done_on_server), do: inc(:"$max_threads")
 
   ##
   ## MAIN
   ##
 
-  # Point of entry. Know nothing about value with given key.
-  def loop(server, key, nil) do
-    loop(server, key, {nil, @max_threads})
-  end
+  # →
+  def loop({ref, server}, key, {value, max_processes}) do
+    put(:"$value", value)
+    send(server, {ref, :ok})
 
-  # → the value is known.
-  def loop(server, key, {value, max_threads}) do
-    if value do
-      Process.put(:"$value", value)
-      Process.put(:"$has_value?", true)
-    else
-      Process.put(:"$value", :no)
-      Process.put(:"$has_value?", false)
-    end
+    put(:"$key", key)
+    put(:"$gen_server", server)
 
-    Process.put(:"$key", key)
-    Process.put(:"$max_threads", max_threads)
+    # One (1) process is for loop.
+    put(:"$processes", 1)
+    put(:"$max_processes", max_processes)
 
-    # One (1) is for the process that runs loop.
-    Process.put(:"$threads", 1)
-    Process.put(:"$gen_server", server)
-    Process.put(:"$wait", @wait + rand(25))
-    Process.put(:"$selective_receive", true)
+    put(:"$wait", @wait + rand(25))
+    put(:"$selective_receive", true)
 
-    # :'$wait', :'threads', :'max_threads', ':'$selective_receive' are
-    # process keys, so they are easy to inspect from outside.
     # →
     loop()
   end
 
+  # →→→
   defp _loop(selective \\ true) do
-    wait = Process.get(:"$wait")
+    wait = get(:"$wait")
 
     receive do
-      {:!, msg} ->
-        process(msg)
+      req ->
+        process(req)
         loop(selective)
 
-      msg ->
-        process(msg)
-        loop(selective)
     after
       wait ->
-        send(Process.get(:"$gen_server"), {self(), :mayidie?})
+        send(get(:"$gen_server"), {self(), :mayidie?})
 
         receive do
           :continue ->
-            # 1. next time wait a little bit longer (a few ms)
-            Process.put(:"$wait", wait + rand(5))
+            # 1. Next time wait a few ms longer;
+            put(:"$wait", wait + rand(5))
 
-            # 2. use selective receive
-            Process.put(:"$selective_receive", true)
+            # 2. use selective receive.
+            put(:"$selective_receive", true)
             loop(true)
 
           :die! ->
@@ -223,30 +230,28 @@ defmodule AgentMap.Worker do
   def loop(selective_receive \\ true)
   def loop(false), do: _loop(false)
 
-  # →
-  def loop(true) do
-    {_, len} = Process.info(self(), :message_queue_len)
-
-    if len > 100 do
+  # →→
+  def loop(_) do
+    if queue_len() > 100 do
       # Turn off selective receive.
-      Process.put(:"$selective_receive", false)
-      k = Process.get(:"$key")
+      put(:"$selective_receive", false)
 
       Logger.warn("""
-        Selective receive is turned off for worker with key #{inspect(k)} as
-        it's message queue became too long (#{len} messages). This prevents
-        worker from executing the urgent calls out of turn. Selective receive
-        will be turned on again as the queue became empty. This will not be
-        logged.
-      """)
+        Selective receive is turned off for worker with
+        key #{inspect(get(:"$key"))} as it's message queue became too long
+        (#{queue_len()} messages). This prevents worker from executing the
+        urgent calls out of turn. Selective receive will be turned on again as
+        the queue became empty. This will not be logged.
+      """
+      |> String.replace("\n", " "))
 
       loop(false)
     end
 
     # Selective receive.
     receive do
-      {:!, msg} ->
-        process(msg)
+      %{!: true} = req ->
+        process(req)
         loop()
     after
       0 ->

@@ -606,7 +606,7 @@ defmodule AgentMap do
   callbacks awaiting invocation, this call will be added to the end of the
   corresponding queues. Because the `get` calls do not change states —
   `agentmap` can and will be executed concurrently, in no more than
-  `max_threads` (this could be tweaked per key, via `max_threads/2` call).
+  `max_processes` (this could be tweaked per key, via `max_processes/2` call).
 
   As in the case of `update`, `get_and_update` and `cast` methods, `get` call
   has two forms:
@@ -912,7 +912,7 @@ defmodule AgentMap do
   waiting to be executed and all the queues are processed concurrently; (3) no
   value changing calls (`get_and_update`, `update` or `cast`) could be executed
   in parallel on the same value. This can be done only for `get` calls (also,
-  see `max_threads/3`).
+  see `max_processes/3`).
 
   ## Examples
 
@@ -1129,7 +1129,7 @@ defmodule AgentMap do
   it's own FIFO queue of callbacks waiting to be executed and all the queues are
   processed concurrently; (3) no value changing calls (`get_and_update`,
   `update` or `cast`) could be executed in parallel on the same value. This can
-  be done only for `get` calls (also, see `max_threads/3`).
+  be done only for `get` calls (also, see `max_processes/3`).
 
   Updates the `agentmap` value(s) with given `key`(s).
 
@@ -1303,10 +1303,10 @@ defmodule AgentMap do
   end
 
   @doc """
-  Sets the `:max_threads` value for the given `key`. Returns the old value.
+  Sets the `:max_processes` value for the given `key`. Returns the old value.
 
-  `agentmap` can execute `get` calls on the same key concurrently. `max_threads`
-  option specifies number of threads per key used, minus one thread for the
+  `agentmap` can execute `get` calls on the same key concurrently. `max_processes`
+  option specifies number of processes per key used, minus one thread for the
   process holding the queue. By default five (5) `get` calls on the same state
   could be executed, so
 
@@ -1331,19 +1331,19 @@ defmodule AgentMap do
   sequence of `get/3` calls ending with `get_and_update/3`, `update/3` or
   `cast/3`.
 
-  Use `max_threads: 1` to execute `get` calls in sequence.
+  Use `max_processes: 1` to execute `get` calls in sequence.
 
   ## Examples
 
       iex> am = AgentMap.new()
-      iex> AgentMap.max_threads(am, :a, 42)
+      iex> AgentMap.max_processes(am, :a, 42)
       5
-      iex> AgentMap.max_threads(am, :a, :infinity)
+      iex> AgentMap.max_processes(am, :a, :infinity)
       42
   """
-  @spec max_threads(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
-  def max_threads(agentmap, key, value) do
-    _call(agentmap, %Req{action: :max_threads, data: {key, value}}, [])
+  @spec max_processes(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
+  def max_processes(agentmap, key, value) do
+    _call(agentmap, %Req{action: :max_processes, data: {key, value}, !: true}, [])
   end
 
   @doc """

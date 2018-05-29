@@ -5,93 +5,141 @@ defmodule AgentMap.Transaction do
 
   import Enum, only: [uniq: 1]
   import Map, only: [keys: 1]
+  import Worker, only: [dict: 1]
 
   ##
   ## HELPERS
   ##
 
-  defp divide(map, keys) do
-    Enum.reduce(uniq(keys), {%{}, %{}}, fn key, {known, workers} ->
-      case map[key] do
-        {:pid, worker} ->
-          {known, put_in(workers[key], worker)}
-
-        {{:value, value}, _} ->
-          {put_in(known[key], value), workers}
-
-        _ ->
-          {put_in(known[key], nil), workers}
-      end
-    end)
+  defp collect(keys) do
+    _collect(%{}, uniq(keys))
   end
-
-  #
-
-  defp collect(known, keys), do: _collect(known, uniq(keys) -- keys(known))
 
   defp _collect(known, []), do: known
 
   defp _collect(known, keys) do
     receive do
       msg ->
-        {from, value} =
+        {worker, value} =
           case msg do
             {ref, msg} when is_reference(ref) -> msg
             msg -> msg
           end
 
-        {_, dict} = Process.info(from, :dictionary)
-        key = dict[:"$key"]
+        key = dict(worker)[:"$key"]
         known = put_in(known[key], value)
         _collect(known, keys -- [key])
     end
   end
 
-  ##
-  ## WILL RUN BY SERVER
-  ##
+  # One-key get-transaction!
+  def handle(%{action: :get, data: {fun, [key]}} = req, map) do
+    fun = fn v ->
+      Process.put(:"$keys", [key])
 
-  def run(%Req{action: :get, !: true} = req, map) do
-    {_, keys} = req.data
-    {known, workers} = divide(map, keys)
+      hv? = Process.get(:"$has_value?")
+      Process.put(:"$map", (hv? && %{key: v}) || %{})
 
-    known =
-      for {key, w} <- workers, into: known do
-        {key, Worker.value(w)}
-      end
+      # Transaction call should not has "$has_value?" key.
+      Process.delete(:"$has_value?")
 
-    Task.start_link(__MODULE__, :process, [req, known])
-    map
-  end
-
-  def run(%Req{action: :get} = req, map) do
-    {_, keys} = req.data
-    {known, workers} = divide(map, keys)
-
-    {:ok, tr} = Task.start_link(__MODULE__, :process, [req, known])
-
-    for {_key, w} <- workers, do: send(w, {:t_send, tr})
-    map
-  end
-
-  def run(req, map) do
-    {_, keys} = req.data
-
-    unless keys == uniq(keys) do
-      raise """
-            Expected uniq keys for transactions that changing value
-            (`update`, `get_and_update`, `cast`). Got: #{inspect(keys)}.
-            Please check #{inspect(keys -- uniq(keys))} keys.
-            """
-            |> String.replace("\n", " ")
+      Callback.run(fun, [[v]])
     end
+
+    Req.handle(%{req | data: {key, fun}}, map)
+  end
+
+  def handle(%{action: :get, !: true} = req, map) do
+    Task.start_link(fn ->
+      {fun, keys} = req.data
+
+      map =
+        map
+        |> Map.take(keys)
+        |> Enum.reduce(%{}, fn k, map ->
+             case Req.fetch(map, k) do
+               {:ok, v} ->
+                 %{map | k => v}
+
+               _ ->
+                 map
+             end
+           end)
+
+      put(:"$map", map)
+      values = for k <- keys, do: map[k]
+      result = Callback.run(fun, [values])
+
+      GenServer.reply(req.from, result)
+    end)
+
+    {:noreply, map}
+  end
+
+  def handle(%{action: :get, !: false} = req, map) do
+    Task.start_link(fn ->
+      {fun, keys} = req.data
+
+      state = for k <- uniq(keys) do
+        case map[k] do
+          {:pid, worker} ->
+            send(worker, %{action: :send, to: self()})
+            [k]
+
+          {{:value, value}, _max_t} ->
+            [{k, value}]
+
+          _ ->
+            []
+        end
+      end
+      |> List.flatten()
+
+      [known, unknown] =
+        Enum.split_with(
+          state,
+          &match?({_k, _v}, &1)
+        )
+
+      map =
+        unknown
+        |> collect() # MUST RETURN MAP WITHOUT KEYS WITHOUT VALUES!
+        |> Enum.into(known)
+        |> Enum.into(%{})
+
+      put(:"$map", map)
+
+      values = for k <- keys, do: map[k]
+      result = Callback.run(fun, [values])
+
+      GenServer.reply(req.from, result)
+    end)
+  end
+
+  # get_and_update, update, case
+  def handle(%{action: _, data: {_, keys}} = req, map) do
+    state = for k <- uniq(keys) do
+      case map[k] do
+        {:pid, worker} ->
+          send(worker, %{action: :send, to: self()})
+          [k]
+
+        {{:value, value}, _max_t} ->
+          [{k, value}]
+
+        _ ->
+          []
+      end
+    end
+    |> List.flatten()
+
 
     {known, workers} = divide(map, keys)
 
     rec_workers =
       for k <- keys(known), into: workers do
         worker = spawn_link(Worker, :loop, [self(), k, map[k]])
-        send(worker, :t_get)
+        send(worker, %{action: :receive})
         {k, worker}
       end
 
@@ -105,34 +153,30 @@ defmodule AgentMap.Transaction do
     {:ok, tr} =
       Task.start_link(fn ->
         Process.put(:"$gen_server", server)
-        __MODULE__.process(req, known, rec_workers)
+        process(req, known, rec_workers)
       end)
 
-    if req.! do
-      for {_, w} <- workers, do: send(w, {:!, {:t_send_and_get, tr}})
-    else
-      for {_, w} <- workers, do: send(w, {:t_send_and_get, tr})
+    for {_, w} <- workers do
+      send(w, %{req | action: :send_and_receive, to: tr})
     end
 
-    map
+    {:noreply, map}
+
+    unless keys == uniq(keys) do
+    raise """
+      Expected uniq keys for `update`, `get_and_update` and
+      `cast` transactions. Got: #{inspect(keys)}. Please
+      check #{inspect(keys -- uniq(keys))} keys.
+    """
+    |> String.replace("\n", " ")
+    end
   end
 
   ##
-  ## WILL RUN BY SEPARATE PROCESS
+  ## WILL RUN IN SEPARATE PROCESS
   ##
 
-  def process(%Req{action: :get, !: true} = req, known) do
-    {fun, keys} = req.data
-    values = for key <- keys, do: known[key]
-    GenServer.reply(req.from, Callback.run(fun, [values]))
-  end
-
-  def process(%Req{action: :get} = req, known) do
-    {_, keys} = req.data
-    process(%{req | :! => true}, collect(known, keys))
-  end
-
-  def process(%Req{action: :cast} = req, known, workers) do
+  def process(%{action: :cast} = req, known, workers) do
     {fun, keys} = req.data
     known = collect(known, keys)
     values = for k <- keys, do: known[k]
@@ -146,20 +190,20 @@ defmodule AgentMap.Transaction do
 
       values when length(values) == length(keys) ->
         for {key, value} <- Enum.zip(keys, values) do
-          send(workers[key], {:put, value})
+          send(workers[key], %{action: :put, data: value})
         end
 
       err ->
         raise """
-              Transaction callback for `cast` or `update` is malformed!
-              See docs for hint. Got: #{inspect(err)}."
-              """
-              |> String.replace("\n", " ")
+          Transaction callback for `cast` or `update` is malformed!
+          See docs for hint. Got: #{inspect(err)}."
+        """
+        |> String.replace("\n", " ")
     end
   end
 
-  def process(%Req{action: :update} = req, known, workers) do
-    process(%{req | :action => :cast}, known, workers)
+  def process(%{action: :update} = req, known, workers) do
+    process(%{req | action: :cast}, known, workers)
     GenServer.reply(req.from, :ok)
   end
 
@@ -186,7 +230,7 @@ defmodule AgentMap.Transaction do
           gen_server = Process.get(:"$gen_server")
 
           for {k, value} <- Enum.zip(keys, values) do
-            send(workers[k], {:put, value})
+            send(workers[k], %{action: :put, data: value})
           end
 
           send(gen_server, {:chain, {fun, new_keys}, req.from})
@@ -202,7 +246,7 @@ defmodule AgentMap.Transaction do
 
         {get, values} when length(values) == length(keys) ->
           for {k, value} <- Enum.zip(keys, values) do
-            send(workers[k], {:put, value})
+            send(workers[k], %{action: :put, data: value})
           end
 
           {:reply, get}
@@ -212,11 +256,11 @@ defmodule AgentMap.Transaction do
             for {k, oldvalue, result} <- Enum.zip([keys, values, results]) do
               case result do
                 {get, value} ->
-                  send(workers[k], {:put, value})
+                  send(workers[k], %{action: :put, data: value})
                   get
 
                 :pop ->
-                  send(workers[k], :drop)
+                  send(workers[k], %{action: :drop})
                   oldvalue
 
                 :id ->
