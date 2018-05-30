@@ -3,7 +3,7 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Callback, Req, MalformedCallback}
 
-  import Process, only: [get: 1, put: 2, reply: 2]
+  import Process, only: [get: 1, put: 2, exit: 2]
   import System, only: [system_time: 0]
   import Req, only: [run: 2]
 
@@ -26,6 +26,8 @@ defmodule AgentMap.Worker do
   def unbox(nil), do: nil
   def unbox({:value, value}), do: value
 
+  defp set(value), do: put(:"$value", {:value, value})
+
   def info(worker, key) do
     worker
     |> Process.info(key)
@@ -36,20 +38,30 @@ defmodule AgentMap.Worker do
 
   def queue(worker), do: info(worker, :messages)
 
-  def queue_len(worker \\ self()), do: info(worker, :message_queue_len)
+  def queue_len(worker \\ self()) do
+    info(worker, :message_queue_len)
+  end
+
+  ##
+  ## HANDLE
+  ##
+
+  defp reply(nil, what), do: :nothing
+
+  defp reply({_pid, _tag} = to, what) do
+    GenServer.reply(to, what)
+  end
 
   defp reply(to, what) do
     send(to, what)
   end
-
-  defp set(value), do: put(:"$value", {:value, value})
 
   defp handle(%{action: :max_processes} = req) do
     reply(req.from, get(:"$max_processes"))
     put(:"$max_processes", req.value)
   end
 
-  defp process(%{info: :done} = msg) do
+  defp handle(%{info: :done} = msg) do
     if msg[:on_server?] do
       inc(:"$max_processes")
     else
@@ -57,8 +69,18 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp process(%{action: :get} = req) do
+  defp handle(%{action: :get} = req) do
     value = unbox(get(:"$value"))
+
+    run_and_reply = fn value ->
+      with {:ok, result} <- run(req, [value]) do
+        reply(req.from, result)
+      else
+        {:error, reason} ->
+          {pid, _} = req.from
+          exit(pid, reason)
+      end
+    end
 
     if get(:"$processes") < get(:"$max_processes") do
       k = get(:"$key")
@@ -70,20 +92,17 @@ defmodule AgentMap.Worker do
         put(:"$key", k)
         put(:"$value", v)
 
-        result = run(req, [value])
-        reply(req.from, result)
-
-        send(worker, %{info: :done, !: true})
+        run_and_reply.(value)
+        reply(worker, %{info: :done, !: true})
       end)
 
       inc(:"$processes")
     else
-      result = run(req, [value])
-      reply(req.from, result)
+      run_and_reply.(value)
     end
   end
 
-  defp process(%{action: :get_and_update} = req) do
+  defp handle(%{action: :get_and_update} = req) do
     value = unbox(get(:"$value"))
 
     with {:ok, reply} <- run(req, [value]) do
@@ -128,15 +147,19 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp process(%{action: :drop}), do: delete(:"$value")
+  defp handle(%{action: :drop}) do
+    delete(:"$value")
+  end
 
-  defp process(%{action: :put} = req), do: set(req.value)
+  defp handle(%{action: :put} = req) do
+    set(req.value)
+  end
 
-  defp process(%{action: :send} = req) do
+  defp handle(%{action: :send} = req) do
     reply(req.to, {self(), get(:"$value")})
   end
 
-  defp process(%{action: :receive} = req) do
+  defp handle(%{action: :receive} = req) do
     receive do
       :id ->
         :ignore
@@ -146,15 +169,14 @@ defmodule AgentMap.Worker do
 
       {:value, v} ->
         set(v)
-
     after 0 ->
-      process(req)
+      handle(req)
     end
   end
 
-  defp process(%{action: :send_and_receive} = req) do
-    process(%{req | action: :send})
-    process(%{req | action: :receive})
+  defp handle(%{action: :send_and_receive} = req) do
+    handle(%{req | action: :send})
+    handle(%{req | action: :receive})
   end
 
   ##
@@ -180,14 +202,48 @@ defmodule AgentMap.Worker do
     loop()
   end
 
+  # →→
+  def loop() do
+    if get(:"$selective_receive") do
+      if queue_len() > 100 do
+        # Turn off selective receive.
+        put(:"$selective_receive", false)
+
+        Logger.warn("""
+          Selective receive is turned off for worker with
+          key #{inspect(get(:"$key"))} as it's message queue became too long
+          (#{queue_len()} messages). This prevents worker from executing the
+          urgent calls out of turn. Selective receive will be turned on again as
+          the queue became empty (which will not be shown in logs).
+        """
+        |> String.replace("\n", " "))
+
+        loop()
+      else
+        # Selective receive.
+        receive do
+          %{!: true} = req ->
+            handle(req)
+            loop()
+        after
+          0 ->
+            # Process other msgs.
+            _loop()
+        end
+      end
+    else
+      _loop()
+    end
+  end
+
   # →→→
-  defp _loop(selective \\ true) do
+  defp _loop() do
     wait = get(:"$wait")
 
     receive do
       req ->
-        process(req)
-        loop(selective)
+        handle(req)
+        loop()
 
     after
       wait ->
@@ -198,45 +254,13 @@ defmodule AgentMap.Worker do
             # 1. Next time wait a few ms longer;
             put(:"$wait", wait + rand(5))
 
-            # 2. use selective receive.
+            # 2. use selective receive as queue is empty.
             put(:"$selective_receive", true)
-            loop(true)
+            loop()
 
           :die! ->
             :bye
         end
-    end
-  end
-
-  def loop(selective_receive \\ true)
-  def loop(false), do: _loop(false)
-
-  # →→
-  def loop(_) do
-    if queue_len() > 100 do
-      # Turn off selective receive.
-      put(:"$selective_receive", false)
-
-      Logger.warn("""
-        Selective receive is turned off for worker with
-        key #{inspect(get(:"$key"))} as it's message queue became too long
-        (#{queue_len()} messages). This prevents worker from executing the
-        urgent calls out of turn. Selective receive will be turned on again as
-        the queue became empty (which will not be shown in logs).
-      """
-      |> String.replace("\n", " "))
-
-      loop(false)
-    end
-
-    # Selective receive.
-    receive do
-      %{!: true} = req ->
-        process(req)
-        loop()
-    after
-      0 ->
-        _loop()
     end
   end
 end

@@ -13,7 +13,6 @@ defmodule AgentMap.Req do
   # action: :get, :get_and_update, :update, :cast, :keys, …
   # data: {key, fun}, {fun, keys}, …
   # from: nil | GenServer.from
-  # !(urgent): true | false
   defstruct [
     :action,
     :data,
@@ -30,30 +29,32 @@ defmodule AgentMap.Req do
     if req.safe? do
       Callback.safe_run(fun, args)
     else
-      Callback.run(fun, args)
+      {:ok, Callback.run(fun, args)}
     end
   end
 
-  def run(%{data: {_, f}}, args), do: run(%{req | fun: f})
+  def run(%{data: {_, f}}, args) do
+    run(%{req | fun: f})
+  end
 
+  defp unbox({{{:value, value}, :blocked}, _max_p}), do: {:ok, value}
+  defp unbox({{:value, value}, _max_p}), do: {:ok, value}
+  defp unbox({{nil, :blocked}, _max_p}), do: :error
+  defp unbox({nil, _max_p}), do: :error
+  defp unbox(nil), do: :error
 
   def fetch(map, key) do
     case map[key] do
       {:pid, worker} ->
         case dict(worker)[:"$value"] do
-          nil -> fetch(map, key)
-          :no -> :error
-          {:value, value} -> {:ok, value}
+          nil ->
+            :error
+          {:value, value} ->
+            {:ok, value}
         end
 
-      {{:value, value}, _max_p} ->
-        {:ok, value}
-
-      {nil, _max_p} ->
-        :error
-
-      nil ->
-        :error
+      state ->
+        unbox(state)
     end
   end
 
@@ -104,11 +105,11 @@ defmodule AgentMap.Req do
         send(worker, to_msg(req))
         {:noreply, map}
 
-      {{:value, v}, mt} when not is_number(v) ->
+      {{:value, v}, _mt} when not is_number(v) ->
         Logger.error(%KeyError{key: key})
         {:reply, {:error, %ArithmeticError{}}, map}
 
-      {{:value, v}, mt} ->
+      {{:value, v}, _mt} ->
         put_in(map[key], {{:value, v + step}, mt})
         {:reply, :ok, map}
 
@@ -137,9 +138,10 @@ defmodule AgentMap.Req do
             not match?(%{info: _}, msg) &&
               case opts do
                 [!: true] ->
-                  match?({:!, _}, msg)
+                  msg[:!]
 
                 [!: false] ->
+                  not msg[:!]
                   not match?({:!, _}, msg)
 
                 _ ->

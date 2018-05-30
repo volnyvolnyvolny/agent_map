@@ -1821,6 +1821,7 @@ defmodule AgentMap do
   """
   @spec queue_len(agentmap, key, [!: boolean] | []) :: non_neg_integer
   def queue_len(agentmap, key, opts \\ []) do
+    opts = Keyword.take(opts, [:!])
     _call(agentmap, %Req{action: :queue_len, data: {key, opts}}, [])
   end
 
