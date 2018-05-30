@@ -16,8 +16,8 @@ defmodule AgentMap.Server do
     receive do
       {ref, _} ->
         :continue
-
-      after 0 ->
+    after
+      0 ->
         wait(ref)
     end
   end
@@ -25,12 +25,14 @@ defmodule AgentMap.Server do
   def no_value(), do: {nil, @max_threads}
 
   def spawn_worker(map, key) do
-    value = case map[key] do
-      nil ->
-        no_value()
-      {_v, _max_p} = t ->
-        t
-    end
+    value =
+      case map[key] do
+        nil ->
+          no_value()
+
+        {_v, _max_p} = t ->
+          t
+      end
 
     ref = make_ref()
 

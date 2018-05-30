@@ -1826,8 +1826,8 @@ defmodule AgentMap do
   end
 
   @doc """
-  Increment value with given `key`. Returns **immediately** as it uses
-  `GenServer.cast/2` internally.
+  Increment value with given `key`. Returns **immediately** as by default it
+  uses `GenServer.cast/2`.
 
   ### Options
 
@@ -1852,9 +1852,7 @@ defmodule AgentMap do
   @spec inc(agentmap, key, !: boolean, cast: boolean, timeout: timeout, step: non_neg_integer) ::
           agentmap
   def inc(agentmap, key, opts \\ [!: false, cast: true, step: 1]) do
-    step = opts[:step] || 1
-
-    req = %Req{action: :inc, data: {key, step}}
+    req = %Req{action: :inc, data: {key, opts[:step] || 1}}
 
     if Keyword.get(opts, :cast, true) do
       _cast(agentmap, req, opts)
@@ -1870,8 +1868,8 @@ defmodule AgentMap do
   end
 
   @doc """
-  Decrement value with given `key`. Returns **immediately** as it uses
-  `GenServer.cast/2` internally.
+  Decrement value with given `key`. Returns **immediately** as by default it
+  uses `GenServer.cast/2`.
 
   ### Options
 
@@ -1895,15 +1893,8 @@ defmodule AgentMap do
   """
   @spec dec(agentmap, key, !: boolean, cast: boolean, step: non_neg_integer) :: agentmap
   def dec(agentmap, key, opts \\ [!: false, cast: false, step: 1]) do
-    step = opts[:step] || 1
-
-    req = %Req{action: :inc, data: {key, -step}}
-
-    if Keyword.get(opts, :cast, true) do
-      _cast(agentmap, req, opts)
-    else
-      _call(agentmap, req, opts)
-    end
+    opts = Keyword.update(opts, :step, -1, & -&1)
+    inc(agentmap, key, opts)
   end
 
   @doc """

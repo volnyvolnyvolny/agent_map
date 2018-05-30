@@ -49,6 +49,7 @@ defmodule AgentMap.Req do
         case dict(worker)[:"$value"] do
           nil ->
             :error
+
           {:value, value} ->
             {:ok, value}
         end

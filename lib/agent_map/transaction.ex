@@ -57,14 +57,14 @@ defmodule AgentMap.Transaction do
         map
         |> Map.take(keys)
         |> Enum.reduce(%{}, fn k, map ->
-             case Req.fetch(map, k) do
-               {:ok, v} ->
-                 %{map | k => v}
+          case Req.fetch(map, k) do
+            {:ok, v} ->
+              %{map | k => v}
 
-               _ ->
-                 map
-             end
-           end)
+            _ ->
+              map
+          end
+        end)
 
       put(:"$map", map)
       values = for k <- keys, do: map[k]
@@ -80,20 +80,21 @@ defmodule AgentMap.Transaction do
     Task.start_link(fn ->
       {fun, keys} = req.data
 
-      state = for k <- uniq(keys) do
-        case map[k] do
-          {:pid, worker} ->
-            send(worker, %{action: :send, to: self()})
-            [k]
+      state =
+        for k <- uniq(keys) do
+          case map[k] do
+            {:pid, worker} ->
+              send(worker, %{action: :send, to: self()})
+              [k]
 
-          {{:value, value}, _max_t} ->
-            [{k, value}]
+            {{:value, value}, _max_t} ->
+              [{k, value}]
 
-          _ ->
-            []
+            _ ->
+              []
+          end
         end
-      end
-      |> List.flatten()
+        |> List.flatten()
 
       [known, unknown] =
         Enum.split_with(
@@ -103,7 +104,8 @@ defmodule AgentMap.Transaction do
 
       map =
         unknown
-        |> collect() # MUST RETURN MAP WITHOUT KEYS WITHOUT VALUES!
+        # MUST RETURN MAP WITHOUT KEYS WITHOUT VALUES!
+        |> collect()
         |> Enum.into(known)
         |> Enum.into(%{})
 
@@ -118,21 +120,21 @@ defmodule AgentMap.Transaction do
 
   # get_and_update, update, case
   def handle(%{action: _, data: {_, keys}} = req, map) do
-    state = for k <- uniq(keys) do
-      case map[k] do
-        {:pid, worker} ->
-          send(worker, %{action: :send, to: self()})
-          [k]
+    state =
+      for k <- uniq(keys) do
+        case map[k] do
+          {:pid, worker} ->
+            send(worker, %{action: :send, to: self()})
+            [k]
 
-        {{:value, value}, _max_t} ->
-          [{k, value}]
+          {{:value, value}, _max_t} ->
+            [{k, value}]
 
-        _ ->
-          []
+          _ ->
+            []
+        end
       end
-    end
-    |> List.flatten()
-
+      |> List.flatten()
 
     {known, workers} = divide(map, keys)
 
@@ -163,12 +165,12 @@ defmodule AgentMap.Transaction do
     {:noreply, map}
 
     unless keys == uniq(keys) do
-    raise """
-      Expected uniq keys for `update`, `get_and_update` and
-      `cast` transactions. Got: #{inspect(keys)}. Please
-      check #{inspect(keys -- uniq(keys))} keys.
-    """
-    |> String.replace("\n", " ")
+      raise """
+              Expected uniq keys for `update`, `get_and_update` and
+              `cast` transactions. Got: #{inspect(keys)}. Please
+              check #{inspect(keys -- uniq(keys))} keys.
+            """
+            |> String.replace("\n", " ")
     end
   end
 
@@ -195,10 +197,10 @@ defmodule AgentMap.Transaction do
 
       err ->
         raise """
-          Transaction callback for `cast` or `update` is malformed!
-          See docs for hint. Got: #{inspect(err)}."
-        """
-        |> String.replace("\n", " ")
+                Transaction callback for `cast` or `update` is malformed!
+                See docs for hint. Got: #{inspect(err)}."
+              """
+              |> String.replace("\n", " ")
     end
   end
 

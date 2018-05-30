@@ -11,7 +11,8 @@ defmodule AgentMap.Worker do
 
   @compile {:inline, rand: 1, dec: 1, inc: 1}
 
-  @wait 10 #ms
+  # ms
+  @wait 10
 
   ##
   ## HELPERS
@@ -169,8 +170,9 @@ defmodule AgentMap.Worker do
 
       {:value, v} ->
         set(v)
-    after 0 ->
-      handle(req)
+    after
+      0 ->
+        handle(req)
     end
   end
 
@@ -209,14 +211,16 @@ defmodule AgentMap.Worker do
         # Turn off selective receive.
         put(:"$selective_receive", false)
 
-        Logger.warn("""
-          Selective receive is turned off for worker with
-          key #{inspect(get(:"$key"))} as it's message queue became too long
-          (#{queue_len()} messages). This prevents worker from executing the
-          urgent calls out of turn. Selective receive will be turned on again as
-          the queue became empty (which will not be shown in logs).
-        """
-        |> String.replace("\n", " "))
+        Logger.warn(
+          """
+            Selective receive is turned off for worker with
+            key #{inspect(get(:"$key"))} as it's message queue became too long
+            (#{queue_len()} messages). This prevents worker from executing the
+            urgent calls out of turn. Selective receive will be turned on again as
+            the queue became empty (which will not be shown in logs).
+          """
+          |> String.replace("\n", " ")
+        )
 
         loop()
       else
@@ -244,7 +248,6 @@ defmodule AgentMap.Worker do
       req ->
         handle(req)
         loop()
-
     after
       wait ->
         send(get(:"$gen_server"), {self(), :mayidie?})
