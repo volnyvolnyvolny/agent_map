@@ -18,6 +18,7 @@ defmodule AgentMap.Req do
     :data,
     :from,
     safe?: true,
+    deadline: :infinity,
     !: false
   ]
 
@@ -120,15 +121,6 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%{action: :keys}, map) do
-    keys =
-      map
-      |> Map.keys()
-      |> Enum.filter(&has_key?(map, &1))
-
-    {:reply, keys, map}
-  end
-
   def handle(%{action: :queue_len, data: {key, opts}}, map) do
     num =
       case map[key] do
@@ -157,14 +149,6 @@ defmodule AgentMap.Req do
     {:reply, num, map}
   end
 
-  def handle(%{action: :take_all}, map) do
-    {:reply, map, map}
-  end
-
-  def handle(%{action: :take, data: keys}, map) do
-    {:reply, Map.take(map, keys), map}
-  end
-
   def handle(%{action: :drop, data: keys} = req, map) do
     map =
       Enum.reduce(keys, map, fn key, map ->
@@ -180,12 +164,21 @@ defmodule AgentMap.Req do
     {:noreply, map}
   end
 
+  def handle(%{action: :keys}, map) do
+    keys =
+      map
+      |> Map.keys()
+      |> Enum.filter(&has_key?(map, &1))
+
+    {:reply, keys, map}
+  end
+
   def handle(%{action: :values}, map) do
     fun = fn _ ->
       Map.values(Process.get(:"$map"))
     end
 
-    handle(%Req{action: :get, data: {fun, Map.keys(map)}}, map)
+    handle(%{req | action: :get, data: {fun, Map.keys(map)}}, map)
   end
 
   def handle(%{action: :delete, data: key} = req, map) do
