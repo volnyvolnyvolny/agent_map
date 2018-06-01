@@ -95,24 +95,24 @@ defmodule AgentMap.Server do
   ##
 
   def handle_info(%{info: :done} = msg, map) do
-    case map[key] do
-      {:pid, worker} ->
-        send(worker, %{msg | on_server?: true})
-        {:noreply, map}
+    # case map[key] do
+    #   {:pid, worker} ->
+    #     send(worker, %{msg | on_server?: true})
+    #     {:noreply, map}
 
-      {nil, @max_threads} ->
-        {:noreply, delete(map, key)}
+    #   {nil, @max_threads} ->
+    #     {:noreply, delete(map, key)}
 
-      {_, :infinity} ->
-        {:noreply, map}
+    #   {_, :infinity} ->
+    #     {:noreply, map}
 
-      {value, quota} ->
-        map = put_in(map[key], {value, quota + 1})
-        {:noreply, map}
+    #   {value, quota} ->
+    #     map = put_in(map[key], {value, quota + 1})
+    #     {:noreply, map}
 
-      _ ->
-        {:noreply, map}
-    end
+    #   _ ->
+    #     {:noreply, map}
+    # end
   end
 
   def handle_info(%{action: :chain} = req, map) do

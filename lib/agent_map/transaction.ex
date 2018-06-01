@@ -66,7 +66,7 @@ defmodule AgentMap.Transaction do
           end
         end)
 
-      put(:"$map", map)
+      Process.put(:"$map", map)
       values = for k <- keys, do: map[k]
       result = Callback.run(fun, [values])
 
@@ -109,7 +109,7 @@ defmodule AgentMap.Transaction do
         |> Enum.into(known)
         |> Enum.into(%{})
 
-      put(:"$map", map)
+      Process.put(:"$map", map)
 
       values = for k <- keys, do: map[k]
       result = Callback.run(fun, [values])
@@ -136,42 +136,42 @@ defmodule AgentMap.Transaction do
       end
       |> List.flatten()
 
-    {known, workers} = divide(map, keys)
+    #    {known, workers} = divide(map, keys)
 
-    rec_workers =
-      for k <- keys(known), into: workers do
-        worker = spawn_link(Worker, :loop, [self(), k, map[k]])
-        send(worker, %{action: :receive})
-        {k, worker}
-      end
+    # rec_workers =
+    #   for k <- keys(known), into: workers do
+    #     worker = spawn_link(Worker, :loop, [self(), k, map[k]])
+    #     send(worker, %{action: :receive})
+    #     {k, worker}
+    #   end
 
-    map =
-      for k <- keys(known), into: map do
-        {k, {:pid, rec_workers[k]}}
-      end
+    # map =
+    #   for k <- keys(known), into: map do
+    #     {k, {:pid, rec_workers[k]}}
+    #   end
 
-    server = self()
+    # server = self()
 
-    {:ok, tr} =
-      Task.start_link(fn ->
-        Process.put(:"$gen_server", server)
-        process(req, known, rec_workers)
-      end)
+    # {:ok, tr} =
+    #   Task.start_link(fn ->
+    #     Process.put(:"$gen_server", server)
+    #     process(req, known, rec_workers)
+    #   end)
 
-    for {_, w} <- workers do
-      send(w, %{req | action: :send_and_receive, to: tr})
-    end
+    # for {_, w} <- workers do
+    #   send(w, %{req | action: :send_and_receive, to: tr})
+    # end
 
-    {:noreply, map}
+    # {:noreply, map}
 
-    unless keys == uniq(keys) do
-      raise """
-              Expected uniq keys for `update`, `get_and_update` and
-              `cast` transactions. Got: #{inspect(keys)}. Please
-              check #{inspect(keys -- uniq(keys))} keys.
-            """
-            |> String.replace("\n", " ")
-    end
+    # unless keys == uniq(keys) do
+    #   raise """
+    #           Expected uniq keys for `update`, `get_and_update` and
+    #           `cast` transactions. Got: #{inspect(keys)}. Please
+    #           check #{inspect(keys -- uniq(keys))} keys.
+    #         """
+    #         |> String.replace("\n", " ")
+    # end
   end
 
   ##
@@ -179,29 +179,29 @@ defmodule AgentMap.Transaction do
   ##
 
   def process(%{action: :cast} = req, known, workers) do
-    {fun, keys} = req.data
-    known = collect(known, keys)
-    values = for k <- keys, do: known[k]
+    # {fun, keys} = req.data
+    # known = collect(known, keys)
+    # values = for k <- keys, do: known[k]
 
-    case Callback.run(fun, [values]) do
-      :id ->
-        for k <- keys, do: send(workers[k], :id)
+    # case Callback.run(fun, [values]) do
+    #   :id ->
+    #     for k <- keys, do: send(workers[k], :id)
 
-      :drop ->
-        for k <- keys, do: send(workers[k], :drop)
+    #   :drop ->
+    #     for k <- keys, do: send(workers[k], :drop)
 
-      values when length(values) == length(keys) ->
-        for {key, value} <- Enum.zip(keys, values) do
-          send(workers[key], %{action: :put, data: value})
-        end
+    #   values when length(values) == length(keys) ->
+    #     for {key, value} <- Enum.zip(keys, values) do
+    #       send(workers[key], %{action: :put, data: value})
+    #     end
 
-      err ->
-        raise """
-                Transaction callback for `cast` or `update` is malformed!
-                See docs for hint. Got: #{inspect(err)}."
-              """
-              |> String.replace("\n", " ")
-    end
+    #   err ->
+    #     raise """
+    #             Transaction callback for `cast` or `update` is malformed!
+    #             See docs for hint. Got: #{inspect(err)}."
+    #           """
+    #           |> String.replace("\n", " ")
+    # end
   end
 
   def process(%{action: :update} = req, known, workers) do
@@ -210,79 +210,79 @@ defmodule AgentMap.Transaction do
   end
 
   def process(%Req{action: :get_and_update} = req, known, workers) do
-    {fun, keys} = req.data
-    known = collect(known, keys)
-    values = for k <- keys, do: known[k]
+    # {fun, keys} = req.data
+    # known = collect(known, keys)
+    # values = for k <- keys, do: known[k]
 
-    result =
-      case Callback.run(fun, [values]) do
-        :pop ->
-          for k <- keys, do: send(workers[k], :drop)
-          {:reply, values}
+    # result =
+    #   case Callback.run(fun, [values]) do
+    #     :pop ->
+    #       for k <- keys, do: send(workers[k], :drop)
+    #       {:reply, values}
 
-        :id ->
-          for k <- keys, do: send(workers[k], :id)
-          {:reply, values}
+    #     :id ->
+    #       for k <- keys, do: send(workers[k], :id)
+    #       {:reply, values}
 
-        {get} ->
-          for k <- keys, do: send(workers[k], :id)
-          {:reply, get}
+    #     {get} ->
+    #       for k <- keys, do: send(workers[k], :id)
+    #       {:reply, get}
 
-        {:chain, {fun, new_keys}, values} ->
-          gen_server = Process.get(:"$gen_server")
+    #     {:chain, {fun, new_keys}, values} ->
+    #       gen_server = Process.get(:"$gen_server")
 
-          for {k, value} <- Enum.zip(keys, values) do
-            send(workers[k], %{action: :put, data: value})
-          end
+    #       for {k, value} <- Enum.zip(keys, values) do
+    #         send(workers[k], %{action: :put, data: value})
+    #       end
 
-          send(gen_server, {:chain, {fun, new_keys}, req.from})
-          :noreply
+    #       send(gen_server, {:chain, {fun, new_keys}, req.from})
+    #       :noreply
 
-        {get, :id} ->
-          for k <- keys, do: send(workers[k], :id)
-          {:reply, get}
+    #     {get, :id} ->
+    #       for k <- keys, do: send(workers[k], :id)
+    #       {:reply, get}
 
-        {get, :drop} ->
-          for k <- keys, do: send(workers[k], :drop)
-          {:reply, get}
+    #     {get, :drop} ->
+    #       for k <- keys, do: send(workers[k], :drop)
+    #       {:reply, get}
 
-        {get, values} when length(values) == length(keys) ->
-          for {k, value} <- Enum.zip(keys, values) do
-            send(workers[k], %{action: :put, data: value})
-          end
+    #     {get, values} when length(values) == length(keys) ->
+    #       for {k, value} <- Enum.zip(keys, values) do
+    #         send(workers[k], %{action: :put, data: value})
+    #       end
 
-          {:reply, get}
+    #       {:reply, get}
 
-        results when length(results) == length(keys) ->
-          result =
-            for {k, oldvalue, result} <- Enum.zip([keys, values, results]) do
-              case result do
-                {get, value} ->
-                  send(workers[k], %{action: :put, data: value})
-                  get
+    #     results when length(results) == length(keys) ->
+    #       result =
+    #         for {k, oldvalue, result} <- Enum.zip([keys, values, results]) do
+    #           case result do
+    #             {get, value} ->
+    #               send(workers[k], %{action: :put, data: value})
+    #               get
 
-                :pop ->
-                  send(workers[k], %{action: :drop})
-                  oldvalue
+    #             :pop ->
+    #               send(workers[k], %{action: :drop})
+    #               oldvalue
 
-                :id ->
-                  send(workers[k], :id)
-                  oldvalue
-              end
-            end
+    #             :id ->
+    #               send(workers[k], :id)
+    #               oldvalue
+    #           end
+    #         end
 
-          {:reply, result}
+    #       {:reply, result}
 
-        err ->
-          raise """
-                Transaction callback for `get_and_update` is malformed!
-                See docs for hint. Got: #{inspect(err)}."
-                """
-                |> String.replace("\n", " ")
-      end
+    #     err ->
+    #       raise """
+    #             Transaction callback for `get_and_update` is malformed!
+    #             See docs for hint. Got: #{inspect(err)}."
+    #             """
+    #             |> String.replace("\n", " ")
+    #   end
 
-    with {:reply, result} <- result do
-      GenServer.reply(req.from, result)
-    end
+    # with {:reply, result} <- result do
+    #   GenServer.reply(req.from, result)
+    # end
   end
 end

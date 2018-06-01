@@ -26,23 +26,11 @@ defmodule AgentMap.Req do
     %{req | data: value}
   end
 
-  def run(%{fun: _} = req, args) do
-    if req.safe? do
-      Callback.safe_run(fun, args)
-    else
-      {:ok, Callback.run(fun, args)}
-    end
-  end
-
-  def run(%{data: {_, f}}, args) do
-    run(%{req | fun: f})
-  end
-
-  defp unbox({{{:value, value}, :blocked}, _max_p}), do: {:ok, value}
-  defp unbox({{:value, value}, _max_p}), do: {:ok, value}
-  defp unbox({{nil, :blocked}, _max_p}), do: :error
-  defp unbox({nil, _max_p}), do: :error
-  defp unbox(nil), do: :error
+  # defp unbox({{{:value, value}, :blocked}, _max_p}), do: {:ok, value}
+  # defp unbox({{:value, value}, _max_p}), do: {:ok, value}
+  # defp unbox({{nil, :blocked}, _max_p}), do: :error
+  # defp unbox({nil, _max_p}), do: :error
+  # defp unbox(nil), do: :error
 
   def fetch(map, key) do
     case map[key] do
@@ -56,7 +44,8 @@ defmodule AgentMap.Req do
         end
 
       state ->
-        unbox(state)
+        :ignore
+        # unbox(state)
     end
   end
 
@@ -104,7 +93,7 @@ defmodule AgentMap.Req do
             %{req | action: :cast, data: {fun, [key]}}
           end
 
-        send(worker, to_msg(req))
+        #        send(worker, to_msg(req))
         {:noreply, map}
 
       {{:value, v}, _mt} when not is_number(v) ->
@@ -112,7 +101,7 @@ defmodule AgentMap.Req do
         {:reply, {:error, %ArithmeticError{}}, map}
 
       {{:value, v}, _mt} ->
-        put_in(map[key], {{:value, v + step}, mt})
+        #        put_in(map[key], {{:value, v + step}, mt})
         {:reply, :ok, map}
 
       _ ->
@@ -178,13 +167,14 @@ defmodule AgentMap.Req do
       Map.values(Process.get(:"$map"))
     end
 
-    handle(%{req | action: :get, data: {fun, Map.keys(map)}}, map)
+    #    handle(%{req | action: :get, data: {fun, Map.keys(map)}}, map)
   end
 
   def handle(%{action: :delete, data: key} = req, map) do
     case map[key] do
       {:pid, worker} ->
-        send(worker, to_msg(req))
+        :ignore
+        #        send(worker, to_msg(req))
 
         if req.from do
           send(worker, {:reply, req.from, :ok})
@@ -287,12 +277,12 @@ defmodule AgentMap.Req do
 
     case map[key] do
       {:pid, worker} ->
-        send(worker, to_msg(req))
+        #        send(worker, to_msg(req))
         {:noreply, map}
 
       # Cannot spawn more Task's.
       {_, 1} ->
-        map = spawn_worker(map, key)
+        #        map = spawn_worker(map, key)
         handle(req, map)
 
       {value, :infinity} ->
@@ -317,7 +307,7 @@ defmodule AgentMap.Req do
           Process.put(:"$key", key)
           Process.put(:"$value", value)
 
-          GenServer.reply(req.from, run(req, [unbox(value)]))
+          #          GenServer.reply(req.from, run(req, [unbox(value)]))
           send(server, %{info: :done, !: true})
         end)
 
@@ -342,7 +332,7 @@ defmodule AgentMap.Req do
         {:reply, :ok, map}
 
       {:pid, worker} ->
-        send(worker, to_msg(req))
+        #       send(worker, to_msg(req))
 
         if req.from do
           send(worker, %{req | action: :reply, data: :ok})
@@ -386,11 +376,11 @@ defmodule AgentMap.Req do
 
     case map[key] do
       {:pid, worker} ->
-        send(worker, to_msg(req))
+        #        send(worker, to_msg(req))
         {:noreply, map}
 
       _ ->
-        map = spawn_worker(map, key)
+        #        map = spawn_worker(map, key)
         handle(req, map)
     end
   end

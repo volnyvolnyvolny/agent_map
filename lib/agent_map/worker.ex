@@ -3,9 +3,9 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Callback, Req, MalformedCallback}
 
-  import Process, only: [get: 1, put: 2, exit: 2]
+  import Process, only: [get: 1, put: 2, delete: 1, exit: 2]
   import System, only: [system_time: 0]
-  import Req, only: [run: 2]
+  #  import Req, only: [run: 2]
 
   @moduledoc false
 
@@ -17,6 +17,9 @@ defmodule AgentMap.Worker do
   ##
   ## HELPERS
   ##
+
+  # Is OK for numbers < 1000.
+  defp rand(to), do: rem(System.system_time(), to)
 
   defp add(:infinity, _v), do: :infinity
   defp add(i, v), do: i + v
@@ -46,6 +49,18 @@ defmodule AgentMap.Worker do
   ##
   ## HANDLE
   ##
+
+  def run(%{fun: f} = req, args) do
+    if req.safe? do
+      Callback.safe_run(f, args)
+    else
+      {:ok, Callback.run(f, args)}
+    end
+  end
+
+  def run(%{data: {_, f}} = req, args) do
+    run(%{req | fun: f}, args)
+  end
 
   defp reply(nil, what), do: :nothing
 
@@ -134,7 +149,7 @@ defmodule AgentMap.Worker do
           reply(req.from, value)
 
         reply ->
-          e = %MalformedCallback{for: :get_and_update, got: r}
+          e = %MalformedCallback{for: :get_and_update, got: reply}
 
           if req.safe? do
             Logger.error(Exception.message(e))
