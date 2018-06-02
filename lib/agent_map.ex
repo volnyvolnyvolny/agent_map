@@ -27,7 +27,7 @@ defmodule AgentMap do
 
   ## Examples
 
-  Create and use it like it's an ordinary `Map`:
+  Create and use it as an ordinary `Map`:
 
       iex> am = AgentMap.new(a: 42, b: 24)
       iex> am.a
@@ -40,7 +40,7 @@ defmodule AgentMap do
       ...> |> AgentMap.take([:a, :b])
       %{a: 43, b: 23}
 
-  Or started as it's an `Agent`:
+  Or start as an `Agent`:
 
       iex> {:ok, pid} = AgentMap.start_link()
       iex> pid
@@ -90,7 +90,7 @@ defmodule AgentMap do
       end
 
   Also, `AgentMap` provides possibility to make transactions (operations on
-  multiple keys). Let's demonstrate this on accounting demo:
+  multiple keys). Let's see an accounting demo:
 
       defmodule Account do
         use AgentMap
@@ -210,10 +210,10 @@ defmodule AgentMap do
   Most of the functions support `!: true` option to make out-of-turn
   ("priority") calls.
 
-  On each key, no more than `5` `get/4` calls can be executed simultaneously. If
-  `6`-th `get/4` call, `update!/4`, `update/4`, `cast/4` or `get_and_update/4`
-  came, a special worker process will be spawned that became the holder of the
-  execution queue. It's the FIFO queue, but [selective
+  On each key, no more than fifth `get/4` calls can be executed simultaneously.
+  If `6`-th `get/4` call, `update!/4`, `update/4`, `cast/4` or
+  `get_and_update/4` came, a special worker process will be spawned that became
+  the holder of the execution queue. It's the FIFO queue, but [selective
   receive](http://learnyousomeerlang.com/more-on-multiprocessing) can be used to
   provide the possibility for some callbacks to be executed in the order of
   preference (out-of-turn).
@@ -228,28 +228,25 @@ defmodule AgentMap do
       ...> |> AgentMap.cast(:state, fn _ -> sleep(50); :go end, !: true)
       ...> |> AgentMap.fetch(:state)
       {:ok, :ready}
-      # — returns immediately the current state,
-      # while the first cast/4 is still making `sleep(50)`.
+      # — returns immediately the current state.
       #
-      # The same you'll get with:
+      # Now worker executes :steady, queue: [:go!, :stop].
+      # Next following tree calls will executed on server.
       #
-      iex> [AgentMap.get(am, :state),
-      ...>  AgentMap.get(am, :state, !: true),
-      ...>  am.state,
-      ...>  AgentMap.get(am, :state, & &1, !: true)]
-      [:ready, :ready, :ready, :ready]
       iex> AgentMap.queue_len(am, :state)
       2
-      # As cast/4 with `:steady` is already taken from queue.
       iex> AgentMap.queue_len(am, :state, !: true)
       1
-      # There is no priority calls in the queue.
-      iex> AgentMap.get_and_update(am, :state, & {&1}, !: true)
+      iex> [AgentMap.get(am, :state),
+      ...>  AgentMap.get(am, :state, !: true),
+      ...>  am.state]
+      [:ready, :ready, :ready]
+      iex> AgentMap.get(am, :state, & &1, !: true)
       :steady
-      # 50 milliseconds passed.
-      iex> AgentMap.get(am, :state, !: false)
+      # get! calls has a highest priority.
+      # executes: :go!, queue: [stop]
+      iex> AgentMap.get(am, :state)
       :stop
-      # 150 milliseconds passed.
 
   Keep in mind that selective receive can lead to performance issues if the
   message queue becomes to fat. So it was decided to disable selective receive
@@ -264,40 +261,35 @@ defmodule AgentMap do
   is set to the `5000 ms` = `5 sec`.
 
   If no result is received within the specified time, the caller exits, (!) but
-  the callback will remain in queue or continue it's execution!
+  the callback will remain in a queue!
 
-  To change this behaviour, the special wrapper `deadline/2` is provided.
+  To change this, the special `deadline` option could be provided. For instance,
+  this calls:
 
-  For instance, this calls:
+      AgentMap.get(agentmap, :key, & &1, deadline: 6000)
+      AgentMap.get(agentmap, :key, & &1, deadline: 6000, timeout: 5000)
 
-      AgentMap.get(agentmap, :key, deadline(fun, 5000), 5000)
-      AgentMap.get(agentmap, :key, deadline(fun))
+  will timeout after `5000` ms and will be deleted from queue after `6` secs.
 
-  will be deleted from execution queue if timeout happend before their execution
-  starts. And this:
+  The next call will wrap callback in a `Task` that will be shutdowned in `6000`
+  ms:
 
-      AgentMap.get(agentmap, :key, deadline(
-        fn _ ->
+      AgentMap.cast(
+        agentmap, :key, fn _ ->
           :timer.sleep(:infinity)
         end,
-        timeout: 50,
-        hard: true)
+        deadline: {:hard, 6000}
       )
-
-  will stop execution of this call after `50` milliseconds. The downside is that
-  every "hard deadline" call will spawn one additional `Task` process.
 
   ## Safe calls
 
   This call:
 
-      AgentMap.get(agentmap, :key, fn _ -> 42 / 0 end)
+      AgentMap.get(agentmap, :key, fn _ -> 42 / 0 end, safe: false)
 
-  will lead to the ungraceful falling of the `AgentMap` process. Sometimes it's
-  not a desirable behaviour. Succefully, another wrapper, `safe/1` is provided.
-
-      iex> AgentMap.get(agentmap, :key, safe(fn _ -> 42 / 0 end))
-      {:error}
+  will lead to the ungraceful falling of the `AgentMap` process. This is not a
+  desirable behaviour, so by default, every callback is wrapped into
+  `try-catch`.
 
   ## Name registration
 
