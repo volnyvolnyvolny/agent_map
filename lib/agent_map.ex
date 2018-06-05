@@ -4,9 +4,9 @@ defmodule AgentMap do
   @enforce_keys [:link]
   defstruct @enforce_keys
 
-  alias AgentMap.{Callback, Server, Req}
+  alias AgentMap.{Helpers, Server, Req}
 
-  import Callback, only: :macros
+  import Helpers, only: :macros
 
   @moduledoc """
   The `AgentMap` can be seen as a stateful `Map` that parallelize operations
@@ -51,11 +51,9 @@ defmodule AgentMap do
       iex> am.a
       1
 
-  Let's look at the more complicated example (memoization).
+  Let's look at the more complicated example (memoization):
 
       defmodule Memo do
-        use AgentMap
-
         def start_link() do
           AgentMap.start_link(name: __MODULE__)
         end
@@ -65,17 +63,22 @@ defmodule AgentMap do
         end
 
         @doc \"""
-        If `{task, arg}` key is known — return it, else, invoke given
-        `fun` as a Task, writing result under `{task, arg}`.
+        If `{task, arg}` key is known — return it, else,
+        invoke given `fun` as a Task, writing results
+        under `{task, arg}` key.
         \"""
-        def calc(task, arg, fun) do
+        def calc(task, fun, arg) do
           AgentMap.get_and_update(__MODULE__, {task, arg}, fn
             nil ->
+              # The calculation will be made by worker which
+              # executes this callback.
               res = fun.(arg)
-              {res, res} # return `res` and set it as a new value
+              # Return `res` and set it as a new value.
+              {res, res}
 
             _value ->
-              :id # change nothing, return current value.
+              # Change nothing, return current value.
+              :id
           end)
         end
       end
@@ -85,7 +88,7 @@ defmodule AgentMap do
         def fib(1), do: 1
 
         def fib(n) when n >= 0 do
-          Memo.calc(:fib, n, fn n -> fib(n - 1) + fib(n - 2) end)
+          Memo.calc(:fib, fn n -> fib(n - 1) + fib(n - 2) end, n)
         end
       end
 
@@ -93,8 +96,6 @@ defmodule AgentMap do
   multiple keys). Let's see an accounting demo:
 
       defmodule Account do
-        use AgentMap
-
         def start_link() do
           AgentMap.start_link(name: __MODULE__)
         end
@@ -104,8 +105,8 @@ defmodule AgentMap do
         end
 
         @doc \"""
-        Returns `{:ok, balance}` for account or `:error` if account
-        is unknown.
+        Returns `{:ok, balance}` for account or `:error` if
+        there no such account.
         \"""
         def balance(account) do
           AgentMap.fetch(__MODULE__, account)
@@ -124,8 +125,9 @@ defmodule AgentMap do
               balance = balance - amount
               {{:ok, balance}, balance}
 
-            _ ->
-              {:error} # return `:error`, while not changing value
+            _balance ->
+              # Return `:error`, while not changing value.
+              {:error}
           end)
         end
 
@@ -174,9 +176,13 @@ defmodule AgentMap do
         \"""
         def open(account) do
           AgentMap.get_and_update(__MODULE__, account, fn
-            nil -> {:ok, 0} # set balance to 0, while returning :ok
+            nil ->
+              # Sets balance to 0, while returning :ok.
+              {:ok, 0}
 
-            _   -> {:error} # return :error, while not changing balance
+            _balance ->
+              # Returns :error, while not changing balance.
+              {:error}
           end)
         end
       end
@@ -195,13 +201,13 @@ defmodule AgentMap do
       ...> |> Enum.empty?()
       false
 
-  Similarly, `AgentMap` follows `Access` behaviour:
+  Similarly, `AgentMap` follows the `Access` behaviour:
 
       iex> am = AgentMap.new(a: 42, b: 24)
       iex> am.a
       42
 
-  (!) except of `put_in` operator.
+  (!) except of the `put_in` operator.
 
   ## Options
 
@@ -225,13 +231,13 @@ defmodule AgentMap do
       iex> am
       ...> |> AgentMap.cast(:state, fn _ -> sleep(50); :steady end)
       ...> |> AgentMap.cast(:state, fn _ -> sleep(50); :stop end)
-      ...> |> AgentMap.cast(:state, fn _ -> sleep(50); :go end, !: true)
+      ...> |> AgentMap.cast(:state, fn _ -> sleep(50); :go! end, !: true)
       ...> |> AgentMap.fetch(:state)
       {:ok, :ready}
       # — returns immediately the current state.
       #
-      # Now worker executes :steady, queue: [:go!, :stop].
-      # Next following tree calls will executed on server.
+      # Now worker executes :steady,
+      # queue is [:go!, :stop], but not [:stop, :go!].
       #
       iex> AgentMap.queue_len(am, :state)
       2
@@ -243,13 +249,13 @@ defmodule AgentMap do
       [:ready, :ready, :ready]
       iex> AgentMap.get(am, :state, & &1, !: true)
       :steady
-      # get! calls has a highest priority.
-      # executes: :go!, queue: [stop]
+      # get! calls will have the highest priority.
+      # executes: :go!, queue: [:stop]
       iex> AgentMap.get(am, :state)
       :stop
 
   Keep in mind that selective receive can lead to performance issues if the
-  message queue becomes to fat. So it was decided to disable selective receive
+  message queue becomes too fat. So it was decided to disable selective receive
   each time message queue of the worker process has more that `100` items. It
   will be turned on again when message queue became empty.
 
@@ -263,21 +269,37 @@ defmodule AgentMap do
   If no result is received within the specified time, the caller exits, (!) but
   the callback will remain in a queue!
 
-  To change this, the special `deadline` option could be provided. For instance,
-  this calls:
+      iex> import :timer
+      iex> am =
+      ...>   AgentMap.new(key: 42)
+      iex>   |> AgentMap.cast(:key, & sleep(50); &1+1)
+      iex> Process.flag(:trap_exit, true)
+      false
+      iex> Process.info(self(), :message_queue_len)
+      {:message_queue_len, 0}
+      iex> AgentMap.put(am, :key, 24, timeout: 50)
+      iex> Process.info(self(), :message_queue_len)
+      {:message_queue_len, 1}
+      iex> AgentMap.get(am, :key, & &1)
+      24
+
+  To change this behaviour, the special `deadline` option could be provided. For
+  instance, this calls:
 
       AgentMap.get(agentmap, :key, & &1, deadline: 6000)
       AgentMap.get(agentmap, :key, & &1, deadline: 6000, timeout: 5000)
 
   will timeout after `5000` ms and will be deleted from queue after `6` secs.
 
-  The next call will wrap callback in a `Task` that will be shutdowned in `6000`
+  Also, `deadline` supports special `{:hard, pos_integer}` value. Callback for
+  the next call will be wrapped in a `Task` that will be shutdowned in `6000`
   ms:
 
+      import :timer
       AgentMap.cast(
-        agentmap, :key, fn _ ->
-          :timer.sleep(:infinity)
-        end,
+        agentmap,
+        :key,
+        fn _ -> sleep(:infinity) end,
         deadline: {:hard, 6000}
       )
 
@@ -287,31 +309,16 @@ defmodule AgentMap do
 
       AgentMap.get(agentmap, :key, fn _ -> 42 / 0 end, safe: false)
 
-  will lead to the ungraceful falling of the `AgentMap` process. This is not a
-  desirable behaviour, so by default, every callback is wrapped into
+  will lead to the ungraceful falling of the `AgentMap` server. This is rarely a
+  desirable behaviour, so by default, every callback is wrapped into a
   `try-catch`.
 
   ## Name registration
 
-  An agentmap is bound to the same name registration rules as GenServers. Read
-  more about it in the `GenServer` documentation.
-
-  ## Hot code swapping
-
-  `AgentMap` can have its code hot swapped live by simply passing a module,
-  function, and arguments tuple to the update instruction. For example, iamine
-  you have an `AgentMap` named `:sample` and you want to convert all its inner
-  values from a keyword list to a map. It can be done with the following
-  instruction:
-
-      {:update, :sample, {:advanced, {Enum, :into, [%{}]}}}
+  An agentmap is bound to the same name registration rules as `GenServers`, see
+  the `GenServer` documentation for details.
 
   ## Other
-
-  Similar to `Agent`, any changing state function given to the `AgentMap`
-  effectively blocks execution of any other function **on the same key** until
-  the request is fulfilled. So it's important to avoid use of expensive
-  operations inside the agentmap.
 
   Finally, note that `use AgentMap` defines a `child_spec/1` function, allowing
   the defined module to be put under a supervision tree. The generated
@@ -351,8 +358,11 @@ defmodule AgentMap do
   @typedoc "Anonymous function with zero arity, pair `{fun/length(args), args}` or corresponding MFA tuple"
   @type a_fun(r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
-  @typedoc "Options for :get, :get_and_update, :update and :cast methods"
-  @type options :: [!: boolean, timeout: timeout] | timeout
+  @typedoc "Option for most of the calls"
+  @type option :: {:!, boolean} | {:timeout, timeout}
+
+  @typedoc "Options for most of the calls"
+  @type options :: [option] | timeout
 
   @doc false
   def child_spec(funs_and_opts) do
@@ -382,19 +392,6 @@ defmodule AgentMap do
   defp pid(am), do: am
 
   ## ##
-
-  # common for start_link and start
-  # separate funs from GenServer options
-  defp separate(funs_and_opts) do
-    {opts, funs} =
-      funs_and_opts
-      |> Enum.reverse()
-      |> Enum.split_while(fn {k, _} ->
-        k in [:name, :timeout, :debug, :spawn_opt]
-      end)
-
-    {Enum.reverse(funs), opts}
-  end
 
   @doc """
   Returns a new empty `agentmap`.
@@ -464,15 +461,37 @@ defmodule AgentMap do
     new(Map.new(enumerable, transform))
   end
 
+  # common for start_link and start
+  # separate GenServer options and funs
+  defp separate(funs_and_opts) do
+    {opts, funs} =
+      funs_and_opts
+      |> Enum.reverse()
+      |> Enum.split_while(fn {k, _} ->
+        k in [:name, :timeout, :debug, :spawn_opt]
+      end)
+
+    {Enum.reverse(funs), opts}
+  end
+
+  defp prepair(funs_and_opts) do
+    {funs, opts} = separate(funs_and_opts)
+    timeout = opts[:timeout] || 5000
+
+    # Turn off global timeout.
+    opts = Keyword.put(opts, :timeout, :infinity)
+
+    {funs, opts, timeout}
+  end
+
   @doc """
-  Starts an agentmap linked to the current process with the given function. This
-  is often used to start the agentmap as a part of a supervision tree.
+  Starts an `AgentMap` server linked to the current process with the given
+  function.
 
-  The only argument is a keyword, elements of which is `GenServer.options` or
-  pairs `{term, a_fun(any)}`, where `a_fun(any)` is a zero arity anonymous fun,
-  pair `{fun, args}` or corresponding MFA-tuple.
-
-  For each key, callback is executed as a separate `Task`.
+  The only argument is a keyword, elements of which are `GenServer.options` and
+  pairs `{key, fun/0}`, where `fun/0` can take the form of a zero arity
+  anonymous fun, pair `{fun, args}` or MFA-tuple. For each key, fun is executed
+  in a separate `Task`.
 
   ## Options
 
@@ -492,80 +511,73 @@ defmodule AgentMap do
   ## Return values
 
   If the server is successfully created and initialized, the function returns
-  `{:ok, pid}`, where `pid` is the PID of the server. If a agentmap with the
+  `{:ok, pid}`, where `pid` is the PID of the server. If a server with the
   specified name already exists, the function returns `{:error,
   {:already_started, pid}}` with the PID of that process.
 
   If one of the callbacks fails, the function returns `{:error, [{key,
-  init_error_reason}]}`, where `init_error_reason` is `:timeout`, `:badfun`,
-  `:badarity` `:exists` or an arbitrary exception. Callback must be given in
-  form of anonymous function, `{fun, args}` or MFA-tuple, or else `:badfun`
-  would be returned. So you can write:
+  error_reason}]}`, where `error_reason` is `:timeout`, `:badfun`, `:badarity`,
+  `{:exit, reason}` or an arbitrary exception. For example:
 
-      iex> import AgentMap
-      iex> {:ok,_pid} = start_link(key: fn -> Enum.empty? [:v] end)
-      iex> {:ok,_} = start_link(k: {&Enum.empty?/1, [[:v]]})
-      iex> {:ok,_} = start_link(k: {Enum, :empty?, [[:v]]})
-      iex> {:ok,_} = start_link(k: {fn -> Enum.empty? [:v] end, []})
-      iex> match?({:ok,_}, start_link(k: {& &1+1, [42]}))
-      true
+      iex> AgentMap.start_link(f: fn -> Calc.fib(4) end)
+      iex> AgentMap.start_link(f: {Calc, :fib, [4]})
+      iex> AgentMap.start_link(f: {&Calc.fib/1, [4]})
+      iex> AgentMap.start_link(f: {&Calc.fib(&1), [4]}))
+      iex> AgentMap.start_link(f: {fn -> Calc.fib(4) end, []})
+      ...> |> elem(1)
+      ...> |> AgentMap.get(:f)
+      3
 
-  But it's easy to get `{:error, :badfun}` or `{:error, :badarity}`:
+  If one provide actual value instead of zero-arity fun, `{:error, :badfun}`
+  will be returned. If the number arguments is equal to the needed arity —
+  `{:error, :badarity}` will be returned:
 
-      iex> AgentMap.start(key: 42)
-      {:error, [key: :badfun]}
-      iex> AgentMap.start(key: {fn -> Enum.empty? [] end, [:extraarg]})
-      {:error, [key: :badarity]}
+      iex> AgentMap.start(f: 3)
+      {:error, f: :badfun}
+      iex> AgentMap.start(f: {&Calc.fib/1, [4, :extraarg]})
+      {:error, f: :badarity}
       # … and so on
 
   ## Examples
 
-      iex> {:ok, pid} = AgentMap.start_link(key: fn -> 42 end)
+      iex> {:ok, pid} =
+      ...>   AgentMap.start_link(key: fn -> 42 end)
       iex> AgentMap.get(pid, :key, & &1)
       42
-      iex> AgentMap.get(pid, :nosuchkey, & &1)
-      nil
   """
   @spec start_link([{key, a_fun(any)} | GenServer.option()]) :: on_start
   def start_link(funs_and_opts \\ [timeout: 5000]) do
-    {funs, opts} = separate(funs_and_opts)
-    timeout = opts[:timeout] || 5000
-    # Turn off global timeout.
-    opts = Keyword.put(opts, :timeout, :infinity)
+    {funs, opts, timeout} = prepair(funs_and_opts)
     GenServer.start_link(Server, {funs, timeout}, opts)
   end
 
   @doc """
-  Starts an `AgentMap` as unlinked process.
+  Starts an `AgentMap` in an unlinked process.
 
   See `start_link/2` for details.
 
   ## Examples
 
+      iex> import :timer
       iex> AgentMap.start(one: 42,
-      ...>                two: fn -> :timer.sleep(150) end,
-      ...>                three: fn -> :timer.sleep(:infinity) end,
+      ...>                two: fn -> sleep(150) end,
+      ...>                three: fn -> sleep(:infinity) end,
       ...>                timeout: 100)
-      {:error, [one: :badfun, two: :timeout, three: :timeout]}
-
+      {:error, one: :badfun, two: :timeout, three: :timeout}
       iex> AgentMap.start(one: :foo,
       ...>                one: :bar,
-      ...>                three: fn -> :timer.sleep(:infinity) end,
+      ...>                three: fn -> sleep(:infinity) end,
       ...>                timeout: 100)
-      {:error, [one: :exists]}
-
+      {:error, one: :exists}
       iex> err = AgentMap.start(one: 76,
       ...>                      two: fn -> raise "oops" end)
-      iex> {:error, [one: :badfun, two: {exception, _stacktrace}]} = err
+      iex> {:error, one: :badfun, two: {exception, _stacktrace}} = err
       iex> exception
       %RuntimeError{message: "oops"}
   """
   @spec start([{key, a_fun(any)} | GenServer.option()]) :: on_start
   def start(funs_and_opts \\ [timeout: 5000]) do
-    {funs, opts} = separate(funs_and_opts)
-    timeout = opts[:timeout] || 5000
-    # Turn off global timeout.
-    opts = Keyword.put(opts, :timeout, :infinity)
+    {funs, opts, timeout} = prepair(funs_and_opts)
     GenServer.start(Server, {funs, timeout}, opts)
   end
 
@@ -593,22 +605,21 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Takes value(s) for the given `key`(s) and invokes `fun`, passing values as the
-  first argument and `nil`(s) for the values that are lost. If there are
+  Invokes `fun`, passing `key` value as an argument. If there is no such, `nil`
+  will be used. Returns result of the invocation. This call does not change
+  state, so it can and will be executed concurrently. No more than
+  `max_processes` will be used per key (see `max_processes/2`). If there are
   callbacks awaiting invocation, this call will be added to the end of the
-  corresponding queues. Because the `get` calls do not change states —
-  `agentmap` can and will be executed concurrently, in no more than
-  `max_processes` (this could be tweaked per key, via `max_processes/2` call).
+  corresponding queue (unless `!: true` is given).
 
-  As in the case of `update`, `get_and_update` and `cast` methods, `get` call
-  has two forms:
+  This call has two forms:
 
     * single key: `get(agentmap, key, fun)`, where `fun` expected only one value
       to be passed;
     * and multiple keys (transactions): `get(agentmap, fun, [key1, key2, …])`,
       where `fun` expected to take a list of values.
 
-  For example, compare two calls:
+  Compare two calls:
 
       AgentMap.get(Account, &Enum.sum/1, [:alice, :bob])
       AgentMap.get(Account, :alice, & &1)
@@ -618,12 +629,13 @@ defmodule AgentMap do
 
   ## Options
 
-  `timeout` is an integer greater than zero which specifies how many
+  Provide `safe: false` make unsafe calls which could exit server.
+
+  Provide `timeout` integer value, greater than zero which specifies how many
   milliseconds are allowed before the `agentmap` executes the `fun` and returns
-  the result value, or the atom `:infinity` to wait indefinitely. If no result
-  is received within the specified time, the caller exits. By default it's equal
-  to `5000` ms. This value could be given as `:timeout` option, or separately,
-  so:
+  the result value, or the `:infinity` to wait indefinitely. If no result is
+  received within the specified time, the caller exits. By default it's equal to
+  `5000` ms. This value could be given as `:timeout` option, or separately, so:
 
       AgentMap.get(agentmap, :key, fun)
       AgentMap.get(agentmap, :key, fun, 5000)
@@ -632,22 +644,35 @@ defmodule AgentMap do
 
   means the same.
 
-  The `:!` option is used to make "priority" calls. Values could have an
-  associated queue of callbacks, awaiting of execution. "Priority" version allows
-  to retrive value immediately at the moment of call. If this option is
-  provided, `fun` will be always executed in a separate `Task`.
+  See also `deadline` [option](#module-deadline). For `!: true` calls only
+  hard-`deadline` is supported as this calls are never queued.
+
+  Provide `!: true` to make ["priority" calls](#module-options). Every key could
+  have an associated queue of callbacks awaiting of execution, "priority"
+  version allows to execute given `fun` in a separate `Task`, immediately at the
+  moment of call (regardless of `max_processes`). Thus calls are never queued.
 
   ## Special process dictionary keys
 
-      get(agentmap, fn _ -> Process.get(:"$map") end, keys)
+  For a single-key calls one can use `:"$key"` and `:"$value"` dictionary keys.
 
-  which is the same as:
+      iex> am = AgentMap.new(k: nil)
+      iex> AgentMap.get(am, k, fn _ -> Process.get(:"$key") end)
+      :k
+      iex> AgentMap.get(am, k, fn nil -> Process.get(:"$value") end)
+      {:value, nil}
+      iex> AgentMap.get(am, f, fn nil -> Process.get(:"$value") end)
+      nil
 
-      get(agentmap, fn values ->
-        keys
-        |> Enum.zip(values)
-        |> Enum.into(%{})
-      end, keys)
+  For a transactions one can use `:"$keys"` and `:"$map"` keys.
+
+      iex> am = AgentMap.new(a: nil, b: 42)
+      iex> AgentMap.get(am, fn _ -> Process.get(:"$keys") end, [:a, :b, :c])
+      [:a, :b, :c]
+      iex> AgentMap.get(am, fn [nil, 42, nil] ->
+      ...>   Process.get(:"$map")
+      ...> end, keys)
+      %{a: nil, b: 42}
 
   ## Examples
 
@@ -658,12 +683,11 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :alice, & &1+1)
       43
       #
-      # aggregate calls:
-      #
+      # Transactions.
       iex> AgentMap.put(am, :bob, 43)
       iex> AgentMap.get(am, &Enum.sum/1, [:alice, :bob])
       85
-      # order matters:
+      # Order matters.
       iex> AgentMap.get(am, {&Enum.reduce/3, [0, &-/2]}, [:alice, :bob])
       1
       iex> AgentMap.get(am, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice])
@@ -676,7 +700,7 @@ defmodule AgentMap do
       iex> AgentMap.cast(am, :key, fn _ -> sleep(100); 43 end)
       iex> AgentMap.get(am, :key, & &1, !: true)
       42
-      iex> am[:key] # the same
+      iex> am.key # the same
       42
       iex> AgentMap.get(am, :key, & &1)
       43
@@ -746,7 +770,6 @@ defmodule AgentMap do
       1
       iex> AgentMap.get_lazy(am, :b, fun)
       13
-
   """
   @spec get_lazy(a_map, key, (() -> a)) :: value | a when a: var
   def get_lazy(agentmap, key, fun) do
@@ -757,9 +780,9 @@ defmodule AgentMap do
   end
 
   @doc """
-  `get/2` call immediately returns value for the given `key`. If there is no
-  such `key`, `nil` is returned. It is a clone of `Map.get/3` function, so as
-  the third argument, `default` value could be provided:
+  The same as `get(agentmap, key, nil)`.
+
+  This function supports `default` argument:
 
       iex> am = AgentMap.new(a: 42)
       iex> AgentMap.get(am, :a)

@@ -2,15 +2,19 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Callback, Req, Worker}
+  alias AgentMap.{Helpers, Req, Worker}
 
   import Enum, only: [uniq: 1]
   import Map, only: [delete: 2]
   import Worker, only: [queue_len: 1, dict: 1]
+  import Helpers, only: [ok?: 1, safe_apply: 2, run: 2]
 
   use GenServer
 
-  @max_threads 5
+  @max_processes 5
+
+  defp box(nil), do: {nil, @max_processes}
+  defp box({_value, _max_p} = p), do: p
 
   defp wait(ref) do
     receive do
@@ -22,23 +26,12 @@ defmodule AgentMap.Server do
     end
   end
 
-  def no_value(), do: {nil, @max_threads}
-
   def spawn_worker(map, key) do
-    value =
-      case map[key] do
-        nil ->
-          no_value()
-
-        {_v, _max_p} = t ->
-          t
-      end
-
     ref = make_ref()
 
     worker =
       spawn_link(fn ->
-        Worker.loop({ref, self()}, key, value)
+        Worker.loop({ref, self()}, key, box(map[key]))
       end)
 
     wait(ref)
@@ -51,25 +44,28 @@ defmodule AgentMap.Server do
   ##
 
   def init({funs, timeout}) do
-    with keys = Keyword.keys(funs),
-         # check for dups
-         [] <- keys -- uniq(keys),
-         {:ok, results} <- Callback.safe_run(funs, timeout) do
-      map =
-        for {key, s} <- results, into: %{} do
-          {key, {{:value, s}, @max_threads}}
-        end
+    keys = Keyword.keys(funs)
 
-      {:ok, map}
+    results =
+      funs
+      |> Keyword.values()
+      |> run(timeout)
+
+    {kv, errors} =
+      keys
+      |> Enum.zip(results)
+      |> Enum.split_with(&ok?/1)
+
+    if [] == errors do
+      {:ok,
+       for {key, {:ok, v}} <- kv, into: %{} do
+         {key, {{:value, v}, @max_processes}}
+       end}
     else
-      {:error, reason} ->
-        {:stop, reason}
-
-      dup ->
-        {:stop,
-         for key <- dup do
-           {key, :exists}
-         end}
+      {:stop,
+       for {key, {:error, reason}} <- errors do
+         {key, reason}
+       end}
     end
   end
 
@@ -100,7 +96,7 @@ defmodule AgentMap.Server do
     #     send(worker, %{msg | on_server?: true})
     #     {:noreply, map}
 
-    #   {nil, @max_threads} ->
+    #   {nil, @max_processes} ->
     #     {:noreply, delete(map, key)}
 
     #   {_, :infinity} ->
@@ -129,14 +125,14 @@ defmodule AgentMap.Server do
       send(worker, :continue)
       {:noreply, map}
     else
-      max_t = dict(worker)[:"$max_threads"]
+      max_t = dict(worker)[:"$max_processes"]
       value = dict(worker)[:"$value"]
       key = dict(worker)[:"$key"]
 
       send(worker, :die!)
 
       ### ~BUG
-      if {value, max_t} == {:no, @max_threads} do
+      if {value, max_t} == {nil, @max_processes} do
         # GC
         {:noreply, delete(map, key)}
       else

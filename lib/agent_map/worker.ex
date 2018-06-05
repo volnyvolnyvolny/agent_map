@@ -1,15 +1,24 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Callback, Req, MalformedCallback}
+  alias AgentMap.{Helpers, MalformedCallback}
 
   import Process, only: [get: 1, put: 2, delete: 1, exit: 2]
   import System, only: [system_time: 0]
-  #  import Req, only: [run: 2]
 
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1}
+  @compile {:inline,
+            rand: 1,
+            dec: 1,
+            inc: 1,
+            add: 2,
+            unbox: 1,
+            set: 1,
+            info: 2,
+            dict: 1,
+            queue: 1,
+            queue_len: 1}
 
   # ms
   @wait 10
@@ -18,8 +27,8 @@ defmodule AgentMap.Worker do
   ## HELPERS
   ##
 
-  # Is OK for numbers < 1000.
-  defp rand(to), do: rem(System.system_time(), to)
+  # Greate for generating numbers < 1000.
+  defp rand(to) when to < 1000, do: rem(system_time(), to)
 
   defp add(:infinity, _v), do: :infinity
   defp add(i, v), do: i + v
@@ -52,9 +61,9 @@ defmodule AgentMap.Worker do
 
   def run(%{fun: f} = req, args) do
     if req.safe? do
-      Callback.safe_run(f, args)
+      Helpers.safe_apply(f, args)
     else
-      {:ok, Callback.run(f, args)}
+      {:ok, Helpers.apply(f, args)}
     end
   end
 
@@ -62,11 +71,11 @@ defmodule AgentMap.Worker do
     run(%{req | fun: f}, args)
   end
 
-  defp reply(nil, what), do: :nothing
-
   defp reply({_pid, _tag} = to, what) do
     GenServer.reply(to, what)
   end
+
+  defp reply(nil, _), do: :nothing
 
   defp reply(to, what) do
     send(to, what)
@@ -136,8 +145,8 @@ defmodule AgentMap.Worker do
           req =
             req
             |> Map.delete(:fun)
-            |> Map.put(action: :get_and_update)
-            |> Map.put(data: d)
+            |> Map.put(:action, :get_and_update)
+            |> Map.put(:data, d)
 
           send(get(:"$gen_server"), req)
 

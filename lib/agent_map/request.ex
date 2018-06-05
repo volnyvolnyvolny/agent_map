@@ -3,7 +3,7 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Callback, Worker, Transaction, Req}
+  alias AgentMap.{Helpers, Worker, Transaction, Req}
   import Worker, only: [dict: 1, unbox: 1, queue: 1]
 
   @max_processes 5

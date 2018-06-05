@@ -8,10 +8,11 @@ defmodule Memo do
   def stop(), do: AgentMap.stop(__MODULE__)
 
   @doc """
-  If `{task, arg}` key is known — return it, else, invoke given `fun` as
-  a Task, writing result under `{task, arg}`.
+  If `{task, arg}` key is known — return it,
+  else, invoke given `fun` as a Task, writing
+  result under `{task, arg}` key.
   """
-  def calc(task, arg, fun) do
+  def calc(task, fun, arg) do
     AgentMap.get_and_update(__MODULE__, {task, arg}, fn
       nil ->
         res = fun.(arg)
@@ -29,6 +30,6 @@ defmodule Calc do
   def fib(1), do: 1
 
   def fib(n) when n >= 0 do
-    Memo.calc(:fib, n, fn n -> fib(n - 1) + fib(n - 2) end)
+    Memo.calc(:fib, fn n -> fib(n - 1) + fib(n - 2) end, n)
   end
 end
