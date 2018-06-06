@@ -1084,8 +1084,15 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Updates the `agentmap` value(s) with given `key`(s).
+  Updates the key(s) in map with the given function.
   Returns the same `agentmap`.
+
+  This call may take two forms: single key and transaction. In a transaction
+  calls `fun` takes list of values and may return:
+
+  * a list of new values;
+  * `:id`, that leaves values as they are;
+  * `:drop`.
 
   For example:
 
@@ -1095,24 +1102,19 @@ defmodule AgentMap do
   — the first one deposits 1000000 dollars to Alices balance, while the second
   swapes balances of Alice and Bob.
 
-  Single key calls `fun` must return a new value, while transaction
-  (group/multiple keys) call `fun` may return:
+  ## Options
 
-  * a list of new values that has a length equal to the number of `keys`;
-  * `:id` to leave values as they are;
-  * `:drop` to delete them.
-
-  Be aware, that
+  Keep in mind that
 
       update(agentmap, key, fun, opts)
       update(agentmap, fun, keys, opts)
 
-  calls, respectively, are just syntax sugar for:
+  are no more then a syntax sugar for
 
       get_and_update(agentmap, key, &{:ok, fun.(&1)}, opts)
       get_and_update(agentmap, &{:ok, fun.(&1)}, keys, opts)
 
-  That means that all options are the same as in the `get_and_update/4` case.
+  That means that all options are the same as for `get_and_update/4`.
 
   ## Examples
 
@@ -1129,65 +1131,51 @@ defmodule AgentMap do
 
   For ex.:
 
-      iex> am = AgentMap.new(alice: 42, bob: 24, chris: 33, dunya: 51)
-      iex> ^am = AgentMap.update(am, &Enum.reverse/1, [:alice, :bob])
-      iex> AgentMap.get(am, & &1, [:alice, :bob])
-      [24, 42]
-      iex> AgentMap.update(am, fn _ -> :drop end, [:alice, :bob])
-      iex> AgentMap.keys(am)
-      [:chris, :dunya]
-      iex> AgentMap.update(am, fn _ -> :drop end, [:chris])
-      iex> AgentMap.update(am, :dunya, fn _ -> :drop end)
-      iex> AgentMap.get(am, & &1, [:chris, :dunya])
+      iex> am = AgentMap.new(a: 42, b: 24, c: 33, d: 51)
+      iex> AgentMap.get(am, & &1, [:a, :b, :c, :d])
+      [42, 24, 33, 51]
+      iex> am
+      ...> |> AgentMap.update(&Enum.reverse/1, [:a, :b])
+      ...> |> AgentMap.get(& &1, [:a, :b, :c, :d])
+      [24, 42, 33, 51]
+      iex> am
+      ...> |> AgentMap.update(fn _ -> :drop end, [:a, :b])
+      ...> |> AgentMap.keys()
+      [:c, :d]
+      iex> am
+      ...> |> AgentMap.update(fn _ -> :drop end, [:c])
+      ...> |> AgentMap.update(:d, fn _ -> :drop end)
+      ...> |> AgentMap.get(& &1, [:c, :d])
       [nil, :drop]
-
-  (!) Transaction will block value the same way as a single key call. For ex.:
-
-      am = AgentMap.new(alice: 42, bob: 24, chris: 33)
-
-      AgentMap.update(am, fn _ ->
-        :timer.sleep(1000)
-        :drop
-      end, [:alice, :bob])
-
-  will block the possibility to `get_and_update`, `update`, `cast` and even
-  non-priority `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values
-  are always available for "priority" `get` calls and value under the key
-  `:chris` is not blocked.
   """
   # 4
   @spec update(a_map, key, a_fun(any, any), options) :: a_map
   @spec update(a_map, a_fun([any], [any]), [key], options) :: a_map
   @spec update(a_map, a_fun([any], :drop | :id), [key], options) :: a_map
-  def update(agentmap, key, fun, opts \\ [!: false])
+  def update(agentmap, key, fun, opts \\ [!: false, safe: true])
 
   def update(agentmap, fun, keys, opts) when is_fun(fun, 1) and is_list(keys) do
-    get_and_update(agentmap, &{:ok, fun.(&1)}, keys, opts)
+    req = %Req{action: :update, data: {fun, keys}}
+    _call(agentmap, req, opts)
   end
 
   def update(agentmap, key, fun, opts) when is_fun(fun, 1) do
-    get_and_update(agentmap, key, &{:ok, fun.(&1)}, opts)
+    get_and_update(agentmap, key, &{:ok, Helpers.apply(fun, [&1])}, opts)
   end
 
   def update(agentmap, key, initial, fun) when is_fun(fun, 1) do
-    update(agentmap, key, fn value ->
-      if Process.get(:"$has_value?") do
-        Callback.run(fun, [value])
-      else
-        initial
-      end
-    end)
+    update(agentmap, key, initial, fun, [])
   end
 
   @doc """
-  For compatibility with `Map` API (and `Map.update/4` fun), `update(agentmap,
-  key, initial, fun)` call exists.
+  For compatibility with `Map` API, `update(agentmap, key, initial, fun)` call
+  supported.
 
-  iex> AgentMap.new(a: 42)
-  ...> |> AgentMap.update(:a, :value, & &1+1)
-  ...> |> AgentMap.update(:b, :value, & &1+1)
-  ...> |> AgentMap.take([:a,:b])
-  %{a: 43, b: :value}
+      iex> AgentMap.new(a: 42)
+      ...> |> AgentMap.update(:a, :value, & &1+1)
+      ...> |> AgentMap.update(:b, :value, & &1+1)
+      ...> |> AgentMap.take([:a,:b])
+      %{a: 43, b: :value}
   """
   # 5
   @spec update(a_map, key, any, a_fun(any, any), options) :: a_map
@@ -1195,9 +1183,9 @@ defmodule AgentMap do
     update(
       agentmap,
       key,
-      fn v ->
+      fn value ->
         if Process.get(:"$value") do
-          Callback.run(fun, [v])
+          Helpers.apply(fun, [value])
         else
           initial
         end
@@ -1213,43 +1201,42 @@ defmodule AgentMap do
   argument `value` and its result is used as the new value of `key`. If `key` is
   not present in `agentmap`, a `KeyError` exception is raised.
 
-  As in the other functions, `:!` option could be provided to make "out of
-  turn" calls.
+  ## Options
+
+  The same as for `get_and_update/4`.
 
   ## Examples
 
       iex> am = AgentMap.new(a: 1)
-      iex> ^am = AgentMap.update!(am, :a, &(&1 * 2))
-      iex> AgentMap.get(am, :a)
+      iex> am
+      ...> |> AgentMap.update!(:a, &(&1 * 2))
+      ...> |> AgentMap.get(:a)
       2
       iex> AgentMap.update!(am, :b, &(&1 * 2))
       ** (KeyError) key :b not found
-      iex> sleep = & fn _ -> :timer.sleep(&1) end
-      iex> AgentMap.cast(am, :a, sleep.(50))
-      iex> AgentMap.cast(am, :a, sleep.(100))
-      iex> AgentMap.update!(am, :a, fn :ok -> 42 end, !: true)
-      iex> AgentMap.get(am, :a)
+      iex> import :timer
+      iex> am
+      ...> |> AgentMap.cast(:a, sleep(50))
+      ...> |> AgentMap.cast(:a, sleep(100))
+      ...> |> AgentMap.update!(:a, fn _ -> 42 end, !: true)
+      ...> |> AgentMap.get(:a)
       42
       iex> AgentMap.get(am, :a, & &1)
       :ok
   """
-  def update!(agentmap, key, fun, opts \\ [!: false]) when is_fun(fun, 1) do
-    callback = fn value ->
-      if Process.get(:"$has_value?") do
-        {:ok, Callback.run(fun, [value])}
-      else
-        {:error}
-      end
-    end
-
-    with true <- has_key?(agentmap, key),
-         :ok <- get_and_update(agentmap, key, callback, opts) do
-      agentmap
-    else
-      _ -> raise KeyError, key: key
-    end
-
-    agentmap
+  def update!(agentmap, key, fun, opts \\ [!: false, safe: true]) when is_fun(fun, 1) do
+    update(
+      agentmap,
+      key,
+      fn value ->
+        if Process.get(:"$value") do
+          Helpers.apply(fun, [value])
+        else
+          raise KeyError, key: key
+        end
+      end,
+      opts
+    )
   end
 
   @doc """
@@ -1261,40 +1248,35 @@ defmodule AgentMap do
   ## Examples
 
       iex> am = AgentMap.new(a: 1, b: 2)
-      iex> AgentMap.replace!(am, :a, 3, cast: false)
-      iex> AgentMap.values(am)
+      iex> am
+      ...> |> AgentMap.replace!(:a, 3, cast: false)
+      ...> |> AgentMap.values()
       [3, 2]
       iex> AgentMap.replace!(am, :c, 2)
       ** (KeyError) key :c not found
 
       iex> am = AgentMap.new(a: 1)
       iex> import :timer
-      iex> AgentMap.cast(am, :a, fn _ -> sleep(50); 2 end)
-      iex> AgentMap.replace!(am, :a, 3)
-      iex> AgentMap.get(am, )
-      iex> AgentMap.cast(am, :a, fn _ -> sleep(50); 2 end)
-      iex> AgentMap.cast(am, :a, fn _ -> sleep(100); 3 end)
-      iex> AgentMap.replace!(am, :a, 42, !: true)
-      iex> AgentMap.get(am, :a)
+      iex> am
+      ...> |> AgentMap.cast(:a, fn _ -> sleep(50); 2 end)
+      ...> |> AgentMap.replace!(:a, 3)
+      ...> |> AgentMap.cast(:a, fn _ -> sleep(50); 2 end)
+      ...> |> AgentMap.cast(:a, fn _ -> sleep(100); 3 end)
+      ...> |> AgentMap.replace!(:a, 42, !: true)
+      ...> |> AgentMap.get(:a)
       42
-      iex> AgentMap.get(am, :a, !: false)
+      ...> AgentMap.get(am, :a, !: false)
       3
   """
   @spec replace!(agentmap, key, value, [!: boolean, timeout: timeout] | timeout) :: agentmap
   def replace!(agentmap, key, value, opts \\ [!: false, timeout: 5000]) do
     fun = fn _ ->
-      if Process.get(:"$has_value?") do
+      if Process.get(:"$value") do
         {:ok, value}
       else
+        raise KeyError, key: key
         {:error}
       end
-    end
-
-    with true <- has_key?(agentmap, key),
-         :ok <- get_and_update(agentmap, key, fun, opts) do
-      agentmap
-    else
-      _ -> raise KeyError, key: key
     end
   end
 
@@ -1317,7 +1299,7 @@ defmodule AgentMap do
   end
 
   def cast(agentmap, key, fun, opts) when is_fun(fun, 1) do
-    req = %Req{action: :cast, data: {key, fun}}
+    req = %Req{action: :get_and_update, data: {key, &{:ok, Helpers.apply(fun, [&1])}}}
     _cast(agentmap, req, opts)
   end
 
@@ -1341,10 +1323,10 @@ defmodule AgentMap do
 
       import :timer
 
-      am = AgentMap.new(key: 42)
-      AgentMap.get(am, :key, fn _ -> sleep(100) end)
-      AgentMap.cast(am, :key, fn _ -> sleep(100) end)
-      AgentMap.cast(am, :key, fn _ -> sleep(100) end)
+      AgentMap.new(key: 42)
+      |> AgentMap.get(:key, fn _ -> sleep(100) end)
+      |> AgentMap.cast(:key, fn _ -> sleep(100) end)
+      |> AgentMap.cast(:key, fn _ -> sleep(100) end)
 
   will be executed in around of 200 ms because `agentmap` can parallelize any
   sequence of `get/3` calls ending with `get_and_update/3`, `update/3` or
