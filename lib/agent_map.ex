@@ -15,11 +15,10 @@ defmodule AgentMap do
 
   Underneath it's a `GenServer` that holds a `Map`. If an `update/4`,
   `update!/4`, `get_and_update/4` or `cast/4` happend (or too many `get/4` calls
-  on a single key), a special temporary process called "worker" is spawned. The
-  message queue of that process became the queue of the callbacks for the
-  corresponding key. An `AgentMap` respects the order in which the callbacks
-  arrives and supports transactions — operations that simultaniously change a
-  group of values.
+  on the same key), a special temporary process called "worker" is spawned. The
+  message queue of that process became the queue of the calls waiting for
+  invocation. `AgentMap` respects the order in which calls are made and supports
+  transactions — operations that simultaniously change a group of values.
 
   Also, the special struct `%AgentMap{}` can be created via the `new/1`
   function. This allows to use the `Enumerable` protocol and take benefit from
@@ -53,44 +52,31 @@ defmodule AgentMap do
 
   Let's look at the more complicated example (memoization):
 
-      defmodule Memo do
-        def start_link() do
-          AgentMap.start_link(name: __MODULE__)
-        end
-
-        def stop() do
-          AgentMap.stop(__MODULE__)
-        end
-
-        @doc \"""
-        If `{task, arg}` key is known — return it, else,
-        invoke given `fun` as a Task, writing results
-        under `{task, arg}` key.
-        \"""
-        def calc(task, fun, arg) do
-          AgentMap.get_and_update(__MODULE__, {task, arg}, fn
-            nil ->
-              # The calculation will be made by worker which
-              # executes this callback.
-              res = fun.(arg)
-              # Return `res` and set it as a new value.
-              {res, res}
-
-            _value ->
-              # Change nothing, return current value.
-              :id
-          end)
-        end
-      end
-
       defmodule Calc do
         def fib(0), do: 0
         def fib(1), do: 1
-
         def fib(n) when n >= 0 do
-          Memo.calc(:fib, fn n -> fib(n - 1) + fib(n - 2) end, n)
+          unless GenServer.whereis(__MODULE__) do
+            AgentMap.start_link(name: __MODULE__)
+            fib(n)
+          else
+            AgentMap.get_and_update(__MODULE__, n, fn
+              nil ->
+                # This calculation will be made in a separate
+                # worker process.
+                res = fib(n - 1) + fib(n - 2)
+                # Return `res` and set it as a new value.
+                {res, res}
+
+              _value ->
+                # Change nothing, return current value.
+                :id
+            end)
+          end
         end
       end
+
+  Also, take a look at the example in the `test/memo.ex`.
 
   Also, `AgentMap` provides possibility to make transactions (operations on
   multiple keys). Let's see an accounting demo:
@@ -193,21 +179,18 @@ defmodule AgentMap do
   `Enumerable` protocol implemented for `%AgentMap{}`, so `Enum` should work as
   expected:
 
-      iex> AgentMap.new()
-      ...> |> Enum.empty?()
-      true
       iex> %{answer: 42}
       ...> |> AgentMap.new()
       ...> |> Enum.empty?()
       false
 
-  Similarly, `AgentMap` follows the `Access` behaviour:
+  Similary, `AgentMap` follows the `Access` behaviour:
 
       iex> am = AgentMap.new(a: 42, b: 24)
       iex> am.a
       42
 
-  (!) except of the `put_in` operator.
+  (!) `put_in` operator is not working properly.
 
   ## Options
 
@@ -234,15 +217,15 @@ defmodule AgentMap do
       ...> |> AgentMap.cast(:state, fn _ -> sleep(50); :go! end, !: true)
       ...> |> AgentMap.fetch(:state)
       {:ok, :ready}
-      # — returns immediately the current state.
-      #
-      # Now worker executes :steady,
-      # queue is [:go!, :stop], but not [:stop, :go!].
+      # AgentMap.fetch/2 immediately returns the
+      # current state. Worker executes first `cast`.
       #
       iex> AgentMap.queue_len(am, :state)
       2
+      # [:go!, :stop]
       iex> AgentMap.queue_len(am, :state, !: true)
       1
+      # [:go!]
       iex> [AgentMap.get(am, :state),
       ...>  AgentMap.get(am, :state, !: true),
       ...>  am.state]
@@ -259,12 +242,27 @@ defmodule AgentMap do
   each time message queue of the worker process has more that `100` items. It
   will be turned on again when message queue became empty.
 
-  ## Timeout and deadlines
+  ### Timeout
 
   A timeout is an integer greater than zero which specifies how many
   milliseconds are allowed before the `agentmap` executes the `fun` and returns
   the result value, or the atom `:infinity` to wait indefinitely. By default it
   is set to the `5000 ms` = `5 sec`.
+
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds are allowed before the `agentmap` executes the `fun` and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the caller exits. By default it's equal
+  to `5000` ms. This value could be given as `:timeout` option, or separately,
+  so:
+
+      get_and_update(agentmap, :key, fun)
+      get_and_update(agentmap, :key, fun, 5000)
+      get_and_update(agentmap, :key, fun, timeout: 5000)
+      get_and_update(agentmap, :key, fun, timeout: 5000, !: false)
+
+  means the same.
+
 
   If no result is received within the specified time, the caller exits, (!) but
   the callback will remain in a queue!
@@ -272,7 +270,7 @@ defmodule AgentMap do
       iex> import :timer
       iex> am =
       ...>   AgentMap.new(key: 42)
-      iex>   |> AgentMap.cast(:key, & sleep(50); &1+1)
+      iex> AgentMap.cast(am, :key, & sleep(50); &1+1)
       iex> Process.flag(:trap_exit, true)
       false
       iex> Process.info(self(), :message_queue_len)
@@ -283,17 +281,16 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :key, & &1)
       24
 
-  To change this behaviour, the special `deadline` option could be provided. For
-  instance, this calls:
+  To change this behaviour, provide `{:drop, timeout}` value. For instance, this
+  calls:
 
-      AgentMap.get(agentmap, :key, & &1, deadline: 6000)
-      AgentMap.get(agentmap, :key, & &1, deadline: 6000, timeout: 5000)
+      get(agentmap, :key, & &1, timeout: {:drop, 5000})
 
-  will timeout after `5000` ms and will be deleted from queue after `6` secs.
+  will timeout after `5000` ms and will be dropped from queue.
 
-  Also, `deadline` supports special `{:hard, pos_integer}` value. Callback for
-  the next call will be wrapped in a `Task` that will be shutdowned in `6000`
-  ms:
+  Also, special `{:hard, pos_integer}` is supported as a timeout value. Callback
+  for the next call will be wrapped in a `Task` that will be shutdowned in
+  `6000` ms:
 
       import :timer
       AgentMap.cast(
@@ -303,15 +300,15 @@ defmodule AgentMap do
         deadline: {:hard, 6000}
       )
 
-  ## Safe calls
+  ### Safe calls
 
   This call:
 
-      AgentMap.get(agentmap, :key, fn _ -> 42 / 0 end, safe: false)
+      get(agentmap, :key, fn _ -> 42 / 0 end, safe: false)
 
   will lead to the ungraceful falling of the `AgentMap` server. This is rarely a
   desirable behaviour, so by default, every callback is wrapped into a
-  `try-catch`.
+  `try-catch`. This can be turned of, providing `safe: false`.
 
   ## Name registration
 
@@ -344,7 +341,7 @@ defmodule AgentMap do
 
   @typedoc "The agentmap reference"
   @type agentmap :: pid | {atom, node} | name | %AgentMap{}
-  @type a_map :: agentmap
+  @type am :: agentmap
 
   @typedoc "The agentmap key"
   @type key :: term
@@ -353,16 +350,16 @@ defmodule AgentMap do
   @type value :: term
 
   @typedoc "Anonymous function, `{fun, args}` or MFA triplet"
-  @type a_fun(a, r) :: (a -> r) | {(... -> r), [a | any]} | {module, atom, [a | any]}
+  @type f(a, r) :: (a -> r) | {(... -> r), [a | any]} | {module, atom, [a | any]}
 
   @typedoc "Anonymous function with zero arity, pair `{fun/length(args), args}` or corresponding MFA tuple"
-  @type a_fun(r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
+  @type f(r) :: (() -> r) | {(... -> r), [any]} | {module, atom, [any]}
 
   @typedoc "Option for most of the calls"
-  @type option :: {:!, boolean} | {:timeout, timeout}
+  @type option :: {:!, boolean} | {:timeout, timeout} | {:safe, boolean}
 
-  @typedoc "Options for most of the calls"
-  @type options :: [option] | timeout
+  # @typedoc "Options for most of the calls"
+  # @type options :: [option] | timeout
 
   @doc false
   def child_spec(funs_and_opts) do
@@ -427,7 +424,7 @@ defmodule AgentMap do
       iex> am.a
       1
   """
-  @spec new(Enumerable.t() | a_map) :: a_map
+  @spec new(Enumerable.t() | am) :: am
   def new(enumerable)
 
   def new(%__MODULE__{} = am), do: am
@@ -456,7 +453,7 @@ defmodule AgentMap do
       iex> AgentMap.take(am, [:a, :b])
       %{a: :a, b: :b}
   """
-  @spec new(Enumerable.t(), (term -> {key, value})) :: a_map
+  @spec new(Enumerable.t(), (term -> {key, value})) :: am
   def new(enumerable, transform) do
     new(Map.new(enumerable, transform))
   end
@@ -545,7 +542,7 @@ defmodule AgentMap do
       iex> AgentMap.get(pid, :key, & &1)
       42
   """
-  @spec start_link([{key, a_fun(any)} | GenServer.option()]) :: on_start
+  @spec start_link([{key, f(any)} | GenServer.option()]) :: on_start
   def start_link(funs_and_opts \\ [timeout: 5000]) do
     {funs, opts, timeout} = prepair(funs_and_opts)
     GenServer.start_link(Server, {funs, timeout}, opts)
@@ -575,15 +572,28 @@ defmodule AgentMap do
       iex> exception
       %RuntimeError{message: "oops"}
   """
-  @spec start([{key, a_fun(any)} | GenServer.option()]) :: on_start
+  @spec start([{key, f(any)} | GenServer.option()]) :: on_start
   def start(funs_and_opts \\ [timeout: 5000]) do
     {funs, opts, timeout} = prepair(funs_and_opts)
     GenServer.start(Server, {funs, timeout}, opts)
   end
 
+  defp _timeout(opts) do
+    case opts[:timeout] do
+      nil ->
+        5000
+
+      {_, timeout} ->
+        timeout
+
+      timeout ->
+        timeout
+    end
+  end
+
   defp _call(agentmap, req, opts) do
     req = struct(req, opts)
-    GenServer.call(pid(agentmap), req, opts[:timeout] || 5000)
+    GenServer.call(pid(agentmap), req, _timeout(opts))
   end
 
   defp _cast(agentmap, %Req{} = req, opts) do
@@ -605,19 +615,19 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Invokes `fun`, passing `key` value as an argument. If there is no such, `nil`
-  will be used. Returns result of the invocation. This call does not change
-  state, so it can and will be executed concurrently. No more than
-  `max_processes` will be used per key (see `max_processes/2`). If there are
-  callbacks awaiting invocation, this call will be added to the end of the
-  corresponding queue (unless `!: true` is given).
+  Invokes `fun`, passing value as an argument. If it's lost — `nil` will be used
+  as a value. Returns result of the invocation. This call does not change state,
+  so it can and will be executed concurrently. No more than `max_processes` will
+  be used per key (see `max_processes/2`). If there are callbacks awaiting
+  invocation, this call will be added to the end of the corresponding queue
+  (unless `!: true` is given).
 
   This call has two forms:
 
     * single key: `get(agentmap, key, fun)`, where `fun` expected only one value
       to be passed;
-    * and multiple keys (transactions): `get(agentmap, fun, [key1, key2, …])`,
-      where `fun` expected to take a list of values.
+    * or transaction: `get(agentmap, fun, [key1, key2, …])`, where `fun`
+      expected to take a list of values.
 
   Compare two calls:
 
@@ -629,7 +639,7 @@ defmodule AgentMap do
 
   ## Options
 
-  Provide `safe: false` make unsafe calls which could exit server.
+  Provide `safe: false` to make [unsafe calls](#module-options)
 
   Provide `timeout` integer value, greater than zero which specifies how many
   milliseconds are allowed before the `agentmap` executes the `fun` and returns
@@ -707,8 +717,8 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :key, & &1, !: true)
       43
   """
-  @spec get(a_map, a_fun([value], a), [key], options) :: a when a: var
-  @spec get(a_map, key, a_fun(value, a), options) :: a when a: var
+  @spec get(am, f([value], a), [key], [option]) :: a when a: var
+  @spec get(am, key, f(value, a), [option]) :: a when a: var
 
   # 4
   def get(agentmap, key, fun, opts)
@@ -739,8 +749,8 @@ defmodule AgentMap do
 
   #
 
-  @spec get(a_map, key, d) :: value | d when d: var
-  @spec get(a_map, key) :: value | nil
+  @spec get(am, key, d) :: value | d when d: var
+  @spec get(am, key) :: value | nil
 
   def get(agentmap, key, default)
 
@@ -755,9 +765,10 @@ defmodule AgentMap do
   Gets the value for a specific `key` in `agentmap`.
 
   If `key` is present in `agentmap` with value `value`, then `value` is
-  returned. Otherwise, `fun` is evaluated and its result is returned. This is
-  useful if the default value is very expensive to calculate or generally
-  difficult to setup and teardown again.
+  returned. Otherwise, `fun` is evaluated and its result is returned.
+
+  This is useful if the default value is very expensive to calculate or
+  generally difficult to setup and teardown again.
 
   ## Examples
 
@@ -771,11 +782,13 @@ defmodule AgentMap do
       iex> AgentMap.get_lazy(am, :b, fun)
       13
   """
-  @spec get_lazy(a_map, key, (() -> a)) :: value | a when a: var
+  @spec get_lazy(am, key, (() -> a)) :: value | a when a: var
   def get_lazy(agentmap, key, fun) do
     case fetch(agentmap, key) do
-      {:ok, value} -> value
-      :error -> fun.()
+      {:ok, value} ->
+        value
+      :error ->
+        fun.()
     end
   end
 
@@ -801,31 +814,27 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Updates the `agentmap` value(s) with given `key`(s) and returns result of some
-  calculation. The callback `fun` will be added to the the end of the queue for
-  then given `key` (or to the begining, if `!: true` option is given). When
-  invocation happens, `agentmap` takes value(s) for the given `key`(s) and
-  invokes `fun`, passing values as the first argument and `nil`(s) for the
-  values that are lost.
+  Updates `agentmap` and returns some value. The callback `fun` will be added to
+  the queue. `fun` is invoked passing corresponding `values` or `nil`(s) for the
+  lost one(s).
 
-  As in the case of `get`, `update` and `cast` methods, `get_and_update` call
-  has two forms:
+  This call has two forms:
 
     * single key: `get_and_update(agentmap, key, fun)`, where `fun` expected
       only one value to be passed;
-    * and multiple keys (transactions): `get_and_update(agentmap, fun, [key1,
-      key2, …])`, where `fun` expected to take a list of values.
+    * and transactions: `get_and_update(agentmap, fun, [key1, key2, …])`, where
+      `fun` expected to take a list of values.
 
-  For example, compare two calls:
+  Compare two calls:
 
-      AgentMap.get_and_update(Account, fn [a,b] -> {:swapped, [b,a]} end, [:alice, :bob])
-      AgentMap.get_and_update(Account, :alice, & {&1, &1+1000000})
+      get_and_update(account, fn [a,b] -> {:swapped, [b,a]} end, [:Alice, :Bob])
+      get_and_update(account, :Alice, & {&1, &1+1000000})
 
-  — the first swapes balances of Alice and Bob balances, returning `:swapped`
-  atom, while the second one returns current Alice balance and deposits 1000000
-  dollars.
+  — the first one swapes Alice and Bob balances and returns `:swapped`, while
+  the second one returns current Alice balance and deposits `1000000` dollars to
+  it.
 
-  Single key calls `fun` may return:
+  In a single key calls `fun` can return:
 
     * a two element tuple: `{"get" value, new value}`;
     * a one element tuple `{"get" value}`;
@@ -838,7 +847,7 @@ defmodule AgentMap do
     * `{:chain, {fun, keys}, new_value}` — to not return value, but initiate
       transaction call `get_and_update/4` with given `fun` and `keys` pair.
 
-  While in transaction (group/multiple keys) calls `fun` may return:
+  In a transactions it can return:
 
     * a two element tuple `{"get" value, [new values]}`;
     * a two element tuple `{"get" value, :drop}` — to remove values with given
@@ -862,40 +871,46 @@ defmodule AgentMap do
     * `{:chain, {fun, keys}, new_value}` — to not return value, but initiate
       transaction `get_and_update/4` call with given `fun` and `keys` pair.
 
-  All lists returned by transaction call should have length equal to the number
-  of keys given.
-
   For ex.:
 
-      get_and_update(agentmap, fn [a, b] ->
-        if a > 10 do
-          a = a-10
-          b = b+10
-          [{a,a}, {b,b}] # [{get, new_state}]
-        else
-          {{:error, "Alice does not have 10$ to give to Bob!"}, [a,b]} # {get, [new_state]}
-        end
-      end, [:alice, :bob])
+      iex> %{alice: 42, bob: 24}
+      ...> |> AgentMap.new()
+      ...> |> get_and_update(fn [a, b] ->
+      ...>      if a > 10 do
+      ...>        a = a - 10
+      ...>        b = b + 10
+      ...>        [{a, a}, {b, b}] # [{get, new_state}]
+      ...>      else
+      ...>        {{:error, "Alice does not have 10$ to give to Bob!"}, [a, b]} # {get, [new_state]}
+      ...>      end
+      ...>    end, [:alice, :bob])
+      [32, 34]
 
   or:
 
       iex> am = AgentMap.new(alice: 42, bob: 24)
-      iex> AgentMap.get_and_update(am, fn _ -> [:pop, :id] end, [:alice, :bob])
+      iex> AgentMap.get_and_update(am, fn _ ->
+      ...>   [:pop, :id]
+      ...> end, [:alice, :bob])
       [42, 24]
       iex> AgentMap.get(am, & &1, [:alice, :bob])
       [nil, 24]
 
-  (!) State changing transaction (such as `get_and_update`) will block value the
-  same way as a single key calls. For ex.:
+  (!) State changing transactions (such as a `get_and_update`) will block all
+  the involving states. For ex.:
 
-      iex> AgentMap.new(alice: 42, bob: 24, chris: 0) |>
-      ...> AgentMap.get_and_update(&:timer.sleep(1000) && {:slept_well, &1}, [:alice, :bob])
+      iex> import :timer
+      iex> %{alice: 42, bob: 24, chris: 0}
+      ...> |> AgentMap.new()
+      ...> |> AgentMap.get_and_update(
+      ...>      &sleep(1000) && {:slept_well, &1},
+      ...>      [:alice, :bob]
+      ...>    )
       :slept_well
 
   will block the possibility to `get_and_update`, `update`, `cast` and even
-  non-priority `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values are
-  always available for "priority" `get` calls and value under the key `:chris` is
-  not blocked.
+  non-priority `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values
+  are always available for "priority" `get` calls. `chris` state is not blocked.
 
   Transactions are *Isolated* and *Durabled* (see, ACID model). *Atomicity* can
   be implemented inside callbacks and *Consistency* is out of question here as
@@ -903,31 +918,12 @@ defmodule AgentMap do
 
   ## Options
 
-  `timeout` is an integer greater than zero which specifies how many
-  milliseconds are allowed before the `agentmap` executes the `fun` and returns
-  the result value, or the atom `:infinity` to wait indefinitely. If no result
-  is received within the specified time, the caller exits. By default it's equal
-  to `5000` ms. This value could be given as `:timeout` option, or separately,
-  so:
+  Provide `safe: false` to make [unsafe calls](#module-options).
 
-      AgentMap.get_and_update(agentmap, :key, fun)
-      AgentMap.get_and_update(agentmap, :key, fun, 5000)
-      AgentMap.get_and_update(agentmap, :key, fun, timeout: 5000)
-      AgentMap.get_and_update(agentmap, :key, fun, timeout: 5000, !: false)
-
-  means the same.
-
-  The `:!` option is used to make "priority" calls. Values could have an
-  associated queue of callbacks, awaiting of execution. If such queue exists,
+  Provide `!: true` to make [priority calls](#module-options). Values could have
+  an associated queue of callbacks, awaiting of execution. If such queue exists,
   "priority" version will add call to the begining of the queue (via "selective
   receive").
-
-  Be aware that: (1) anonymous function, `{fun, args}` or MFA tuple can be
-  passed as a callback; (2) every value has it's own FIFO queue of callbacks
-  waiting to be executed and all the queues are processed concurrently; (3) no
-  value changing calls (`get_and_update`, `update` or `cast`) could be executed
-  in parallel on the same value. This can be done only for `get` calls (also,
-  see `max_processes/3`).
 
   ## Examples
 
@@ -1009,38 +1005,10 @@ defmodule AgentMap do
       :get
       iex> get(am, & &1, [:uno, :dos, :tres])
       [:u, :d, :t]
-
-  ### From update/4:
-
-  The callback `fun` will be added to the the end of the queue for then given
-  `key` (or to the begining, if `!: true` option is given). When invocation
-  happens, `agentmap` takes value(s) for the given `key`(s) and invokes `fun`,
-  passing values as the first argument and `nil`(s) for the values that are
-  lost.
-
-  As in the case of `get`, `get_and_update` and `cast` methods, `get_and_update`
-  call has two forms:
-
-    * single key: `update(agentmap, key, fun)`, where `fun` expected only one
-      value to be passed;
-    * and multiple keys (transactions): `update(agentmap, fun, [key1, key2,
-      …])`, where `fun` expected to take a list of values.
-
-  Transactions are *Isolated* and *Durabled* (see, ACID model). *Atomicity* can
-  be implemented inside callbacks and *Consistency* is out of question here as
-  its the application level concept.
-
-  Be aware that: (1) this function always returns `:ok`; (2) anonymous function,
-  `{fun, args}` or MFA tuple can be passed as a callback; (3) every value has
-  it's own FIFO queue of callbacks waiting to be executed and all the queues are
-  processed concurrently; (3) no value changing calls (`get_and_update`,
-  `update` or `cast`) could be executed in parallel on the same value. This can
-  be done only for `get` calls (also, see `max_processes/3`).
-
   """
   # 4
   @type callback(a) ::
-          a_fun(
+          f(
             value,
             {a}
             | {a, value}
@@ -1051,7 +1019,7 @@ defmodule AgentMap do
           )
 
   @type callback_t(a) ::
-          a_fun(
+          f(
             [value],
             {a}
             | {a, [value] | :drop | :id}
@@ -1062,19 +1030,29 @@ defmodule AgentMap do
             | {:chain, {callback_t(a), [key]}, value}
           )
 
-  @spec get_and_update(a_map, key, callback(a), options) :: a | value
+  @spec get_and_update(am, key, callback(a), [option]) :: a | value
         when a: var
-  @spec get_and_update(a_map, callback_t(a), [key], options) :: a | [value]
+  @spec get_and_update(am, callback_t(a), [key], [option]) :: a | [value]
         when a: var
 
-  def get_and_update(agentmap, key, fun, opts \\ [])
+  def get_and_update(agentmap, key, fun, opts \\ [!: false, safe: true, timeout: 5000])
 
   def get_and_update(agentmap, fun, keys, opts) when is_fun(fun, 1) and is_list(keys) do
+    # opts =
+    #   opts
+    #   |> Keyword.put_new(:!, false)
+    #   |> Keyword.put_new(:safe, true)
+
     req = %Req{action: :get_and_update, data: {fun, keys}}
     _call(agentmap, req, opts)
   end
 
   def get_and_update(agentmap, key, fun, opts) when is_fun(fun, 1) do
+    # opts =
+    #   opts
+    #   |> Keyword.put_new(:!, false)
+    #   |> Keyword.put_new(:safe, true)
+
     req = %Req{action: :get_and_update, data: {key, fun}}
     _call(agentmap, req, opts)
   end
@@ -1084,39 +1062,36 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Updates the key(s) in map with the given function.
+  Updates the values of `agentmap`.
   Returns the same `agentmap`.
 
-  This call may take two forms: single key and transaction. In a transaction
-  calls `fun` takes list of values and may return:
+  Keep in mind that
 
-  * a list of new values;
-  * `:id`, that leaves values as they are;
-  * `:drop`.
+      update(am, key, fun, opts)
+      update(am, fun, keys, opts)
 
-  For example:
+  are no more than a syntax sugar for
+
+      get_and_update(am, key, &{:ok, apply(fun, [&1])}, opts)
+      get_and_update(am, &{:ok, apply(fun, [&1])}, keys, opts)
+
+  So `fun`s for transactions can return:
+
+    * a list of new values;
+    * `:id` — directs to leave values as they are;
+    * `:drop`.
+
+  ## Options
+
+  The same as for `get_and_update/4`.
+
+  ## Examples
 
       update(account, :alice, & &1+1000000)
       update(account, fn [a,b] -> [b,a] end, [:alice, :bob])
 
-  — the first one deposits 1000000 dollars to Alices balance, while the second
-  swapes balances of Alice and Bob.
-
-  ## Options
-
-  Keep in mind that
-
-      update(agentmap, key, fun, opts)
-      update(agentmap, fun, keys, opts)
-
-  are no more then a syntax sugar for
-
-      get_and_update(agentmap, key, &{:ok, fun.(&1)}, opts)
-      get_and_update(agentmap, &{:ok, fun.(&1)}, keys, opts)
-
-  That means that all options are the same as for `get_and_update/4`.
-
-  ## Examples
+  — the first one call deposits 1000000 dollars to Alices balance, while the
+  second swapes balances of Alice and Bob.
 
       iex> {:ok, pid} = AgentMap.start_link(key: fn -> 42 end)
       iex> pid
@@ -1149,12 +1124,17 @@ defmodule AgentMap do
       [nil, :drop]
   """
   # 4
-  @spec update(a_map, key, a_fun(any, any), options) :: a_map
-  @spec update(a_map, a_fun([any], [any]), [key], options) :: a_map
-  @spec update(a_map, a_fun([any], :drop | :id), [key], options) :: a_map
-  def update(agentmap, key, fun, opts \\ [!: false, safe: true])
+  @spec update(am, key, f(any, any), [option]) :: am
+  @spec update(am, f([any], [any]), [key], [option]) :: am
+  @spec update(am, f([any], :drop | :id), [key], [option]) :: am
+  def update(agentmap, key, fun, opts \\ [!: false, safe: true, timeout: 5000])
 
   def update(agentmap, fun, keys, opts) when is_fun(fun, 1) and is_list(keys) do
+    # opts =
+    #   opts
+    #   |> Keyword.put_new(:!, false)
+    #   |> Keyword.put_new(:safe, true)
+
     req = %Req{action: :update, data: {fun, keys}}
     _call(agentmap, req, opts)
   end
@@ -1178,7 +1158,7 @@ defmodule AgentMap do
       %{a: 43, b: :value}
   """
   # 5
-  @spec update(a_map, key, any, a_fun(any, any), options) :: a_map
+  @spec update(am, key, any, f(any, any), [option]) :: am
   def update(agentmap, key, initial, fun, opts) when is_fun(fun, 1) do
     update(
       agentmap,
@@ -1197,11 +1177,11 @@ defmodule AgentMap do
   @doc """
   Updates `key` with the given function.
 
-  If `key` is present in `agentmap` with value `value`, `fun` is invoked with
-  argument `value` and its result is used as the new value of `key`. If `key` is
-  not present in `agentmap`, a `KeyError` exception is raised.
+  If `key` is present in `agentmap`, `fun` is invoked with value as argument and
+  its result is used as the new value of `key`. If `key` is not present in
+  `agentmap`, a `KeyError` exception is raised.
 
-  ## Options
+  ## [Option]
 
   The same as for `get_and_update/4`.
 
@@ -1224,7 +1204,7 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :a, & &1)
       :ok
   """
-  def update!(agentmap, key, fun, opts \\ [!: false, safe: true]) when is_fun(fun, 1) do
+  def update!(agentmap, key, fun, opts \\ [!: false, safe: true, timeout: 5000]) when is_fun(fun, 1) do
     update(
       agentmap,
       key,
@@ -1240,8 +1220,8 @@ defmodule AgentMap do
   end
 
   @doc """
-  Alters the value stored under `key` to `value`, but only if the entry `key`
-  already exists in `agentmap`.
+  Alters the value stored under `key`, but only if `key` already exists in
+  `agentmap`.
 
   If `key` is not present in `agentmap`, a `KeyError` exception is raised.
 
@@ -1275,7 +1255,6 @@ defmodule AgentMap do
         {:ok, value}
       else
         raise KeyError, key: key
-        {:error}
       end
     end
   end
@@ -1288,9 +1267,9 @@ defmodule AgentMap do
   Perform `cast` ("fire and forget"). Works the same as `update/4` but uses
   `GenServer.cast/2`.
   """
-  @spec cast(a_map, key, a_fun(value, value), !: boolean) :: a_map
-  @spec cast(a_map, a_fun([value], [value]), [key], !: boolean) :: a_map
-  @spec cast(a_map, a_fun([value], :drop | :id), [key], !: boolean) :: a_map
+  @spec cast(am, key, f(value, value), !: boolean) :: am
+  @spec cast(am, f([value], [value]), [key], !: boolean) :: am
+  @spec cast(am, f([value], :drop | :id), [key], !: boolean) :: am
   def cast(agentmap, key, fun, opts \\ [!: false])
 
   def cast(agentmap, fun, keys, opts) when is_fun(fun, 1) and is_list(keys) do
@@ -1304,12 +1283,12 @@ defmodule AgentMap do
   end
 
   @doc """
-  Sets the `:max_processes` value for the given `key`. Returns the old value.
+  Sets the `:max_processes` value for the given `key`.
+  Returns the old value.
 
   `agentmap` can execute `get` calls on the same key concurrently. `max_processes`
   option specifies number of processes per key used, minus one thread for the
-  process holding the queue. By default five (5) `get` calls on the same state
-  could be executed, so
+  process holding the queue. Default value is `5`.
 
       iex> import :timer
       iex> am = AgentMap.new(key: 42)
@@ -1319,18 +1298,16 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :key, fn _ -> sleep(100) end)
       :ok
 
-  will be executed in around of 100 ms, not 500. Be aware, that this call:
+  will be executed in around of `100` ms, not `500`. This sequence:
 
       import :timer
-
       AgentMap.new(key: 42)
       |> AgentMap.get(:key, fn _ -> sleep(100) end)
       |> AgentMap.cast(:key, fn _ -> sleep(100) end)
       |> AgentMap.cast(:key, fn _ -> sleep(100) end)
 
-  will be executed in around of 200 ms because `agentmap` can parallelize any
-  sequence of `get/3` calls ending with `get_and_update/3`, `update/3` or
-  `cast/3`.
+  will run for 200 ms as `agentmap` can parallelize any sequence of `get/3`
+  calls ending with `get_and_update/3`, `update/3` or `cast/3`.
 
   Use `max_processes: 1` to execute `get` calls in sequence.
 
@@ -1344,14 +1321,15 @@ defmodule AgentMap do
   """
   @spec max_processes(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
   def max_processes(agentmap, key, value) do
-    _call(agentmap, %Req{action: :max_processes, data: {key, value}, !: true}, [])
+    req = %Req{action: :max_processes, data: {key, value}, !: true}
+    _call(agentmap, req, [])
   end
 
   @doc """
-  Fetches the value for a specific `key` in the given `agentmap`.
+  Fetches the value for a specific `key` from `agentmap`.
 
-  If `agentmap` contains the given `key` with value value, then `{:ok, value}`
-  is returned. If it's doesn’t contain `key` — `:error` is returned.
+  If `agentmap` contains the given `key`, `{:ok, value}` is returned. If it
+  doesn’t contain `key`, `:error` is returned.
 
   Returns value *immediately*, unless `!: false` option is given.
 
@@ -1363,52 +1341,54 @@ defmodule AgentMap do
       iex> AgentMap.fetch(am, :b)
       :error
 
-  ## Options
+  ## [Option]
 
-  `!: false` option can be provided, putting this call at the end of the
-  execution queue. See [corresponding docs section](#module-options). In this
-  case `timeout` could be [provided](#module-timeout). Most likely, you do not
-  need this option.
+  Provide `!: false` to put this call to the queue. See [corresponding docs
+  section](#module-[option]). If so, `timeout` can be
+  [provided](#module-timeout).
 
       iex> import :timer
       iex> am = AgentMap.new()
-      iex> AgentMap.cast(am, :b, fn _ -> sleep(50); 42 end)
+      iex> AgentMap.cast(am, :b, fn _ ->
+      ...>   sleep(50); 42
+      ...> end)
       iex> AgentMap.fetch(am, :b)
       :error
       iex> AgentMap.fetch(am, :b, !: false)
       {:ok, 42}
   """
-  @spec fetch(agentmap, key, options) :: {:ok, value} | :error
+  @spec fetch(agentmap, key, [option]) :: {:ok, value} | :error
   def fetch(agentmap, key, opts \\ [!: true]) do
     if Keyword.get(opts, :!, true) do
-      req = struct(%Req{action: :fetch, data: key}, opts)
+      req = %Req{action: :fetch, data: key}
       _call(agentmap, req, opts)
     else
       get(agentmap, key, fn v ->
-        hv? = Process.get(:"$has_value?")
-        (hv? && {:ok, v}) || :error
+        has_value? = Process.get(:"$value")
+        (has_value? && {:ok, v}) || :error
       end)
     end
   end
 
   @doc """
-  Fetches the value for a specific `key` in the given `agentmap`, erroring out
-  if `agentmap` doesn't contain `key`. If `agentmap` contains the given `key`,
-  the corresponding value is returned. If `agentmap` doesn't contain `key`, a
+  Fetches the value for a specific `key` from `agentmap`, erroring out if
+  `agentmap` doesn't contain `key`. If `agentmap` contains the given `key`, the
+  corresponding value is returned. If `agentmap` doesn't contain `key`, a
   `KeyError` exception is raised.
 
   Returns value *immediately*, unless `!: false` option is given.
 
-  ## Options
+  ## [Option]
 
-  `!: false` option can be provided, putting this call at the end of the
-  execution queue. See [corresponding docs section](#module-options). In this
-  case `timeout` could be [provided](#module-timeout). Most likely, you do not
-  need this option.
+  Provide `!: false` to put this call in the queue. See [corresponding docs
+  section](#module-[option]). If so, `timeout` can be
+  [provided](#module-timeout).
 
       iex> import :timer
       iex> am = AgentMap.new()
-      iex> AgentMap.cast(am, :b, fn _ -> sleep(50); 42 end)
+      iex> AgentMap.cast(am, :b, fn _ ->
+      ...>   sleep(50); 42
+      ...> end)
       iex> AgentMap.fetch!(am, :b)
       ** (KeyError) key :b not found
       iex> AgentMap.fetch!(am, :b, !: false)
@@ -1425,8 +1405,10 @@ defmodule AgentMap do
   @spec fetch!(agentmap, key, !: boolean) :: value | no_return
   def fetch!(agentmap, key, opts \\ [!: true]) do
     case fetch(agentmap, key, opts) do
-      {:ok, value} -> value
-      :error -> raise KeyError, key: key
+      {:ok, value} ->
+        value
+      :error ->
+        raise KeyError, key: key
     end
   end
 
@@ -1444,37 +1426,28 @@ defmodule AgentMap do
       iex> AgentMap.has_key?(am, :b)
       false
   """
-  @spec has_key?(agentmap, key, options) :: boolean
+  @spec has_key?(agentmap, key, [option]) :: boolean
   def has_key?(agentmap, key, opts \\ [!: true]) do
     match?({:ok, _}, fetch(agentmap, key, opts))
   end
 
   @doc """
-  Removes and returns the value associated with `key` in `agentmap`. If there is
-  no such `key` in `agentmap`, `default` is returned (`nil`).
+  Removes and returns the value associated with `key` from `agentmap`. If there
+  is no such `key` in `agentmap`, `default` is returned (`nil`).
 
-  ## Options
-
-  `!: false` option can be provided, adding `pop` call to the end of the
-  execution queue. See [corresponding docs section](#module-options).
-
-  Most likely, you do not need this option.
-
-  Also, `timeout` could be [provided](#module-timeout)
-
-  ## Analogs
-
-  Analogous behaviour can be achieved with
-
-      get_and_update(agentmap, key, fn _ -> :pop end)
-      get_and_update(agentmap, fn [v] -> {v, :drop} end, [key])
-
-  and
+  The same (but slowly) can be achieved with
 
       get_and_update(agentmap, key, fn v ->
-        hv? = Process.get(:"$has_value?")
-        hv? && :pop || {default}
+        has_value? = Process.get(:"$value")
+        has_value? && :pop || {default}
       end)
+
+  ## [Option]
+
+  Provide `!: false` to make non-priority calls. See [corresponding docs
+  section](#module-[option]).
+
+  Also, `timeout` can be [provided](#module-timeout).
 
   ## Examples
 
@@ -1504,43 +1477,25 @@ defmodule AgentMap do
       iex> AgentMap.pop(am, :a, :no)
       :no
   """
-  @spec pop(agentmap, key, any, options) :: value | any
-  def pop(agentmap, key, default \\ nil, opts \\ [!: true]) do
+  @spec pop(agentmap, key, any, [option]) :: value | any
+  def pop(agentmap, key, default \\ nil, opts \\ [!: true, timeout: 5000]) do
+    opts = Keyword.put_new(opts, :!, true)
     _call(agentmap, %Req{action: :pop, data: {key, default}}, opts)
   end
 
   @doc """
   Puts the given `value` under the `key` in the `agentmap`.
 
-  Returns *immediately*, but you can provide `cast: false` to make this call
-  wait until actual put is made.
+  Returns *immediately*, but `cast: false` option can be provided to return only
+  when the actual call is complete.
 
-  ## Options
+  ## [Option]
 
-  By default this call is ["priority"](#module-options), but `!: false` option can
-  be provided to add `put` call to the end of the execution queue. Most likely,
-  you do not need this.
+  By default this call is a ["priority"](#module-[option]). Provide `!: false` to
+  make non-priority calls.
 
-  `cast: false` option make this call wait until put is made. By default,
-  `GenServer.cast/2` is used. If cast is turned off, `timeout` could be
-  [configured](#module-timeout).
-
-  ## Analogs
-
-  The same could be made with:
-
-      update(agentmap, key, fn _ -> value end, !: true)
-      cast(agentmap, key, fn _ -> value end, !: true)
-      get_and_update(agentmap, key, fn old -> {old, value} end, !: true)
-
-  or:
-
-      update(agentmap, fn _ -> [value] end, [key], !: true)
-      cast(agentmap, fn _ -> [value] end, [key], !: true)
-      get_and_update(agentmap, key, fn [old] -> {old, [value]} end, !: true)
-
-  But `put/4` works a little bit faster and does not create unnecessarily `Task`
-  processes.
+  Provide `cast: false` to use `GenServer.call/3` instead of `GenServer.cast/2`
+  to make this call. If so, `timeout` can be [provided](#module-timeout).
 
   ## Examples
 
@@ -1554,35 +1509,30 @@ defmodule AgentMap do
       ...> |> AgentMap.take([:a, :b])
       %{a: 3, b: 2}
   """
-  @spec put(agentmap, key, value, !: boolean, cast: boolean, timeout: timeout) :: agentmap
+  @spec put(agentmap, key, value, [option | {:cast, boolean}]) :: agentmap
   def put(agentmap, key, value, opts \\ [!: true, cast: true]) do
+    opts =
+      opts
+      |> Keyword.put_new(:!, true)
+    # |> Keyword.put_new(:cast, true)
+
     req = %Req{action: :put, data: {key, value}}
     _call_or_cast(agentmap, req, opts)
   end
 
   @doc """
+  Returns a snapshot with a key-value pairs taken from `agentmap`. Keys that are
+  not in `agentmap` are ignored.
 
-  Returns a snapshot `Map` with a key-value pairs taken from `agentmap`. Keys
-  that are not in `agentmap` are ignored.
-
-  ## Options
-
-  Provide `!: false` to wait for execution of at least all the callbacks for all
-  the `keys` at the moment of call. See [corresponding section](#module-options)
-  for details.
-
-  Also, `timeout` and `deadline` values could be provided. See
-  [timeout](#module-timeout) and [deadline](#module-deadline) sections.
-
-  ## Analogs
-
-      take(agentmap, keys, !: false)
-
-  is a syntax sugar for
+  It is a syntax sugar for
 
       get(agentmap, fn _ -> Process.get(:"$map") end, keys)
 
-  see `get/4`.
+  ## [Option]
+
+  Provide `!: false` to wait for execution of all the callbacks for all the
+  `keys` at the moment of call. See [corresponding section](#module-[option]) for
+  the details. If so, `timeout` value can be [provided](#module-timeout).
 
   ## Examples
 
@@ -1596,40 +1546,39 @@ defmodule AgentMap do
       ...> |> AgentMap.cast(:a, fn _ -> sleep(100); 42 end)
       ...> |> AgentMap.take([:a])
       %{a: 1}
-
-  But:
-
-      iex> import :timer
+      #
+      # But:
+      #
       iex> AgentMap.new(a: 1)
       ...> |> AgentMap.cast(fn _ -> sleep(100); 42 end)
       ...> |> AgentMap.take([:a], !: false)
       %{a: 42}
   """
-  @spec take(agentmap, Enumerable.t(), options) :: map
+  @spec take(agentmap, Enumerable.t(), [option]) :: map
   def take(agentmap, keys, opts \\ [!: true]) do
-    fun = fn _ ->
-      Process.get(:"$map")
-    end
-
-    get(agentmap, fun, keys, opts)
+    get(
+      agentmap,
+      fn _ ->
+        Process.get(:"$map")
+      end,
+      keys,
+      Keyword.put_new(opts, :!, true)
+    )
   end
 
   @doc """
   Deletes the entry in the `agentmap` for a specific `key`.
 
   Returns *immediately*, but because of the callbacks awaiting execution,
-  `keys/1` may still show some of the dropped keys — use `cast: false` to
-  bypass.
+  `keys/1` may still show some of the dropped keys. Use `cast: false` to bypass.
 
-  ## Options
+  ## [Option]
 
   Provide `!: true` to make "priority" drop calls. See [corresponding
-  section](#module-options) for details.
+  section](#module-[option]) for details.
 
   Provide `cast: false` to wait until actual delete happend. If so, `timeout`
   value can be [provided](#module-timeout).
-
-  Also, `deadline` value can be [provided](#module-deadline).
 
   ## Examples
 
@@ -1644,30 +1593,21 @@ defmodule AgentMap do
       ...> |> AgentMap.take([:a, :b])
       %{b: 2}
   """
-  @spec delete(agentmap, key, !: boolean, cast: boolean, timeout: timeout) :: agentmap
+  @spec delete(agentmap, key, [option | {:cast, boolean}]) :: agentmap
   def delete(agentmap, key, opts \\ [!: false, cast: true]) do
+    # opts =
+    #   opts
+    #   |> Keyword.put_new(:cast, true)
+    #   |> Keyword.put_new(:!, false)
     req = %Req{action: :delete, data: key}
     _call_or_cast(agentmap, req, opts)
   end
 
   @doc """
-  Drops the given `keys` from `agentmap`.
+  Drops `keys` from `agentmap`.
 
-  Returns *immediately*, but because of the callbacks awaiting for execution,
-  `keys/1` may still show some of the dropped keys — use `cast: false` to
-  bypass.
-
-  ## Options
-
-  Provide `!: true` to make "priority" drop calls. See [corresponding
-  section](#module-options) for details.
-
-  Provide `cast: false` to wait until actual drop happend. In this case, also,
-  `timeout` can [provided](#module-timeout).
-
-  Also, `deadline` value can be [provided](#module-deadline).
-
-  ## Analogs
+  Returns *immediately*. Because of the callbacks awaiting for execution,
+  `keys/1` may still show some of the dropped keys. Use `cast: false` to bypass.
 
   Also, `keys` could be dropped with:
 
@@ -1676,7 +1616,13 @@ defmodule AgentMap do
       get_and_update(agentmap, fn _ -> :pop end, keys)
       get_and_update(agentmap, fn _ -> {:ok, :drop} end, keys)
 
-  Be aware, that this calls delete values simultaneously.
+  ## [Option]
+
+  Provide `!: true` to make "priority" drop calls. See [corresponding
+  section](#module-[option]) for details.
+
+  Provide `cast: false` to wait until actual drop happend. In this case, also,
+  `timeout` can be [provided](#module-timeout).
 
   ## Examples
 
@@ -1686,21 +1632,18 @@ defmodule AgentMap do
       ...> |> AgentMap.keys()
       [:a, :c]
   """
-  @spec drop(
-          agentmap,
-          Enumerable.t(),
-          !: boolean,
-          cast: boolean,
-          timeout: timeout,
-          deadline: timeout
-        ) :: agentmap
+  @spec drop(agentmap, Enumerable.t(), [option | {:cast, boolean}]) :: agentmap
   def drop(agentmap, keys, opts \\ [!: false, cast: true]) do
+    #    opts =
+    #      opts
+    #      |> Keyword.put_new(:cast, true)
+    #      |> Keyword.put_new(:!, false)
     req = %Req{action: :drop, data: keys}
     _call_or_cast(agentmap, req, opts)
   end
 
   @doc """
-  Returns all the keys of given `agentmap`.
+  Returns all keys from `agentmap`.
 
   ## Examples
 
@@ -1715,14 +1658,13 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns all values of `agentmap`.
+  Returns all values from `agentmap`.
 
   ### Options
 
-  `!: false` can be given to wait for execution of all callbacks in all the
-  queues at the moment of call. This can be helpful if your `agentmap` has a
-  small set of keys (maybe, fixed). See [corresponding section](#module-options)
-  for details.
+  Provide `!: false` to wait for execution of all callbacks in all the queues at
+  the moment of the call. See [corresponding section](#module-[option]) for
+  details.
 
   Also, `timeout` can be [provided](#module-timeout).
 
@@ -1733,18 +1675,19 @@ defmodule AgentMap do
       ...> |> AgentMap.values()
       [1, 2, 3]
   """
-  @spec values(agentmap, options) :: [value]
+  @spec values(agentmap, [option]) :: [value]
   def values(agentmap, opts \\ [!: true]) do
+    opts = Keyword.put_new(opts, :!, true)
     _call(agentmap, %Req{action: :values}, opts)
   end
 
   @doc """
-  Returns the size of execution queue for given `key`.
+  Returns the size of the execution queue for the given `key`.
 
   ### Options
 
-  `!: (false) true` option could be provided to count only (not) priority
-  callbacks in the corresponding queue.
+  Provide `!: (false) true` to count only (not) priority callbacks in the
+  corresponding queue.
 
   ### Examples
 
@@ -1775,20 +1718,18 @@ defmodule AgentMap do
   @doc """
   Increment value with given `key`.
 
-  Do not wait until actual increment happend, as by default `GenServer.cast/2`
-  is used.
+  Returns immediately, without waiting for actual increment happen, as by
+  default `GenServer.cast/2` is used.
 
   ### Options
 
-  Provide `!: true` to make this cast call a priority. See [corresponding
-  section](#module-options) for details.
-
-  Provide `cast: false` to return only after increment happend. If so, `timeout`
-  can be [given](#module-timeout).
-
   Provide `step` to setup increment step.
 
-  Provide soft-`deadline` [value](#module-deadline).
+  Provide `!: true` to make this cast call a priority. See [corresponding
+  section](#module-priority-calls-true) for details.
+
+  Provide `cast: false` to return only after increment happend. If so, `timeout`
+  option can be [used](#module-timeout).
 
   ### Examples
 
@@ -1800,38 +1741,34 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :b)
       1
   """
-  @spec inc(
-          agentmap,
-          key,
-          !: boolean,
-          cast: boolean,
-          timeout: timeout,
-          step: non_neg_integer,
-          deadline: timeout
-        ) :: agentmap
-  def inc(agentmap, key, opts \\ [!: false, cast: true, step: 1, deadline: :infinity]) do
-    step = opts[:step] || 1
-    req = %Req{action: :inc, data: {key, step}}
+  @spec inc(agentmap, key, [option | {:step, non_neg_integer}]) :: agentmap
+  def inc(agentmap, key, opts \\ [step: 1, cast: true, !: false]) do
+    opts =
+      opts
+      |> Keyword.put_new(:step, 1)
+
+    # |> Keyword.put_new(:cast, true)
+    # |> Keyword.put_new(:!, false)
+
+    req = %Req{action: :inc, data: {key, opts[:step]}}
     _call_or_cast(agentmap, req, opts)
   end
 
   @doc """
   Decrement value with given `key`.
 
-  Do not wait until actual decrement happend, as by default `GenServer.cast/2`
-  is used.
+  Returns immediately, without waiting for actual decrement happen, as by
+  default `GenServer.cast/2` is used.
 
   ### Options
 
-  Provide `!: true` to make this call a priority. See [corresponding
-  section](#module-options) for details.
-
-  Provide `cast: false` to return only after decrement happend. If so, `timeout`
-  can be [given](#module-timeout).
-
   Provide `step` to setup decrement step.
 
-  Provide soft-`deadline` [value](#module-deadline).
+  Provide `!: true` to make this call a priority. See [corresponding
+  section](#module-priority-calls-true) for details.
+
+  Provide `cast: false` to return only after decrement happend. If so, `timeout`
+  can be [used](#module-timeout).
 
   ### Examples
 
@@ -1843,11 +1780,16 @@ defmodule AgentMap do
       iex> AgentMap.get(am, :b)
       1
   """
-  @spec dec(agentmap, key, !: boolean, cast: boolean, step: non_neg_integer, deadline: timeout) ::
-          agentmap
-  def dec(agentmap, key, opts \\ [!: false, cast: false, step: 1, deadline: :infinity]) do
-    step = opts[:step] || 1
-    req = %Req{action: :dec, data: {key, step}}
+  @spec dec(agentmap, key, [option | {:step, non_neg_integer}]) :: agentmap
+  def dec(agentmap, key, opts \\ [step: 1, cast: true, !: false]) do
+    opts =
+      opts
+      |> Keyword.put_new(:step, 1)
+
+    # |> Keyword.put_new(:cast, true)
+    # |> Keyword.put_new(:!, false)
+
+    req = %Req{action: :dec, data: {key, opts[:step]}}
     _call_or_cast(agentmap, req, opts)
   end
 

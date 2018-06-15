@@ -18,7 +18,7 @@ defmodule AgentMap.Req do
     :data,
     :from,
     safe?: true,
-    deadline: :infinity,
+    timeout: 5000,
     !: false
   ]
 
