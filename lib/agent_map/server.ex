@@ -16,16 +16,6 @@ defmodule AgentMap.Server do
   defp box(nil), do: {nil, @max_processes}
   defp box({_value, _max_p} = p), do: p
 
-  defp wait(ref) do
-    receive do
-      {ref, _} ->
-        :continue
-    after
-      0 ->
-        wait(ref)
-    end
-  end
-
   def spawn_worker(map, key) do
     ref = make_ref()
 
@@ -34,7 +24,10 @@ defmodule AgentMap.Server do
         Worker.loop({ref, self()}, key, box(map[key]))
       end)
 
-    wait(ref)
+    receive do
+      {ref, _} ->
+        :continue
+    end
 
     %{map | key => {:pid, worker}}
   end
@@ -74,71 +67,73 @@ defmodule AgentMap.Server do
   end
 
   def handle_cast(req, map) do
-    map =
-      case Req.handle(req, map) do
-        {:reply, _r, map} ->
-          map
+    {:noreply,
+     case Req.handle(req, map) do
+       {:reply, _r, map} ->
+         map
 
-        {_, map} ->
-          map
-      end
-
-    {:noreply, map}
+       {:noreply, map} ->
+         map
+     end}
   end
 
   ##
   ## INFO
   ##
 
-  def handle_info(%{info: :done} = msg, map) do
-    # case map[key] do
-    #   {:pid, worker} ->
-    #     send(worker, %{msg | on_server?: true})
-    #     {:noreply, map}
+  def handle_info(%{info: :done, key: key} = msg, map) do
+    {:noreply,
+     case map[key] do
+       {:pid, worker} ->
+         send(worker, msg)
+         map
 
-    #   {nil, @max_processes} ->
-    #     {:noreply, delete(map, key)}
+       {nil, {1, @max_processes}} ->
+         delete(map, key)
 
-    #   {_, :infinity} ->
-    #     {:noreply, map}
+       {value, {1, max_p}} ->
+         %{map | key => {value, max_p}}
 
-    #   {value, quota} ->
-    #     map = put_in(map[key], {value, quota + 1})
-    #     {:noreply, map}
-
-    #   _ ->
-    #     {:noreply, map}
-    # end
+       {value, {p, max_p}} ->
+         %{map | key => {value, {p - 1, max_p}}}
+     end}
   end
 
   def handle_info(%{action: :chain} = req, map) do
-    Req.handle(%{req | action: :get_and_update}, map)
+    Req.handle(struct(Req, %{req | action: :get_and_update}), map)
   end
 
   # Worker asks to exit.
   def handle_info({worker, :mayidie?}, map) do
-    {_, dict} = Process.info(worker, :dictionary)
-
     # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.
     if queue_len(worker) > 0 do
       send(worker, :continue)
       {:noreply, map}
     else
-      max_t = dict(worker)[:"$max_processes"]
-      value = dict(worker)[:"$value"]
-      key = dict(worker)[:"$key"]
-
+      dict = dict(worker)
       send(worker, :die!)
 
-      ### ~BUG
-      if {value, max_t} == {nil, @max_processes} do
-        # GC
-        {:noreply, delete(map, key)}
-      else
-        map = %{map | key => {value, max_t}}
-        {:noreply, map}
-      end
+      p = dict[:"$processes"]
+      max_p = dict[:"$max_processes"]
+
+      key = dict[:"$key"]
+
+      state =
+        {dict[:"$value"],
+         if p == 1 do
+           max_p
+         else
+           {p - 1, max_p}
+         end}
+
+      {:noreply,
+       if state == {nil, @max_processes} do
+         # GC
+         delete(map, key)
+       else
+         %{map | key => state}
+       end}
     end
   end
 
@@ -147,10 +142,11 @@ defmodule AgentMap.Server do
   end
 
   def code_change(_old, map, fun) do
-    for key <- Map.keys(map) do
-      Req.handle(%Req{action: :cast, data: {key, fun}})
-    end
-
-    {:ok, map}
+    {:ok,
+     Enum.reduce(Map.keys(map), map, fn key, map ->
+       %Req{action: :cast, data: {key, fun}}
+       |> Req.handle(map)
+       |> elem(1)
+     end)}
   end
 end

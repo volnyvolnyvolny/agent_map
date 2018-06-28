@@ -86,12 +86,8 @@ defmodule AgentMap.Worker do
     put(:"$max_processes", req.value)
   end
 
-  defp handle(%{info: :done} = msg) do
-    if msg[:on_server?] do
-      inc(:"$max_processes")
-    else
-      dec(:"$processes")
-    end
+  defp handle(%{info: :done}) do
+    dec(:"$processes")
   end
 
   defp handle(%{action: :get} = req) do
@@ -142,12 +138,7 @@ defmodule AgentMap.Worker do
         {:chain, {_kf, _fks} = d, value} ->
           set(value)
 
-          req =
-            req
-            |> Map.delete(:fun)
-            |> Map.put(:action, :get_and_update)
-            |> Map.put(:data, d)
-
+          req = %{req | data: d, action: :chain}
           send(get(:"$gen_server"), req)
 
         :id ->
@@ -158,13 +149,7 @@ defmodule AgentMap.Worker do
           reply(req.from, value)
 
         reply ->
-          e = %MalformedCallback{for: :get_and_update, got: reply}
-
-          if req.safe? do
-            Logger.error(Exception.message(e))
-          else
-            raise e
-          end
+          raise %MalformedCallback{for: :get_and_update, got: reply}
       end
     else
       {:error, r} ->
@@ -210,7 +195,8 @@ defmodule AgentMap.Worker do
   ##
 
   # →
-  def loop({ref, server}, key, {value, max_processes}) do
+  # value = {:value, any} | nil
+  def loop({ref, server}, key, {value, {p, max_p}}) do
     put(:"$value", value)
     send(server, {ref, :ok})
 
@@ -218,14 +204,18 @@ defmodule AgentMap.Worker do
     put(:"$gen_server", server)
 
     # One (1) process is for loop.
-    put(:"$processes", 1)
-    put(:"$max_processes", max_processes)
+    put(:"$processes", p + 1)
+    put(:"$max_processes", max_p)
 
     put(:"$wait", @wait + rand(25))
     put(:"$selective_receive", true)
 
     # →
     loop()
+  end
+
+  def loop(back_link, key, {value, max_p}) do
+    loop(back_link, key, {value, {0, max_p}})
   end
 
   # →→

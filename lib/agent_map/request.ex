@@ -22,8 +22,11 @@ defmodule AgentMap.Req do
     !: false
   ]
 
-  defp drop_key(%{data: {_key, value}} = req) do
-    %{req | data: value}
+  defp as_map(%{data: {_key, f}} = req) do
+    req
+    |> Map.from_struct(req)
+    |> Map.delete(:data)
+    |> Map.put(:fun, f)
   end
 
   # defp unbox({{{:value, value}, :blocked}, _max_p}), do: {:ok, value}
@@ -57,56 +60,63 @@ defmodule AgentMap.Req do
     match?({:ok, _}, fetch(map, key))
   end
 
+  defp reply_error(reason, req, map) do
+    if req.safe? do
+      unless req.from, do: Logger.error(reason)
+      {:reply, {:error, reason}, map}
+    else
+      {:stop, reason, {:error, reason}, map}
+    end
+  end
+
   ##
   ## HANDLERS
   ##
 
   def handle(%{action: :inc, data: {key, step}} = req, map) do
+    arithm_err = %ArithmeticError{
+      message: "cannot increment key #{key} — it has a non numeric value #{v}"
+    }
+
     case map[key] do
       {:pid, worker} ->
         fun = fn
           v when is_number(v) ->
-            {:ok, v + step}
+            if req.from do
+              {:ok, v + step}
+            else
+              v + step
+            end
 
           _ ->
             if Process.get(:"$value") do
-              {{:error, %KeyError{key: key}}}
+              raise %KeyError{key: key}
             else
-              {{:error, %ArithmeticError{}}}
+              raise arithm_err
             end
         end
 
-        req =
+        req = %{req | data: {key, fun}}
+
+        act =
           if req.from do
-            %{req | action: :get_and_update, data: {key, fun}}
+            :get_and_update
           else
-            fun = fn [v] ->
-              case fun.(v) do
-                {:ok, v} ->
-                  v
-
-                {{:error, reason}} ->
-                  Logger.error(reason)
-              end
-            end
-
-            %{req | action: :cast, data: {fun, [key]}}
+            :cast
           end
 
-        #        send(worker, to_msg(req))
+        send(worker, as_map(%{req | action: act}))
         {:noreply, map}
 
-      {{:value, v}, _mt} when not is_number(v) ->
-        Logger.error(%KeyError{key: key})
-        {:reply, {:error, %ArithmeticError{}}, map}
+      {{:value, v}, _} when not is_number(v) ->
+        reply_error(arithm_err, req, map)
 
-      {{:value, v}, _mt} ->
-        #        put_in(map[key], {{:value, v + step}, mt})
+      {{:value, v}, p} ->
+        map = %{map | key => {{:value, v + step}, p}}
         {:reply, :ok, map}
 
-      _ ->
-        Logger.error(%KeyError{key: key})
-        {:reply, {:error, %KeyError{key: key}}, map}
+      {nil, _} ->
+        reply_error(%KeyError{key: key}, req, map)
     end
   end
 
@@ -214,7 +224,7 @@ defmodule AgentMap.Req do
           if max_p == @max_processes do
             Map.delete(map, key)
           else
-            put_in(map[key], {nil, max_p})
+            %{map | key => {nil, max_p}}
           end
 
         {:reply, oldmax_p, map}
@@ -308,17 +318,17 @@ defmodule AgentMap.Req do
           Process.put(:"$value", value)
 
           #          GenServer.reply(req.from, run(req, [unbox(value)]))
-          send(server, %{info: :done, !: true})
+          send(server, %{info: :done, key: key, !: true})
         end)
 
-        map = put_in(map[key], {value, max_p - 1})
+        map = %{map | key => {value, max_p - 1}}
 
         {:noreply, map}
 
       # No such key.
       nil ->
         # Let's pretend it's there.
-        map = put_in(map[key], {nil, @max_processes})
+        map = %{map | key => {nil, @max_processes}}
         handle(req, map)
     end
   end
@@ -328,7 +338,7 @@ defmodule AgentMap.Req do
 
     case map[key] do
       {{:value, _}, max_p} ->
-        map = put_in(map[key], {{:value, value}, max_p})
+        map = %{map | key => {{:value, value}, max_p}}
         {:reply, :ok, map}
 
       {:pid, worker} ->

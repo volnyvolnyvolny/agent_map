@@ -773,6 +773,7 @@ defmodule AgentMap do
     case fetch(agentmap, key) do
       {:ok, value} ->
         value
+
       :error ->
         fun.()
     end
@@ -1118,8 +1119,11 @@ defmodule AgentMap do
   """
   # 4
   @spec update(am, key, f(value, value), [opt | {:timeout, {:drop | :hard, pos_integer}}]) :: am
-  @spec update(am, f([value], [value]), [key], [opt | {:timeout, {:drop | :hard, pos_integer}}]) :: am
-  @spec update(am, f([value], :drop | :id), [key], [opt | {:timeout, {:drop | :hard, pos_integer}}]) :: am
+  @spec update(am, f([value], [value]), [key], [opt | {:timeout, {:drop | :hard, pos_integer}}]) ::
+          am
+  @spec update(am, f([value], :drop | :id), [key], [
+          opt | {:timeout, {:drop | :hard, pos_integer}}
+        ]) :: am
   def update(agentmap, key, fun, opts \\ [!: false, safe: true, timeout: 5000])
 
   def update(agentmap, fun, keys, opts) when is_fun(fun, 1) and is_list(keys) do
@@ -1198,7 +1202,8 @@ defmodule AgentMap do
       :ok
   """
   @spec update!(am, key, f(value, value), [opt | {:timeout, {:drop | :hard, pos_integer}}]) :: am
-  def update!(agentmap, key, fun, opts \\ [!: false, safe: true, timeout: 5000]) when is_fun(fun, 1) do
+  def update!(agentmap, key, fun, opts \\ [!: false, safe: true, timeout: 5000])
+      when is_fun(fun, 1) do
     update(
       agentmap,
       key,
@@ -1242,7 +1247,8 @@ defmodule AgentMap do
       ...> AgentMap.get(am, :a, !: false)
       3
   """
-  @spec replace!(agentmap, key, value, [opt | {:timeout, {:drop, pos_integer}}] | timeout) :: agentmap
+  @spec replace!(agentmap, key, value, [opt | {:timeout, {:drop, pos_integer}}] | timeout) ::
+          agentmap
   def replace!(agentmap, key, value, opts \\ [!: false, timeout: 5000]) do
     fun = fn _ ->
       if Process.get(:"$value") do
@@ -1282,9 +1288,11 @@ defmodule AgentMap do
   Sets the `:max_processes` value for the given `key`.
   Returns the old value.
 
-  `agentmap` can execute `get` calls on the same key concurrently. `max_processes`
-  option specifies number of processes per key used, minus one thread for the
-  process holding the queue. Default value is `5`.
+  `agentmap` can execute `get/4` calls on the same key concurrently.
+  `max_processes` option specifies number of processes allowed per key (-1 for
+  the worker process).
+
+  Default value is `5`.
 
       iex> import :timer
       iex> am = AgentMap.new(key: 42)
@@ -1405,6 +1413,7 @@ defmodule AgentMap do
     case fetch(agentmap, key, opts) do
       {:ok, value} ->
         value
+
       :error ->
         raise KeyError, key: key
     end
@@ -1514,6 +1523,7 @@ defmodule AgentMap do
     opts =
       opts
       |> Keyword.put_new(:!, true)
+
     # |> Keyword.put_new(:cast, true)
 
     req = %Req{action: :put, data: {key, value}}
@@ -1718,11 +1728,15 @@ defmodule AgentMap do
   @doc """
   Increments value with given `key`.
 
-  Returns immediately, without waiting for the actual increment happen.
+  By default, returns immediately, without waiting for the actual increment
+  happen.
+
+  This call raises an `%ArithmeticError{}` if the value is not numeric or
+  `%KeyError{}` if it does not exist.
 
   ### Options
 
-    * `:step` — (number, `1`) decrement step;
+    * `:step` — (number, `1`) increment step;
     * `!: true` — (boolean, `false`) makes this call a
       [priority](#module-priority-calls-true);
     * `cast: false` — (boolean, `true`) to return only after decrement happend;
@@ -1750,45 +1764,34 @@ defmodule AgentMap do
     # |> Keyword.put_new(:!, false)
 
     req = %Req{action: :inc, data: {key, opts[:step]}}
-    _call_or_cast(agentmap, req, opts)
+
+    case _call_or_cast(agentmap, req, opts) do
+      {:error, reason} ->
+        raise reason
+
+      _ ->
+        agentmap
+    end
   end
 
   @doc """
   Decrements value with given `key`.
 
-  Returns immediately, without waiting for the actual decrement happen.
+  Keep in mind that
 
-  ### Options
+      dec(agentmap, key, opts)
 
-    * `:step` — (number, `1`) decrement step;
-    * `!: true` — (boolean, `false`) makes this call a
-      [priority](#module-priority-calls-true);
-    * `cast: false` — (boolean, `true`) to return only after decrement happend;
-    * `timeout: {:drop, pos_integer}` — drops this call from queue when
-      [timeout](#module-timeout) happen;
-    * `:timeout` — (timeout, `5000`) ignored if cast is used.
+  is just a syntax sugar for
 
-  ### Examples
+      import Keyword
+      inc(agentmap, key, update(opts, :step, -1, & -&1)
 
-      iex> am = AgentMap.new(a: 1, b: 2)
-      iex> AgentMap.inc(am, :a)
-      iex> AgentMap.get(am, :a)
-      2
-      iex> AgentMap.dec(am, :b)
-      iex> AgentMap.get(am, :b)
-      1
+  See `inc/3` for details.
   """
   @spec dec(agentmap, key, keyword) :: agentmap
   def dec(agentmap, key, opts \\ [step: 1, cast: true, !: false]) do
-    opts =
-      opts
-      |> Keyword.put_new(:step, 1)
-
-    # |> Keyword.put_new(:cast, true)
-    # |> Keyword.put_new(:!, false)
-
-    req = %Req{action: :dec, data: {key, opts[:step]}}
-    _call_or_cast(agentmap, req, opts)
+    opts = Keyword.update(opts, :step, -1, &(-&1))
+    inc(agentmap, key, opts)
   end
 
   @doc """
