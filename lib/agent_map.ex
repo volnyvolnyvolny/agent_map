@@ -639,8 +639,9 @@ defmodule AgentMap do
     * `!: true` — (boolean, `false`) to make [priority
       calls](#module-priority-calls-true). `key` could have an associated queue
       of callbacks awaiting of execution, "priority" version allows to execute
-      given `fun` in a separate `Task`, immediately at the moment of call
-      (regardless of `max_processes`). Thus calls are never queued.
+      given `fun` out of order. If the number of processes being used currently
+      is less than `max_processes` value — `fun` will be invoked immediately in
+      a separate `Task`;
     * `timeout: {:drop, pos_integer}` — to throw out a call from queue upon the
       occurence of a timeout. See [timeout section](#module-timeout);
     * `timeout: {:hard, pos_integer}` — to throw out from queue or cancel a
@@ -1495,7 +1496,7 @@ defmodule AgentMap do
   @doc """
   Puts the given `value` under the `key` into the `agentmap`.
 
-  Returns *immediately*, without waiting for actual put happen.
+  By default, returns *immediately*, without waiting for actual put happen.
 
   ## Options
 
@@ -1580,7 +1581,7 @@ defmodule AgentMap do
   @doc """
   Deletes the entry in the `agentmap` for a specific `key`.
 
-  Returns *immediately*, without waiting for actual delete happen.
+  By default, returns *immediately*, without waiting for actual delete happen.
 
   ## Options
 
@@ -1630,10 +1631,8 @@ defmodule AgentMap do
 
     * `!: true` — (boolean, `false`) to make
       [priority](#module-priority-calls-true) drop calls;
-    * `cast: false` — (boolean, `true`) to wait until actual drop happend;
     * `timeout: {:drop, pos_integer}` — drops this call from queue when
-      [timeout](#module-timeout) happen;
-    * `:timeout` — (timeout, `5000`) ignored if cast is used.
+      [timeout](#module-timeout) happen.
 
   ## Examples
 
@@ -1644,13 +1643,12 @@ defmodule AgentMap do
       [:a, :c]
   """
   @spec drop(agentmap, Enumerable.t(), keyword) :: agentmap
-  def drop(agentmap, keys, opts \\ [!: false, cast: true]) do
+  def drop(agentmap, keys, opts \\ [!: false]) do
     #    opts =
     #      opts
-    #      |> Keyword.put_new(:cast, true)
     #      |> Keyword.put_new(:!, false)
     req = %Req{action: :drop, data: keys}
-    _call_or_cast(agentmap, req, opts)
+    _cast(agentmap, req, opts)
   end
 
   @doc """

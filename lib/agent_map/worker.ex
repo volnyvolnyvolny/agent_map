@@ -1,10 +1,11 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Helpers, MalformedCallback}
+  alias AgentMap.{Common, MalformedCallback}
 
   import Process, only: [get: 1, put: 2, delete: 1, exit: 2]
   import System, only: [system_time: 0]
+  import Common, only: [run: 2, reply: 2, run_and_reply: 2]
 
   @moduledoc false
 
@@ -59,49 +60,13 @@ defmodule AgentMap.Worker do
   ## HANDLE
   ##
 
-  def run(%{fun: f} = req, args) do
-    if req.safe? do
-      Helpers.safe_apply(f, args)
-    else
-      {:ok, Helpers.apply(f, args)}
-    end
-  end
-
-  def run(%{data: {_, f}} = req, args) do
-    run(%{req | fun: f}, args)
-  end
-
-  defp reply({_pid, _tag} = to, what) do
-    GenServer.reply(to, what)
-  end
-
-  defp reply(nil, _), do: :nothing
-
-  defp reply(to, what) do
-    send(to, what)
-  end
-
   defp handle(%{action: :max_processes} = req) do
     reply(req.from, get(:"$max_processes"))
-    put(:"$max_processes", req.value)
-  end
-
-  defp handle(%{info: :done}) do
-    dec(:"$processes")
+    put(:"$max_processes", req.data)
   end
 
   defp handle(%{action: :get} = req) do
     value = unbox(get(:"$value"))
-
-    run_and_reply = fn value ->
-      with {:ok, result} <- run(req, [value]) do
-        reply(req.from, result)
-      else
-        {:error, reason} ->
-          {pid, _} = req.from
-          exit(pid, reason)
-      end
-    end
 
     if get(:"$processes") < get(:"$max_processes") do
       k = get(:"$key")
@@ -113,13 +78,13 @@ defmodule AgentMap.Worker do
         put(:"$key", k)
         put(:"$value", v)
 
-        run_and_reply.(value)
+        run_and_reply(req, value)
         reply(worker, %{info: :done, !: true})
       end)
 
       inc(:"$processes")
     else
-      run_and_reply.(value)
+      run_and_reply(req, value)
     end
   end
 
@@ -152,8 +117,9 @@ defmodule AgentMap.Worker do
           raise %MalformedCallback{for: :get_and_update, got: reply}
       end
     else
-      {:error, r} ->
-        Logger.error(r)
+      {:error, reason} ->
+        k = get(:"$key")
+        Logger.error("Key #{k} error while processing #{inspect(req)}. Reason: #{reason}.")
     end
   end
 
@@ -240,13 +206,28 @@ defmodule AgentMap.Worker do
       else
         # Selective receive.
         receive do
-          %{!: true} = req ->
+          %{info: :get!} ->
+            inc(:"$processes")
+            loop()
+
+          %{info: :done} ->
+            dec(:"$processes")
+            loop()
+
+          %{action: :get, !: true} = req ->
             handle(req)
             loop()
         after
           0 ->
-            # Process other msgs.
-            _loop()
+            receive do
+              %{!: true} = req ->
+                handle(req)
+                loop()
+            after
+              0 ->
+                # Process other msgs.
+                _loop()
+            end
         end
       end
     else

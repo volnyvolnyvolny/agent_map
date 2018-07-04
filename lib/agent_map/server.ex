@@ -4,9 +4,10 @@ defmodule AgentMap.Server do
 
   alias AgentMap.{Helpers, Req, Worker}
 
-  import Enum, only: [uniq: 1]
   import Map, only: [delete: 2]
+  import Enum, only: [uniq: 1]
   import Worker, only: [queue_len: 1, dict: 1]
+  import System, only: [system_time: 0]
   import Helpers, only: [ok?: 1, safe_apply: 2, run: 2]
 
   use GenServer
@@ -62,8 +63,24 @@ defmodule AgentMap.Server do
     end
   end
 
+  def handle_call(%{timeout: {:drop, _}, inserted_at: nil}, from, map) do
+    handle_call(%{req | inserted_at: system_time()}, from, map)
+  end
+
+  def handle_call(%{timeout: {:hard, _}, inserted_at: nil}, from, map) do
+    handle_call(%{req | inserted_at: system_time()}, from, map)
+  end
+
   def handle_call(req, from, map) do
     Req.handle(%{req | from: from}, map)
+  end
+
+  def handle_cast(%{timeout: {:drop, _}, inserted_at: nil}, map) do
+    handle_cast(%{req | inserted_at: system_time()}, map)
+  end
+
+  def handle_cast(%{timeout: {:hard, _}, inserted_at: nil}, map) do
+    handle_cast(%{req | inserted_at: system_time()}, map)
   end
 
   def handle_cast(req, map) do
