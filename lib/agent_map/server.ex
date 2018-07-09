@@ -2,36 +2,16 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Helpers, Req, Worker}
+  alias AgentMap.{Common, Req, Worker}
 
   import Map, only: [delete: 2]
-  import Enum, only: [uniq: 1]
   import Worker, only: [queue_len: 1, dict: 1]
   import System, only: [system_time: 0]
-  import Helpers, only: [ok?: 1, safe_apply: 2, run: 2]
+  import Common, only: [run_group: 2]
 
   use GenServer
 
   @max_processes 5
-
-  defp box(nil), do: {nil, @max_processes}
-  defp box({_value, _max_p} = p), do: p
-
-  def spawn_worker(map, key) do
-    ref = make_ref()
-
-    worker =
-      spawn_link(fn ->
-        Worker.loop({ref, self()}, key, box(map[key]))
-      end)
-
-    receive do
-      {ref, _} ->
-        :continue
-    end
-
-    %{map | key => {:pid, worker}}
-  end
 
   ##
   ## GenServer callbacks
@@ -43,12 +23,12 @@ defmodule AgentMap.Server do
     results =
       funs
       |> Keyword.values()
-      |> run(timeout)
+      |> run_group(timeout)
 
     {kv, errors} =
       keys
       |> Enum.zip(results)
-      |> Enum.split_with(&ok?/1)
+      |> Enum.split_with(&match?({:ok, _}, &1))
 
     if [] == errors do
       {:ok,
@@ -63,11 +43,11 @@ defmodule AgentMap.Server do
     end
   end
 
-  def handle_call(%{timeout: {:drop, _}, inserted_at: nil}, from, map) do
+  def handle_call(%{timeout: {:drop, _}, inserted_at: nil} = req, from, map) do
     handle_call(%{req | inserted_at: system_time()}, from, map)
   end
 
-  def handle_call(%{timeout: {:hard, _}, inserted_at: nil}, from, map) do
+  def handle_call(%{timeout: {:hard, _}, inserted_at: nil} = req, from, map) do
     handle_call(%{req | inserted_at: system_time()}, from, map)
   end
 
@@ -75,11 +55,11 @@ defmodule AgentMap.Server do
     Req.handle(%{req | from: from}, map)
   end
 
-  def handle_cast(%{timeout: {:drop, _}, inserted_at: nil}, map) do
+  def handle_cast(%{timeout: {:drop, _}, inserted_at: nil} = req, map) do
     handle_cast(%{req | inserted_at: system_time()}, map)
   end
 
-  def handle_cast(%{timeout: {:hard, _}, inserted_at: nil}, map) do
+  def handle_cast(%{timeout: {:hard, _}, inserted_at: nil} = req, map) do
     handle_cast(%{req | inserted_at: system_time()}, map)
   end
 

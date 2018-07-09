@@ -1,7 +1,7 @@
 defmodule AgentMap.Transaction do
   @moduledoc false
 
-  alias AgentMap.{Callback, Req, Worker}
+  alias AgentMap.{, Req, Worker}
 
   import Enum, only: [uniq: 1]
   import Map, only: [keys: 1]
@@ -22,28 +22,35 @@ defmodule AgentMap.Transaction do
       msg ->
         {worker, value} =
           case msg do
-            {ref, msg} when is_reference(ref) -> msg
-            msg -> msg
+            {ref, msg} when is_reference(ref) ->
+              msg
+
+            msg ->
+              msg
           end
 
         key = dict(worker)[:"$key"]
-        known = put_in(known[key], value)
+        known = %{known | key => value}
+
         _collect(known, keys -- [key])
     end
   end
 
-  # One-key get-transaction!
+  # Optimization for one-key get-transaction!
   def handle(%{action: :get, data: {fun, [key]}} = req, map) do
     fun = fn v ->
       Process.put(:"$keys", [key])
 
-      hv? = Process.get(:"$has_value?")
-      Process.put(:"$map", (hv? && %{key: v}) || %{})
+      if Process.get(:"$value") do
+        Process.put(:"$map", %{key: v})
+      else
+        Process.put(:"$map", %{})
+      end
 
-      # Transaction call should not has "$has_value?" key.
-      Process.delete(:"$has_value?")
+      # Transaction call should not has "$value" key.
+      Process.delete(:"$value")
 
-      Callback.run(fun, [[v]])
+      Helpers.apply(fun, [[v]])
     end
 
     Req.handle(%{req | data: {key, fun}}, map)
@@ -68,7 +75,7 @@ defmodule AgentMap.Transaction do
 
       Process.put(:"$map", map)
       values = for k <- keys, do: map[k]
-      result = Callback.run(fun, [values])
+      result = Helpers.apply(fun, [values])
 
       GenServer.reply(req.from, result)
     end)

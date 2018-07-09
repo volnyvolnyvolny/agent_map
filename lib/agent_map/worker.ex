@@ -3,7 +3,7 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Common, MalformedCallback}
 
-  import Process, only: [get: 1, put: 2, delete: 1, exit: 2]
+  import Process, only: [get: 1, put: 2, delete: 1]
   import System, only: [system_time: 0]
   import Common, only: [run: 2, reply: 2, run_and_reply: 2]
 
@@ -66,8 +66,6 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{action: :get} = req) do
-    value = unbox(get(:"$value"))
-
     if get(:"$processes") < get(:"$max_processes") do
       k = get(:"$key")
       v = get(:"$value")
@@ -78,13 +76,14 @@ defmodule AgentMap.Worker do
         put(:"$key", k)
         put(:"$value", v)
 
-        run_and_reply(req, value)
-        reply(worker, %{info: :done, !: true})
+        run_and_reply(req, unbox(v))
+
+        send(worker, %{info: :done, !: true})
       end)
 
       inc(:"$processes")
     else
-      run_and_reply(req, value)
+      run_and_reply(req, unbox(get(:"$value")))
     end
   end
 

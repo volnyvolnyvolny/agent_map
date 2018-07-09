@@ -4,9 +4,9 @@ defmodule AgentMap do
   @enforce_keys [:link]
   defstruct @enforce_keys
 
-  alias AgentMap.{Helpers, Server, Req}
+  alias AgentMap.{Common, Server, Req}
 
-  import Helpers, only: :macros
+  import Common, only: :macros
 
   @moduledoc """
   The `AgentMap` can be seen as a stateful `Map` that parallelize operations
@@ -1138,7 +1138,7 @@ defmodule AgentMap do
   end
 
   def update(agentmap, key, fun, opts) when is_fun(fun, 1) do
-    get_and_update(agentmap, key, &{:ok, Helpers.apply(fun, [&1])}, opts)
+    get_and_update(agentmap, key, &{:ok, Common.apply(fun, [&1])}, opts)
   end
 
   def update(agentmap, key, initial, fun) when is_fun(fun, 1) do
@@ -1163,7 +1163,7 @@ defmodule AgentMap do
       key,
       fn value ->
         if Process.get(:"$value") do
-          Helpers.apply(fun, [value])
+          Common.apply(fun, [value])
         else
           initial
         end
@@ -1210,7 +1210,7 @@ defmodule AgentMap do
       key,
       fn value ->
         if Process.get(:"$value") do
-          Helpers.apply(fun, [value])
+          Common.apply(fun, [value])
         else
           raise KeyError, key: key
         end
@@ -1281,7 +1281,7 @@ defmodule AgentMap do
   end
 
   def cast(agentmap, key, fun, opts) when is_fun(fun, 1) do
-    req = %Req{action: :get_and_update, data: {key, &{:ok, Helpers.apply(fun, [&1])}}}
+    req = %Req{action: :get_and_update, data: {key, &{:ok, Common.apply(fun, [&1])}}}
     _cast(agentmap, req, opts)
   end
 
@@ -1529,6 +1529,8 @@ defmodule AgentMap do
 
     req = %Req{action: :put, data: {key, value}}
     _call_or_cast(agentmap, req, opts)
+
+    agentmap
   end
 
   @doc """
