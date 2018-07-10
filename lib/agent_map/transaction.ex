@@ -1,11 +1,12 @@
 defmodule AgentMap.Transaction do
   @moduledoc false
 
-  alias AgentMap.{, Req, Worker}
+  alias AgentMap.{Common, Req, Worker}
 
   import Enum, only: [uniq: 1]
   import Map, only: [keys: 1]
   import Worker, only: [dict: 1]
+  import Common, only: [run_and_reply: 2]
 
   ##
   ## HELPERS
@@ -58,7 +59,7 @@ defmodule AgentMap.Transaction do
 
   def handle(%{action: :get, !: true} = req, map) do
     Task.start_link(fn ->
-      {fun, keys} = req.data
+      {f, keys} = req.data
 
       map =
         map
@@ -74,8 +75,9 @@ defmodule AgentMap.Transaction do
         end)
 
       Process.put(:"$map", map)
+
       values = for k <- keys, do: map[k]
-      result = Helpers.apply(fun, [values])
+      result = run_and_reply(%{req | fun: f}, values)
 
       GenServer.reply(req.from, result)
     end)

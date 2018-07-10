@@ -22,7 +22,7 @@ defmodule AgentMap.Common do
 
 
   def safe_apply(fun, args) do
-    __MODULE__.apply(fun, args)
+    {:ok, __MODULE__.apply(fun, args)}
 
   rescue
     BadFunctionError ->
@@ -58,22 +58,14 @@ defmodule AgentMap.Common do
 
   defp expired?(_), do: false
 
-  defp _run(%{data: {_, f}} = req, args) do
-    _run(%{req | fun: f}, args)
-  end
-
-  defp _run(%{fun: f} = req, args) do
-    if req.safe? do
-      safe_apply(f, args)
-    else
-      {:ok, __MODULE__.apply(f, args)}
-    end
-  end
-
-  def run(%{timeout: {:hard, timeout}} = req, args) do
+  def run(%{fun: f, timeout: {:hard, timeout}} = req, args) do
     if expired?(req) do
       task = Task.async(fn ->
-        _run(req, args)
+        if req.safe? do
+          safe_apply(f, args)
+        else
+          {:ok, __MODULE__.apply(f, args)}
+        end
       end)
 
       case Task.yield(task, timeout) || Task.shutdown(task) do
@@ -90,12 +82,30 @@ defmodule AgentMap.Common do
 
   def run(req, args) do
     if expired?(req) do
-      _run(req, args)
+      if req.safe? do
+        safe_apply(f, args)
+      else
+        {:ok, __MODULE__.apply(f, args)}
+      end
     else
       {:error, :expired}
     end
   end
 
+  # Run request and decide to reply or not to.
+  def run_and_reply(req, value) do
+    with {:ok, result} <- run(req, [value]) do
+      reply(req.from, result)
+    else
+      {:error, :expired} ->
+        k = Process.get(:"$key")
+        Logger.error("Key #{inspect(k)} error while processing #{inspect(req)}. Request is expired.")
+
+      {:error, reason} ->
+        {pid, _} = req.from
+        Process.exit(pid, reason)
+    end
+  end
 
   # Run group of funs with a common timeout.
   def run_group(funs, timeout) when is_list(funs) do
@@ -119,20 +129,6 @@ defmodule AgentMap.Common do
       {:exit, reason} ->
         {:error, reason}
     end)
-  end
-
-  def run_and_reply(req, value) do
-    with {:ok, result} <- run(req, [value]) do
-      reply(req.from, result)
-    else
-      {:error, :expired} ->
-        k = Process.get(:"$key")
-        Logger.error("Key #{inspect(k)} error while processing #{inspect(req)}. Request is expired.")
-
-      {:error, reason} ->
-        {pid, _} = req.from
-        Process.exit(pid, reason)
-    end
   end
 
   defguard is_fun(f, arity)
