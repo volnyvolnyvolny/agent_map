@@ -56,6 +56,24 @@ defmodule AgentMap.Worker do
     info(worker, :message_queue_len)
   end
 
+  defp handle_timeout_error(req) do
+    k = Process.get(:"$key")
+    Logger.error("Key #{inspect(k)} error while processing #{inspect(req)}. Request is expired.")
+  end
+
+  # Run request and decide to reply or not to.
+  defp run_and_reply(req, value) do
+    with {:ok, result} <- run(req, [value]) do
+      reply(req.from, result)
+    else
+      {:error, :expired} ->
+        handle_timeout_error(req)
+        # {:error, reason} ->
+        #   {pid, _} = req.from
+        #   Process.exit(pid, reason)
+    end
+  end
+
   ##
   ## HANDLE
   ##
@@ -116,9 +134,8 @@ defmodule AgentMap.Worker do
           raise %MalformedCallback{for: :get_and_update, got: reply}
       end
     else
-      {:error, reason} ->
-        k = get(:"$key")
-        Logger.error("Key #{k} error while processing #{inspect(req)}. Reason: #{reason}.")
+      {:error, :expired} ->
+        handle_timeout_error(req)
     end
   end
 
@@ -205,30 +222,18 @@ defmodule AgentMap.Worker do
       else
         # Selective receive.
         receive do
-          %{info: :get!} ->
-            inc(:"$processes")
-            loop()
-
           %{info: :done} ->
             dec(:"$processes")
             loop()
 
-          %{action: :get, !: true} = req ->
+          %{!: true} = req ->
             handle(req)
             loop()
         after
           0 ->
-            receive do
-              %{!: true} = req ->
-                handle(req)
-                loop()
-            after
-              0 ->
-                # Process other msgs.
-                _loop()
-            end
+            # Process other msgs.
+            _loop()
         end
-      end
     else
       _loop()
     end

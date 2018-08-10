@@ -53,19 +53,23 @@ defmodule AgentMap.Common do
     timeout =
       convert_time_unit(timeout, :milliseconds, :native)
 
-    t + timeout > system_time()
+    system_time() >= t + timeout
   end
 
   defp expired?(_), do: false
 
+  # if req.safe? do
+  #   safe_apply(f, args)
+  # else
+  #   {:ok, __MODULE__.apply(f, args)}
+  # end
+
   def run(%{fun: f, timeout: {:hard, timeout}} = req, args) do
     if expired?(req) do
+      {:error, :expired}
+    else
       task = Task.async(fn ->
-        if req.safe? do
-          safe_apply(f, args)
-        else
-          {:ok, __MODULE__.apply(f, args)}
-        end
+        __MODULE__.apply(f, args)
       end)
 
       case Task.yield(task, timeout) || Task.shutdown(task) do
@@ -75,35 +79,14 @@ defmodule AgentMap.Common do
         nil ->
           {:error, :expired}
       end
-    else
-      {:error, :expired}
     end
   end
 
   def run(req, args) do
     if expired?(req) do
-      if req.safe? do
-        safe_apply(f, args)
-      else
-        {:ok, __MODULE__.apply(f, args)}
-      end
-    else
       {:error, :expired}
-    end
-  end
-
-  # Run request and decide to reply or not to.
-  def run_and_reply(req, value) do
-    with {:ok, result} <- run(req, [value]) do
-      reply(req.from, result)
     else
-      {:error, :expired} ->
-        k = Process.get(:"$key")
-        Logger.error("Key #{inspect(k)} error while processing #{inspect(req)}. Request is expired.")
-
-      {:error, reason} ->
-        {pid, _} = req.from
-        Process.exit(pid, reason)
+      {:ok, __MODULE__.apply(f, args)}
     end
   end
 

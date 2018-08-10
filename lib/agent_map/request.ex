@@ -20,7 +20,7 @@ defmodule AgentMap.Req do
     :data,
     :from,
     :inserted_at,
-    safe?: true,
+    #    safe?: true,
     timeout: 5000,
     !: false
   ]
@@ -62,6 +62,9 @@ defmodule AgentMap.Req do
             {:ok, value}
         end
 
+      {:value, v} ->
+        {:ok, v}
+
       {{:value, v}, _max_p} ->
         {:ok, v}
 
@@ -82,19 +85,19 @@ defmodule AgentMap.Req do
   end
 
   defp reply_error(reason, req, map) do
-    if req.safe? do
-      unless req.from, do: Logger.error(reason)
-      {:reply, {:error, reason}, map}
-    else
-      {:stop, reason, {:error, reason}, map}
-    end
+    # if req.safe? do
+    #   unless req.from, do: Logger.error(reason)
+    #   {:reply, {:error, reason}, map}
+    # else
+    {:stop, reason, {:error, reason}, map}
+    # end
   end
 
   ##
   ## HANDLERS
   ##
 
-  def handle(%{action: :inc, data: {key, step}} = req, map) do
+  def handle(%{action: :inc, data: {key, initial, step}} = req, map) do
     action = (step > 0 && "increment") || "decrement"
 
     arithm_err =
@@ -110,9 +113,13 @@ defmodule AgentMap.Req do
 
           v ->
             if Process.get(:"$value") do
-              raise %KeyError{key: key}
-            else
               raise arithm_err.(v)
+            else
+              if initial do
+                {:ok, v + step}
+              else
+                raise %KeyError{key: key}
+              end
             end
         end
 
@@ -133,7 +140,12 @@ defmodule AgentMap.Req do
         {:reply, :ok, map}
 
       {nil, _} ->
-        reply_error(%KeyError{key: key}, req, map)
+        if initial do
+          map = %{map | key => {{:value, v + step}, p}}
+          {:reply, :ok, map}
+        else
+          reply_error(%KeyError{key: key}, req, map)
+        end
     end
   end
 
@@ -227,6 +239,10 @@ defmodule AgentMap.Req do
       nil ->
         {:reply, :ok, map}
     end
+  end
+
+  def handle(%{action: :max_processes, data: max_processes} = req, {map, old_one}) do
+    {:reply, old_one, {map, max_processes}}
   end
 
   def handle(%{action: :max_processes, data: {key, @max_processes}} = req, map) do

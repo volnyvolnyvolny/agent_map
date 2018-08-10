@@ -14,27 +14,47 @@ defmodule AgentMap.Server do
   @max_processes 5
 
   ##
+  ## The state of this GenServer is a pair:
+  ##
+  ##   {map, default max_processes value, map}
+  ##
+  ## For each map key, value is one of the:
+  ##
+  ##  * {:pid, worker}
+  ##  * {:value, value}
+  ##
+  ##  * {{:value, value}, {processes, max_processes}}
+  ##  * {{:value, v}, processes}
+  ##    == {{:value, v}, {processes, @max_processes}}
+  ##
+  ##  No value:
+  ##
+  ##  * {nil, {processes, max_processes}}
+  ##  * {nil, processes}
+  ##    == {nil, process, @max_processes}
+  ##
+
+  ##
   ## GenServer callbacks
   ##
 
-  def init({funs, timeout}) do
-    keys = Keyword.keys(funs)
-
+  def init(args) do
     results =
-      funs
+      args[:funs]
       |> Keyword.values()
-      |> run_group(timeout)
+      |> run_group(args[:timeout])
 
     {kv, errors} =
-      keys
+      args[:funs]
+      |> Keyword.keys()
       |> Enum.zip(results)
       |> Enum.split_with(&match?({:ok, _}, &1))
 
     if [] == errors do
       {:ok,
-       for {key, {:ok, v}} <- kv, into: %{} do
-         {key, {{:value, v}, @max_processes}}
-       end}
+       {for {key, {:ok, v}} <- kv, into: %{} do
+         {key, {:value, v}}
+       end, args[:max_processes]}
     else
       {:stop,
        for {key, {:error, reason}} <- errors do

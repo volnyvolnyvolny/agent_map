@@ -6,13 +6,55 @@ defmodule AgentMap.Transaction do
   import Enum, only: [uniq: 1]
   import Map, only: [keys: 1]
   import Worker, only: [dict: 1]
-  import Common, only: [run_and_reply: 2]
+  import Common, only: [run: 2]
 
   ##
   ## HELPERS
   ##
 
   defp collect(keys) do
+    map =
+      map
+      |> Map.take(keys)
+      |> Enum.reduce(%{}, fn k, map ->
+        case Req.fetch(map, k) do
+          {:ok, v} ->
+            %{map | k => v}
+
+          _ ->
+            map
+        end
+      end)
+
+    state =
+      for k <- uniq(keys) do
+        case map[k] do
+          {:pid, worker} ->
+            send(worker, %{action: :send, to: self()})
+            [k]
+
+          {{:value, value}, _max_t} ->
+            [{k, value}]
+
+          _ ->
+            []
+        end
+      end
+      |> List.flatten()
+
+    [known, unknown] =
+      Enum.split_with(
+        state,
+        &match?({_k, _v}, &1)
+      )
+
+    map =
+      unknown
+      # MUST RETURN MAP WITHOUT KEYS WITHOUT VALUES!
+      |> collect()
+      |> Enum.into(known)
+      |> Enum.into(%{})
+
     _collect(%{}, uniq(keys))
   end
 
@@ -48,83 +90,44 @@ defmodule AgentMap.Transaction do
         Process.put(:"$map", %{})
       end
 
-      # Transaction call should not has "$value" key.
+      # Transaction call should not has :"$value" key
+      # — :"$map" is used instead.
       Process.delete(:"$value")
 
-      Helpers.apply(fun, [[v]])
+      Common.apply(fun, [[v]])
     end
 
     Req.handle(%{req | data: {key, fun}}, map)
   end
 
-  def handle(%{action: :get, !: true} = req, map) do
+  def handle(%{action: :get} = req, map) do
     Task.start_link(fn ->
       {f, keys} = req.data
 
-      map =
-        map
-        |> Map.take(keys)
-        |> Enum.reduce(%{}, fn k, map ->
-          case Req.fetch(map, k) do
-            {:ok, v} ->
-              %{map | k => v}
+      Process.put(:"$keys", keys)
 
-            _ ->
-              map
-          end
-        end)
+      req = %{req | fun: f}
 
-      Process.put(:"$map", map)
+      with {:ok, map} <- collect(req, map, keys),
+           Process.put(:"$map", map),
+           values = Enum.map(keys, &map[&1]),
+           {:ok, result} <- run(req, values) do
+        reply(req.from, result)
+      else
+        {:error, :expired} ->
+          k = Process.get(:"$key")
 
-      values = for k <- keys, do: map[k]
-      result = run_and_reply(%{req | fun: f}, values)
-
-      GenServer.reply(req.from, result)
+          Logger.error(
+            """
+              Error while processing transaction call #{inspect(req)}
+              with keys #{inspect(keys)}. Request has timed out.
+            """
+            |> String.replace("\n", " ")
+          )
+      end
     end)
 
     {:noreply, map}
-  end
-
-  def handle(%{action: :get, !: false} = req, map) do
-    Task.start_link(fn ->
-      {fun, keys} = req.data
-
-      state =
-        for k <- uniq(keys) do
-          case map[k] do
-            {:pid, worker} ->
-              send(worker, %{action: :send, to: self()})
-              [k]
-
-            {{:value, value}, _max_t} ->
-              [{k, value}]
-
-            _ ->
-              []
-          end
-        end
-        |> List.flatten()
-
-      [known, unknown] =
-        Enum.split_with(
-          state,
-          &match?({_k, _v}, &1)
-        )
-
-      map =
-        unknown
-        # MUST RETURN MAP WITHOUT KEYS WITHOUT VALUES!
-        |> collect()
-        |> Enum.into(known)
-        |> Enum.into(%{})
-
-      Process.put(:"$map", map)
-
-      values = for k <- keys, do: map[k]
-      result = Callback.run(fun, [values])
-
-      GenServer.reply(req.from, result)
-    end)
   end
 
   # get_and_update, update, case

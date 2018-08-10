@@ -12,7 +12,7 @@ defmodule AgentMap.Mixfile do
         replacement.
       """,
       version: "1.0.0",
-      elixir: "~> 1.6.0",
+      elixir: "~> 1.7",
       deps: deps(),
       aliases: aliases(),
       docs: docs(),
@@ -29,9 +29,9 @@ defmodule AgentMap.Mixfile do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:earmark, "~> 1.2", only: :dev},
-      {:ex_doc, "~> 0.18", only: :dev},
-      {:credo, "~> 0.8.10", only: :dev}
+      #      {:earmark, "~> 1.2", only: :dev},
+      {:ex_doc, "~> 0.19", only: :dev, runtime: false},
+      {:credo, "~> 0.10", only: :dev}
     ]
   end
 
