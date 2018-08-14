@@ -6,34 +6,68 @@ defmodule AgentMap.Req do
   alias AgentMap.{Common, Worker, Transaction, Req}
 
   import Worker, only: [dict: 1, unbox: 1, queue: 1]
-  import Common, only: [run_and_reply: 2]
-
-  @max_processes 5
+  import Common, only: [reply: 2]
 
   @enforce_keys [:action]
 
   # action: :get, :get_and_update, :update, :cast, :keys, …
   # data: {key, fun}, {fun, keys}, …
   # from: nil | GenServer.from
+  # timeout: timeout | {:drop | :break, timeout}
   defstruct [
     :action,
     :data,
     :from,
     :inserted_at,
-    #    safe?: true,
     timeout: 5000,
     !: false
   ]
 
-  defp box(nil), do: {nil, @max_processes}
-  defp box({_v, _p} = value), do: value
+  def get_state({:reply, _r, state}), do: state
+  def get_state({:noreply, state}), do: state
 
-  defp spawn_worker(map, key) do
+  ##
+  ## BOXING
+  ##
+
+  def box(value, p, custom_max_p, max_p)
+
+  def box(value, 0, max_p, max_p), do: value
+  def box(value, p, max_p, max_p), do: {value, p}
+  def box(value, p, max_p, _), do: {value, {p, max_p}}
+
+  defp pack(key, value, {p, custom_max_p}, {map, max_p}) do
+    case box(value, p, custom_max_p, max_p) do
+      nil ->
+        {Map.delete(map, key), max_p}
+
+      box ->
+        {%{map | key => box}, max_p}
+    end
+  end
+
+  defp unpack(key, {map, max_p}) do
+    case map[key] do
+      {:pid, worker} ->
+        {:pid, worker}
+
+      {value, {_p, _custom_max_p}} = box ->
+        box
+
+      {value, p} ->
+        {value, {p, max_p}}
+
+      value ->
+        {value, {0, max_p}}
+    end
+  end
+
+  defp spawn_worker(key, {map, max_p}) do
     ref = make_ref()
 
     worker =
       spawn_link(fn ->
-        Worker.loop({ref, self()}, key, box(map[key]))
+        Worker.loop({ref, self()}, key, unbox(map[key], max_p))
       end)
 
     receive do
@@ -41,7 +75,7 @@ defmodule AgentMap.Req do
         :continue
     end
 
-    %{map | key => {:pid, worker}}
+    {%{map | key => {:pid, worker}}, max_p}
   end
 
   defp as_map(%{data: {_key, f}} = req) do
@@ -51,25 +85,24 @@ defmodule AgentMap.Req do
     |> Map.put(:fun, f)
   end
 
-  def fetch(map, key) do
-    case map[key] do
+  defp get_and_update(req, fun) do
+    as_map(%{req | action: :get_and_update, data: {:_, fun}})
+  end
+
+  defp get_value(key, {map, _max_p} = state) do
+    case unpack(key, state) do
       {:pid, worker} ->
-        case dict(worker)[:"$value"] do
-          nil ->
-            :error
+        dict(worker)[:"$value"]
 
-          {:value, value} ->
-            {:ok, value}
-        end
+      {value, _} ->
+        value
+    end
+  end
 
+  def fetch(map, key) do
+    case get_value(key, {map, :_}) do
       {:value, v} ->
         {:ok, v}
-
-      {{:value, v}, _max_p} ->
-        {:ok, v}
-
-      {nil, _max_p} ->
-        :error
 
       nil ->
         :error
@@ -84,20 +117,26 @@ defmodule AgentMap.Req do
     match?({:ok, _}, fetch(map, key))
   end
 
-  defp reply_error(reason, req, map) do
-    # if req.safe? do
-    #   unless req.from, do: Logger.error(reason)
-    #   {:reply, {:error, reason}, map}
-    # else
-    {:stop, reason, {:error, reason}, map}
-    # end
+  defp run(%{action: :get} = req, value) do
+    {key, fun} = req.data
+
+    Process.put(:"$key", key)
+    Process.put(:"$value", value)
+
+    case Common.run(req, [unbox(value)]) do
+      {:ok, msg} ->
+        reply(req.from, msg)
+
+      {:error, :expired} ->
+        :ignore
+    end
   end
 
   ##
   ## HANDLERS
   ##
 
-  def handle(%{action: :inc, data: {key, initial, step}} = req, map) do
+  def handle(%{action: :inc} = req, {map, max_p} = state) do
     action = (step > 0 && "increment") || "decrement"
 
     arithm_err =
@@ -105,7 +144,9 @@ defmodule AgentMap.Req do
         message: "cannot #{action} key #{key} because it has a non-numerical value #{inspect(&1)}"
       }
 
-    case map[key] do
+    {key, initial, step} = req.data
+
+    case unpack(key, state) do
       {:pid, worker} ->
         fun = fn
           v when is_number(v) ->
@@ -116,40 +157,37 @@ defmodule AgentMap.Req do
               raise arithm_err.(v)
             else
               if initial do
-                {:ok, v + step}
+                {:ok, initial + step}
               else
-                raise %KeyError{key: key}
+                raise KeyError, key: key
               end
             end
         end
 
-        req = %{
-          req
-          | action: :get_and_update,
-            data: {key, fun}
-        }
-
-        send(worker, as_map(req))
-        {:noreply, map}
+        send(worker, get_and_update(req, fun))
+        {:noreply, state}
 
       {{:value, v}, _} when not is_number(v) ->
-        reply_error(arithm_err.(v), req, map)
+        raise arithm_err.(v)
 
-      {{:value, v}, p} ->
-        map = %{map | key => {{:value, v + step}, p}}
-        {:reply, :ok, map}
+      {nil, _} when not is_number(initial) ->
+        raise KeyError, key: key
 
-      {nil, _} ->
-        if initial do
-          map = %{map | key => {{:value, v + step}, p}}
-          {:reply, :ok, map}
-        else
-          reply_error(%KeyError{key: key}, req, map)
-        end
+      {{:value, v}, p_info} ->
+        value = {:value, v + step}
+        state = pack(key, value, p_info, state)
+        {:reply, :ok, state}
+
+      {nil, p_info} ->
+        value = {:value, initial + step}
+        state = pack(key, value, p_info, state)
+        {:reply, :ok, state}
     end
   end
 
-  def handle(%{action: :queue_len, data: {key, opts}}, map) do
+  def handle(%{action: :queue_len} = req, {map, _} = state) do
+    {key, opts} = req.data
+
     num =
       case map[key] do
         {:pid, worker} ->
@@ -173,71 +211,52 @@ defmodule AgentMap.Req do
           0
       end
 
-    {:reply, num, map}
+    {:reply, num, state}
   end
 
-  # cast: true
-  def handle(%{action: :drop, data: keys, from: nil} = req, map) do
-    map =
-      Enum.reduce(keys, map, fn key, map ->
-        res =
-          handle(
-            %{req | action: :delete, data: key},
-            map
-          )
-
-        case res do
-          {:noreply, map} ->
-            map
-
-          {:reply, :ok, map} ->
-            map
-        end
+  def handle(%{action: :drop, data: keys} = req, state) do
+    state =
+      Enum.reduce(keys, state, fn key, state ->
+        %{req | action: :delete, data: key}
+        |> handle(state)
+        |> get_state()
       end)
 
-    {:noreply, map}
+    {:noreply, state}
   end
 
-  def handle(%{action: :keys}, map) do
+  def handle(%{action: :keys}, {map, _} = state) do
     keys =
       map
       |> Map.keys()
       |> Enum.filter(&has_key?(map, &1))
 
-    {:reply, keys, map}
+    {:reply, keys, state}
   end
 
-  def handle(%{action: :values} = req, map) do
+  def handle(%{action: :values} = req, {map, _} = state) do
     fun = fn _ ->
       Map.values(Process.get(:"$map"))
     end
 
-    handle(%{req | action: :get, data: {fun, Map.keys(map)}}, map)
+    handle(%{req | action: :get, data: {fun, Map.keys(map)}}, state)
   end
 
-  def handle(%{action: :delete, data: key} = req, map) do
-    case map[key] do
+  def handle(%{action: :delete, data: key} = req, {map, max_p} = state) do
+    case unpack(key, state) do
       {:pid, worker} ->
-        req = %{
-          req
-          | action: :get_and_update,
-            data: {key, fn _ -> :drop end}
-        }
+        fun = fn _ -> :drop end
+        send(worker, get_and_update(req, fun))
 
-        send(worker, as_map(req))
+        {:noreply, state}
 
-        {:noreply, map}
-
-      {{:value, _}, @max_processes} ->
+      {_, {0, ^max_p}} ->
         map = Map.delete(map, key)
-        {:reply, :ok, map}
+        {:reply, :ok, {map, max_p}}
 
-      {_, p} ->
-        map = %{map | key => {nil, p}}
-        {:reply, :ok, map}
-
-      nil ->
-        {:reply, :ok, map}
+      {value, p_info} ->
+        state = pack(key, value, p_info, state)
+        {:reply, :ok, state}
     end
   end
 
@@ -245,54 +264,23 @@ defmodule AgentMap.Req do
     {:reply, old_one, {map, max_processes}}
   end
 
-  def handle(%{action: :max_processes, data: {key, @max_processes}} = req, map) do
-    case map[key] do
+  def handle(%{action: :max_processes} = req, {map, max_p} = state) do
+    {key, new_max_p} = req.data
+
+    case unpack(key, state) do
       {:pid, worker} ->
-        send(worker, %{req | data: @max_processes})
-        {:noreply, map}
+        send(worker, %{req | data: new_max_p})
+        {:noreply, state}
 
-      {value, {p, old_max}} ->
-        map = %{map | key => {value, {p, @max_processes}}}
-        {:reply, old_max, map}
-
-      {nil, old_max} ->
-        map = Map.delete(map, key)
-        {:reply, old_max, map}
-
-      {value, old_max} ->
-        map = %{map | key => {value, @max_processes}}
-        {:reply, old_max, map}
-
-      nil ->
-        {:reply, @max_processes, map}
+      {value, {p, old_max_p}} ->
+        state = pack(key, value, {p, new_max_p}, state)
+        {:reply, old_max_p, state}
     end
   end
 
-  def handle(%{action: :max_processes} = req, map) do
-    {key, max} = req.data
-
-    case map[key] do
-      {:pid, worker} ->
-        send(worker, %{req | data: max})
-        {:noreply, map}
-
-      {value, {p, old_max}} ->
-        map = %{map | key => {value, {p, max}}}
-        {:reply, old_max, map}
-
-      {value, old_max} ->
-        map = %{map | key => {value, max}}
-        {:reply, old_max, map}
-
-      nil ->
-        map = %{map | key => {nil, max}}
-        {:reply, @max_processes, map}
-    end
-  end
-
-  def handle(%{action: :fetch, data: key} = req, map) do
+  def handle(%{action: :fetch, data: key} = req, {map, _} = state) do
     if req.! do
-      {:reply, fetch(map, key), map}
+      {:reply, fetch(map, key), state}
     else
       fun = fn _ ->
         case Process.get(:"$value") do
@@ -304,7 +292,7 @@ defmodule AgentMap.Req do
         end
       end
 
-      handle(%Req{action: :get, data: {key, fun}}, map)
+      handle(%Req{action: :get, data: {key, fun}}, state)
     end
   end
 
@@ -313,141 +301,96 @@ defmodule AgentMap.Req do
     Transaction.handle(req, map)
   end
 
-  def handle(%{action: :get} = req, map) do
-    {key, _fun} = req.data
+  def handle(%{action: :get, !: true} = req, {map, _max_p} = state) do
+    {key, fun} = req.data
 
-    case map[key] do
+    v = get_value(key, state)
+
+    Task.start_link(fn ->
+      run(req, v)
+    end)
+
+    {:noreply, state}
+  end
+
+  def handle(%{action: :get, !: false} = req, {map, max_p} = state) do
+    {key, fun} = req.data
+
+    case unpack(key, state) do
       {:pid, worker} ->
-        d = dict(worker)
-        server = self()
-
-        if req.! && d[:"$processes"] < d[:"$max_processes"] do
-          Task.start_link(fn ->
-            v = d[:"$value"]
-            Process.put(:"$key", d[:"$key"])
-            Process.put(:"$value", v)
-
-            run_and_reply(req, unbox(v))
-
-            send(server, %{info: :done, !: true})
-            send(worker, %{info: :get!})
-          end)
-        else
-          send(worker, as_map(req))
-        end
-
-        {:noreply, map}
+        send(worker, as_map(req))
 
       # Cannot spawn more Task's.
-      {_, 0} ->
-        handle(req, spawn_worker(map, key))
-
-      {_, 1} ->
-        handle(req, spawn_worker(map, key))
-
-      {_, {p, max_p}} when p >= max_p - 1 ->
-        handle(req, spawn_worker(map, key))
+      {_, {p, p}} ->
+        handle(req, spawn_worker(key, state))
 
       # Can spawn.
-      {value, {p, max_p}} ->
-        server = self()
-
+      {v, {p, custom_max_p}} ->
         Task.start_link(fn ->
-          Process.put(:"$key", key)
-          Process.put(:"$value", value)
-
-          run_and_reply(req, unbox(value))
-
+          run(req, v)
           send(server, %{info: :done, !: true})
         end)
 
-        map = %{map | key => {value, {p + 1, max_p}}}
-        {:noreply, map}
-
-      {value, max_p} ->
-        map = %{map | key => {value, {0, max_p}}}
-        handle(req, map)
-
-      # No such key.
-      nil ->
-        # Let's pretend it's there.
-        map = %{map | key => {nil, {0, @max_processes}}}
-        handle(req, map)
+        state = pack(key, value, {p + 1, custom_max_p}, state)
+        {:noreply, state}
     end
   end
 
-  def handle(%{action: :put} = req, map) do
+  def handle(%{action: :put} = req, {map, max_p} = state) do
     {key, value} = req.data
 
-    case map[key] do
+    case unpack(key, state) do
       {:pid, worker} ->
-        req = %{
-          req
-          | action: :get_and_update,
-            data: {key, fn _ -> {:ok, value} end}
-        }
+        fun = fn _ -> {:ok, value} end
+        send(worker, get_and_update(req, fun))
+        {:noreply, state}
 
-        send(worker, as_map(req))
-
-        {:noreply, map}
-
-      {_old_value, p} ->
-        map = %{map | key => {{:value, value}, p}}
-        {:reply, :ok, map}
-
-      nil ->
-        map = %{map | key => {{:value, value}, @max_processes}}
-        handle(req, map)
+      {_old_value, p_info} ->
+        value = {:value, value}
+        state = pack(key, value, p_info, state)
+        {:reply, :ok, state}
     end
   end
 
-  def handle(%{action: :pop} = req, map) do
+  def handle(%{action: :pop} = req, {map, max_p} = state) do
     {key, default} = req.data
 
-    case map[key] do
+    case unpack(key, state) do
       {:pid, worker} ->
         fun = fn _ ->
-          hv? = Process.get(:"$value")
-          (hv? && :pop) || {default}
+          case Process.get(:"$value") do
+            nil ->
+              {default}
+
+            _ ->
+              :pop
+          end
         end
 
-        req = %{
-          req
-          | action: :get_and_update,
-            data: {key, fun}
-        }
-
-        send(worker, as_map(req))
+        send(worker, get_and_update(req, fun))
 
         {:noreply, map}
 
-      {{:value, v}, @max_processes} ->
-        {:reply, v, Map.delete(map, key)}
-
-      {{:value, v}, p} ->
-        map = %{map | key => {nil, p}}
-        {:reply, v, map}
+      {{:value, v}, p_info} ->
+        state = pack(key, nil, p_info, state)
+        {:reply, v, state}
 
       {nil, _p} ->
-        {:reply, default, map}
-
-      nil ->
-        {:reply, default, map}
+        {:reply, default, state}
     end
   end
 
-  # :cast, :update, :get_and_update
-  def handle(req, map) do
+  # :get_and_update
+  def handle(%{action: :get_and_update} = req, {map, max_p} = state) do
     {key, _} = req.data
 
     case map[key] do
       {:pid, worker} ->
         send(worker, as_map(req))
-        {:noreply, map}
+        {:noreply, state}
 
       _ ->
-        map = spawn_worker(map, key)
-        handle(req, map)
+        handle(req, spawn_worker(key, state))
     end
   end
 end

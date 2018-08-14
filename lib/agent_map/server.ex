@@ -8,30 +8,30 @@ defmodule AgentMap.Server do
   import Worker, only: [queue_len: 1, dict: 1]
   import System, only: [system_time: 0]
   import Common, only: [run_group: 2]
+  import Req, only: [box: 4, get_state: 1]
 
   use GenServer
-
-  @max_processes 5
 
   ##
   ## The state of this GenServer is a pair:
   ##
-  ##   {map, default max_processes value, map}
+  ##   {map, default max_processes value}
   ##
   ## For each map key, value is one of the:
   ##
-  ##  * {:pid, worker}
-  ##  * {:value, value}
+  ##   * {:pid, worker}
   ##
-  ##  * {{:value, value}, {processes, max_processes}}
-  ##  * {{:value, v}, processes}
-  ##    == {{:value, v}, {processes, @max_processes}}
+  ##   * {{:value, v}, {processes, max_processes}}
+  ##   * {{:value, v}, processes}
+  ##     = {{:value, v}, {processes, @max_processes}}
+  ##   * {:value, v}
+  ##     = {{:value, v}, {0, @max_processes}}
   ##
-  ##  No value:
+  ## No value:
   ##
-  ##  * {nil, {processes, max_processes}}
-  ##  * {nil, processes}
-  ##    == {nil, process, @max_processes}
+  ##   * {nil, {processes, max_processes}}
+  ##   * {nil, processes}
+  ##     = {nil, process, @max_processes}
   ##
 
   ##
@@ -51,119 +51,116 @@ defmodule AgentMap.Server do
       |> Enum.split_with(&match?({:ok, _}, &1))
 
     if [] == errors do
-      {:ok,
-       {for {key, {:ok, v}} <- kv, into: %{} do
-         {key, {:value, v}}
-       end, args[:max_processes]}
+      map =
+        for {key, {:ok, v}} <- kv, into: %{} do
+          {key, {:value, v}}
+        end
+
+      {:ok, {map, args[:max_processes]}}
     else
-      {:stop,
-       for {key, {:error, reason}} <- errors do
-         {key, reason}
-       end}
+      reason =
+        for {key, {:error, reason}} <- errors do
+          {key, reason}
+        end
+
+      {:stop, reason}
     end
   end
 
-  def handle_call(%{timeout: {:drop, _}, inserted_at: nil} = req, from, map) do
-    handle_call(%{req | inserted_at: system_time()}, from, map)
+  def handle_call(%{timeout: {:drop, _}, inserted_at: nil} = req, from, state) do
+    handle_call(%{req | inserted_at: system_time()}, from, state)
   end
 
-  def handle_call(%{timeout: {:hard, _}, inserted_at: nil} = req, from, map) do
-    handle_call(%{req | inserted_at: system_time()}, from, map)
+  def handle_call(%{timeout: {:break, _}, inserted_at: nil} = req, from, state) do
+    handle_call(%{req | inserted_at: system_time()}, from, state)
   end
 
-  def handle_call(req, from, map) do
-    Req.handle(%{req | from: from}, map)
+  def handle_call(req, from, state) do
+    Req.handle(%{req | from: from}, state)
   end
 
-  def handle_cast(%{timeout: {:drop, _}, inserted_at: nil} = req, map) do
-    handle_cast(%{req | inserted_at: system_time()}, map)
+  def handle_cast(%{timeout: {:drop, _}, inserted_at: nil} = req, state) do
+    handle_cast(%{req | inserted_at: system_time()}, state)
   end
 
-  def handle_cast(%{timeout: {:hard, _}, inserted_at: nil} = req, map) do
-    handle_cast(%{req | inserted_at: system_time()}, map)
+  def handle_cast(%{timeout: {:stop, _}, inserted_at: nil} = req, state) do
+    handle_cast(%{req | inserted_at: system_time()}, state)
   end
 
-  def handle_cast(req, map) do
-    {:noreply,
-     case Req.handle(req, map) do
-       {:reply, _r, map} ->
-         map
+  def handle_cast(req, state) do
+    state =
+      req
+      |> Req.handle(state)
+      |> get_state()
 
-       {:noreply, map} ->
-         map
-     end}
+    {:noreply, state}
   end
 
   ##
   ## INFO
   ##
 
-  def handle_info(%{info: :done, key: key} = msg, map) do
-    {:noreply,
-     case map[key] do
-       {:pid, worker} ->
-         send(worker, msg)
-         map
+  def handle_info(%{info: :done, key: key} = msg, {map, max_p} = state) do
+    state =
+      case map[key] do
+        {:pid, worker} ->
+          send(worker, msg)
+          state
 
-       {nil, {1, @max_processes}} ->
-         delete(map, key)
+        {nil, 1} ->
+          {delete(map, key), max_p}
 
-       {value, {1, max_p}} ->
-         %{map | key => {value, max_p}}
+        {value, {p, custom_max_p}} ->
+          {%{map | key => {value, {p - 1, custom_max_p}}}, max_p}
 
-       {value, {p, max_p}} ->
-         %{map | key => {value, {p - 1, max_p}}}
-     end}
+        {value, p} ->
+          {%{map | key => {value, p - 1}}, max_p}
+      end
+
+    {:noreply, state}
   end
 
-  def handle_info(%{action: :chain} = req, map) do
-    Req.handle(struct(Req, %{req | action: :get_and_update}), map)
+  def handle_info(%{action: :chain} = req, state) do
+    Req.handle(struct(Req, %{req | action: :get_and_update}), state)
   end
 
   # Worker asks to exit.
-  def handle_info({worker, :mayidie?}, map) do
+  def handle_info({worker, :mayidie?}, {map, max_p}) do
     # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.
     if queue_len(worker) > 0 do
       send(worker, :continue)
-      {:noreply, map}
+      {:noreply, state}
     else
       dict = dict(worker)
       send(worker, :die!)
 
       p = dict[:"$processes"]
-      max_p = dict[:"$max_processes"]
+      v = dict[:"$value"]
 
-      key = dict[:"$key"]
+      case box(v, p - 1, dict[:"$max_processes"], max_p) do
+        nil ->
+          # GC
+          {:noreply, {delete(map, dict[:"$key"]), max_p}}
 
-      state =
-        {dict[:"$value"],
-         if p == 1 do
-           max_p
-         else
-           {p - 1, max_p}
-         end}
-
-      {:noreply,
-       if state == {nil, @max_processes} do
-         # GC
-         delete(map, key)
-       else
-         %{map | key => state}
-       end}
+        box ->
+          {:noreply, {%{map | dict[:"$key"] => box}, max_p}}
+      end
     end
   end
 
-  def handle_info(msg, value) do
-    super(msg, value)
+  def handle_info(msg, state) do
+    super(msg, state)
   end
 
-  def code_change(_old, map, fun) do
-    {:ok,
-     Enum.reduce(Map.keys(map), map, fn key, map ->
-       %Req{action: :cast, data: {key, fun}}
-       |> Req.handle(map)
-       |> elem(1)
-     end)}
+  def code_change(_old, {map, _max_p} = state, fun) do
+    state =
+      Enum.reduce(Map.keys(map), state, fn key, state ->
+        %Req{action: :cast, data: {key, fun}}
+        |> Req.handle(state)
+        |> get_state()
+      end)
+
+    {:ok, state}
   end
 end
