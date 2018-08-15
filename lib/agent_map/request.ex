@@ -5,8 +5,9 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Common, Worker, Transaction, Req}
 
-  import Worker, only: [dict: 1, unbox: 1, queue: 1]
-  import Common, only: [reply: 2]
+  import Process, only: [get: 1, put: 2, info: 1]
+  import Worker, only: [unbox: 1, queue: 1]
+  import Common, only: [reply: 2, dict: 1]
 
   @enforce_keys [:action]
 
@@ -36,6 +37,10 @@ defmodule AgentMap.Req do
   def box(value, p, max_p, max_p), do: {value, p}
   def box(value, p, max_p, _), do: {value, {p, max_p}}
 
+  ##
+  ## STATE CHANGING
+  ##
+
   defp pack(key, value, {p, custom_max_p}, {map, max_p}) do
     case box(value, p, custom_max_p, max_p) do
       nil ->
@@ -51,7 +56,7 @@ defmodule AgentMap.Req do
       {:pid, worker} ->
         {:pid, worker}
 
-      {value, {_p, _custom_max_p}} = box ->
+      {_value, {_p, _custom_max_p}} = box ->
         box
 
       {value, p} ->
@@ -62,21 +67,29 @@ defmodule AgentMap.Req do
     end
   end
 
-  defp spawn_worker(key, {map, max_p}) do
-    ref = make_ref()
+  def spawn_worker(key, state) do
+    {map, max_p} = state
 
-    worker =
-      spawn_link(fn ->
-        Worker.loop({ref, self()}, key, unbox(map[key], max_p))
-      end)
+    unless match?({:pid, _}, map[key]) do
+      ref = make_ref()
 
-    receive do
-      {^ref, _} ->
-        :continue
-    end
+      worker =
+        spawn_link(fn ->
+          Worker.loop({ref, self()}, key, unpack(key, state))
+        end)
 
-    {%{map | key => {:pid, worker}}, max_p}
+      receive do
+        {^ref, _} ->
+          :continue
+      end
+
+      {%{map | key => {:pid, worker}}, max_p}
+    end || state
   end
+
+  ##
+  ## MESSAGES TO WORKER
+  ##
 
   defp as_map(%{data: {_key, f}} = req) do
     req
@@ -89,7 +102,11 @@ defmodule AgentMap.Req do
     as_map(%{req | action: :get_and_update, data: {:_, fun}})
   end
 
-  defp get_value(key, {map, _max_p} = state) do
+  ##
+  ## FETCH
+  ##
+
+  def get_value(key, state) do
     case unpack(key, state) do
       {:pid, worker} ->
         dict(worker)[:"$value"]
@@ -99,8 +116,8 @@ defmodule AgentMap.Req do
     end
   end
 
-  def fetch(map, key) do
-    case get_value(key, {map, :_}) do
+  defp fetch(key, state) do
+    case get_value(key, state) do
       {:value, v} ->
         {:ok, v}
 
@@ -109,19 +126,19 @@ defmodule AgentMap.Req do
     end
   end
 
+  defp has_key?(key, state) do
+    match?({:ok, _}, fetch(key, state))
+  end
+
   ##
   ## HELPERS
   ##
 
-  defp has_key?(map, key) do
-    match?({:ok, _}, fetch(map, key))
-  end
-
   defp run(%{action: :get} = req, value) do
     {key, fun} = req.data
 
-    Process.put(:"$key", key)
-    Process.put(:"$value", value)
+    put(:"$key", key)
+    put(:"$value", value)
 
     case Common.run(req, [unbox(value)]) do
       {:ok, msg} ->
@@ -137,13 +154,6 @@ defmodule AgentMap.Req do
   ##
 
   def handle(%{action: :inc} = req, {map, max_p} = state) do
-    action = (step > 0 && "increment") || "decrement"
-
-    arithm_err =
-      &%ArithmeticError{
-        message: "cannot #{action} key #{key} because it has a non-numerical value #{inspect(&1)}"
-      }
-
     {key, initial, step} = req.data
 
     case unpack(key, state) do
@@ -154,7 +164,7 @@ defmodule AgentMap.Req do
 
           v ->
             if Process.get(:"$value") do
-              raise arithm_err.(v)
+              raise IncError, key: key, value: v, step: step
             else
               if initial do
                 {:ok, initial + step}
@@ -168,7 +178,7 @@ defmodule AgentMap.Req do
         {:noreply, state}
 
       {{:value, v}, _} when not is_number(v) ->
-        raise arithm_err.(v)
+        raise IncError, key: key, value: v, step: step
 
       {nil, _} when not is_number(initial) ->
         raise KeyError, key: key
@@ -226,17 +236,14 @@ defmodule AgentMap.Req do
   end
 
   def handle(%{action: :keys}, {map, _} = state) do
-    keys =
-      map
-      |> Map.keys()
-      |> Enum.filter(&has_key?(map, &1))
+    keys = Enum.filter(Map.keys(map), &has_key?(&1, state))
 
     {:reply, keys, state}
   end
 
   def handle(%{action: :values} = req, {map, _} = state) do
     fun = fn _ ->
-      Map.values(Process.get(:"$map"))
+      Map.values(get(:"$map"))
     end
 
     handle(%{req | action: :get, data: {fun, Map.keys(map)}}, state)
@@ -283,7 +290,7 @@ defmodule AgentMap.Req do
       {:reply, fetch(map, key), state}
     else
       fun = fn _ ->
-        case Process.get(:"$value") do
+        case get(:"$value") do
           {:value, v} ->
             {:ok, v}
 
@@ -322,16 +329,18 @@ defmodule AgentMap.Req do
 
       # Cannot spawn more Task's.
       {_, {p, p}} ->
-        handle(req, spawn_worker(key, state))
+        state = spawn_worker(key, state)
+        handle(req, state)
 
       # Can spawn.
       {v, {p, custom_max_p}} ->
+        server = self()
         Task.start_link(fn ->
           run(req, v)
           send(server, %{info: :done, !: true})
         end)
 
-        state = pack(key, value, {p + 1, custom_max_p}, state)
+        state = pack(key, v, {p + 1, custom_max_p}, state)
         {:noreply, state}
     end
   end

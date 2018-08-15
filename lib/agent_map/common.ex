@@ -5,6 +5,14 @@ defmodule AgentMap.Common do
 
   require Logger
 
+  def unbox_(nil), do: 5000
+  def unbox_({_, timeout}), do: timeout
+  def unbox_(timeout), do: timeout
+
+  def dict(worker \\ self()) do
+    Process.info(worker)[:dictionary]
+  end
+
   # Apply extra args to `fun`.
   def apply(fun, extra_args \\ [])
 
@@ -49,26 +57,27 @@ defmodule AgentMap.Common do
     send(to, what)
   end
 
-  defp expired?(%{timeout: {_, timeout}, inserted_at: t}) do
-    timeout =
-      convert_time_unit(timeout, :milliseconds, :native)
+  def to_ms(time) do
+    convert_time_unit(time, :milliseconds, :native)
+  end
 
-    system_time() >= t + timeout
+  defp expired?(%{timeout: {_, timeout}, inserted_at: t}) do
+    system_time() >= t + to_ms(timeout)
   end
 
   defp expired?(_), do: false
-
-  # if req.safe? do
-  #   safe_apply(f, args)
-  # else
-  #   {:ok, __MODULE__.apply(f, args)}
-  # end
 
   def run(%{fun: f, timeout: {:hard, timeout}} = req, args) do
     if expired?(req) do
       {:error, :expired}
     else
+      dict = dict()
+
       task = Task.async(fn ->
+        for {key, value} <- dict do
+          Process.put(key, value)
+        end
+
         __MODULE__.apply(f, args)
       end)
 
@@ -86,7 +95,7 @@ defmodule AgentMap.Common do
     if expired?(req) do
       {:error, :expired}
     else
-      {:ok, __MODULE__.apply(f, args)}
+      {:ok, __MODULE__.apply(req.fun, args)}
     end
   end
 

@@ -7,6 +7,7 @@ defmodule AgentMap do
   alias AgentMap.{Common, Server, Req}
 
   import Common, only: :macros
+  import Enum, only: [uniq: 1]
 
   @moduledoc """
   The `AgentMap` can be seen as a stateful `Map` that parallelize operations
@@ -402,6 +403,21 @@ defmodule AgentMap do
   defp pid(%__MODULE__{link: am}), do: am
   defp pid(am), do: am
 
+  @doc """
+  As a Kernel.apply/2
+  """
+  def apply(fun, args) do
+    Common.apply(fun, args)
+  end
+
+  def apply(fun, args) do
+    Common.apply(fun, args)
+  end
+
+  def safe_apply(fun, args) do
+    Common.safe_apply(fun, args)
+  end
+
   ## ##
 
   @doc """
@@ -601,22 +617,10 @@ defmodule AgentMap do
     GenServer.start(Server, args, opts)
   end
 
-  defp _timeout(opts) do
-    case opts[:timeout] do
-      nil ->
-        5000
-
-      {_, timeout} ->
-        timeout
-
-      timeout ->
-        timeout
-    end
-  end
-
   defp _call(agentmap, req, opts) do
     req = struct(req, opts)
-    GenServer.call(pid(agentmap), req, _timeout(opts))
+    timeout = unbox_(opts[:timeout])
+    GenServer.call(pid(agentmap), req, timeout)
   end
 
   defp _cast(agentmap, %Req{} = req, opts) do
@@ -1109,6 +1113,15 @@ defmodule AgentMap do
     # opts =
     #   Keyword.put_new(opts, :!, false)
 
+    unless keys == uniq(keys) do
+      raise """
+      expected uniq keys for `update`, `get_and_update` and
+      `cast` transactions. Got: #{inspect(keys)}. Please
+      check #{inspect(keys -- uniq(keys))} keys.
+      """
+      |> String.replace("\n", " ")
+    end
+
     req = %Req{action: :get_and_update, data: {fun, keys}}
     _call(agentmap, req, opts)
   end
@@ -1270,15 +1283,15 @@ defmodule AgentMap do
       if Process.get(:"$value") do
         {:ok, Common.apply(fun, [value])}
       else
-        {{:error, :keyerror}}
+        {:error}
       end
     end
 
     case get_and_update(agentmap, key, cb, opts) do
       :ok ->
-        am
+        agentmap
 
-      {:error, :keyerror} ->
+      :error ->
         raise KeyError, key: key
     end
   end

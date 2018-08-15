@@ -1,25 +1,15 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Common, MalformedCallback}
+  alias AgentMap.{Common, CallbackError}
 
-  import Process, only: [get: 1, put: 2, delete: 1]
+  import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import System, only: [system_time: 0]
-  import Common, only: [run: 2, reply: 2, run_and_reply: 2]
+  import Common, only: [run: 2, reply: 2]
 
   @moduledoc false
 
-  @compile {:inline,
-            rand: 1,
-            dec: 1,
-            inc: 1,
-            add: 2,
-            unbox: 1,
-            set: 1,
-            info: 2,
-            dict: 1,
-            queue: 1,
-            queue_len: 1}
+  @compile {:inline, rand: 1, dec: 1, inc: 1, add: 2, unbox: 1, set: 1, queue: 1, queue_len: 1}
 
   # ms
   @wait 10
@@ -37,28 +27,23 @@ defmodule AgentMap.Worker do
   def dec(key), do: put(key, add(get(key), -1))
   def inc(key), do: put(key, add(get(key), +1))
 
+  defp set(value), do: put(:"$value", {:value, value})
+
   def unbox(nil), do: nil
   def unbox({:value, value}), do: value
 
-  defp set(value), do: put(:"$value", {:value, value})
-
-  def info(worker, key) do
-    worker
-    |> Process.info(key)
-    |> elem(1)
+  def queue(worker) do
+    info(worker)[:messages]
   end
 
-  def dict(worker), do: info(worker, :dictionary)
-
-  def queue(worker), do: info(worker, :messages)
-
   def queue_len(worker \\ self()) do
-    info(worker, :message_queue_len)
+    info(worker)[:message_queue_len]
   end
 
   defp handle_timeout_error(req) do
-    k = Process.get(:"$key")
-    Logger.error("Key #{inspect(k)} error while processing #{inspect(req)}. Request is expired.")
+    r = inspect(req)
+    k = inspect(get(:"$key"))
+    Logger.error("Key #{k} timeout error while processing request #{r}.")
   end
 
   # Run request and decide to reply or not to.
@@ -128,7 +113,7 @@ defmodule AgentMap.Worker do
         reply(req.from, value)
 
       {:ok, reply} ->
-        raise %MalformedCallback{for: :get_and_update, got: reply}
+        raise CallbackError, got: reply
 
       {:error, :expired} ->
         handle_timeout_error(req)
@@ -201,11 +186,11 @@ defmodule AgentMap.Worker do
 
         Logger.warn(
           """
-            Selective receive is turned off for worker with
-            key #{inspect(get(:"$key"))} as it's message queue became too long
-            (#{queue_len()} messages). This prevents worker from executing the
-            out of turn calls. Selective receive will be turned on again as
-            the queue became empty (this will not be shown in logs).
+          Selective receive is turned off for worker with
+          key #{inspect(get(:"$key"))} as it's message queue became too long
+          (#{queue_len()} messages). This prevents worker from executing the
+          out of turn calls. Selective receive will be turned on again as
+          the queue became empty (this will not be shown in logs).
           """
           |> String.replace("\n", " ")
         )

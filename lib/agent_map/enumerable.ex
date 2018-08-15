@@ -1,8 +1,8 @@
 defimpl Enumerable, for: AgentMap do
   import AgentMap
 
-  def count(%AgentMap{link: mag}) do
-    {:ok, GenServer.call(mag, :count)}
+  def count(mag) do
+    {:ok, length(AgentMap.keys(mag))}
   end
 
   def member?(mag, {key, value}) do

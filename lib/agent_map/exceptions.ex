@@ -1,26 +1,32 @@
-defmodule AgentMap.MalformedCallback do
-  defexception [:for, :len, :got, transaction?: false]
+defmodule AgentMap.CallbackError do
+  defexception [:got, :len, transaction?: false]
 
-  def message(%{transaction?: false, for: :get_and_update} = exception) do
-    "callback expected to return :id | :pop | {get} | {get, value} | {:chain,
-    {key, fun} | {fun, keys}, value, got: #{exception.got}"
-  end
-
-  def message(%{transaction?: true, len: l} = exception) when is_integer(l) do
-    "callback expected to return #{l} updated values, got: #{exception.got}"
-  end
-
-  def message(%{transaction?: true, for: :get_and_update} = exception) do
-    "callback expected to return :id | :pop | {get} | {get, value} | {:chain,
-    {key, fun} | {fun, keys}, value, got: #{exception.got}"
-  end
-
-  def message(%{transaction?: true} = exception) do
-    """
-      callback expected to return :id | :pop | {get}
-      | {get, [value] | :id | :drop} | [{get} | {get, value} | :id | :pop]
-      | {:chain, {key, fun} | {fun, keys}, value}, got: #{exception.got}
-    """
+  def message(%{transaction?: false, got: g}) do
+    "callback may return {get, value} | {get} | :id | :pop | {:chain,
+    {key, fun} | {fun, keys}, value}, got: #{inspect(g)}"
     |> String.replace("\n", " ")
+  end
+
+  def message(%{transaction?: true, len: n}) do
+    "the number of returned values #{n} does not equal to the number of keys"
+  end
+
+  def message(%{transaction?: true, got: g}) do
+    "callback may return {get, [value] | :id | :drop} | {get} | :id | :pop |
+    [{get, value} | {get} | :id | :pop] |
+    {:chain, {key, fun} | {fun, keys}, [value] | :id | :drop}, got: #{inspect(g)}"
+    |> String.replace("\n", " ")
+  end
+end
+
+defmodule AgentMap.IncError do
+  defexception [:key, :value, :step]
+
+  def message(%{step: s, key: k, value: v}) when s > 0 do
+    "cannot increment key #{inspect(k)} because it has a non-numerical value #{inspect(v)}"
+  end
+
+  def message(%{key: k, value: v}) do
+    "cannot decrement key #{inspect(k)} because it has a non-numerical value #{inspect(v)}"
   end
 end

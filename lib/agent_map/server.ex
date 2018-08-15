@@ -5,9 +5,9 @@ defmodule AgentMap.Server do
   alias AgentMap.{Common, Req, Worker}
 
   import Map, only: [delete: 2]
-  import Worker, only: [queue_len: 1, dict: 1]
+  import Worker, only: [queue_len: 1]
   import System, only: [system_time: 0]
-  import Common, only: [run_group: 2]
+  import Common, only: [run_group: 2, dict: 1]
   import Req, only: [box: 4, get_state: 1]
 
   use GenServer
@@ -125,7 +125,7 @@ defmodule AgentMap.Server do
   end
 
   # Worker asks to exit.
-  def handle_info({worker, :mayidie?}, {map, max_p}) do
+  def handle_info({worker, :mayidie?}, {map, max_p} = state) do
     # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.
     if queue_len(worker) > 0 do
@@ -141,10 +141,12 @@ defmodule AgentMap.Server do
       case box(v, p - 1, dict[:"$max_processes"], max_p) do
         nil ->
           # GC
-          {:noreply, {delete(map, dict[:"$key"]), max_p}}
+          map = delete(map, dict[:"$key"])
+          {:noreply, {map, max_p}}
 
         box ->
-          {:noreply, {%{map | dict[:"$key"] => box}, max_p}}
+          map = %{map | dict[:"$key"] => box}
+          {:noreply, {map, max_p}}
       end
     end
   end
