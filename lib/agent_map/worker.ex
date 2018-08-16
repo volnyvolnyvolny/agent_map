@@ -5,11 +5,12 @@ defmodule AgentMap.Worker do
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import System, only: [system_time: 0]
-  import Common, only: [run: 2, reply: 2]
+  import Common, only: [run: 2, reply: 2, handle_timeout_error: 1]
 
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1, add: 2, unbox: 1, set: 1, queue: 1, queue_len: 1}
+  @compile {:inline,
+            rand: 1, dec: 1, inc: 1, add: 2, unbox: 1, set: 1, dict: 1, queue: 1, queue_len: 1}
 
   # ms
   @wait 10
@@ -21,70 +22,64 @@ defmodule AgentMap.Worker do
   # Greate for generating numbers < 1000.
   defp rand(to) when to < 1000, do: rem(system_time(), to)
 
+  defp set(value), do: put(:"$value", {:value, value})
+
+  ##
+  ## DICTIONARY
+  ##
+
   defp add(:infinity, _v), do: :infinity
   defp add(i, v), do: i + v
 
-  def dec(key), do: put(key, add(get(key), -1))
-  def inc(key), do: put(key, add(get(key), +1))
+  defp dec(key), do: put(key, add(get(key), -1))
+  defp inc(key), do: put(key, add(get(key), +1))
 
-  defp set(value), do: put(:"$value", {:value, value})
-
-  def unbox(nil), do: nil
-  def unbox({:value, value}), do: value
-
-  def queue(worker) do
-    info(worker)[:messages]
-  end
-
-  def queue_len(worker \\ self()) do
-    info(worker)[:message_queue_len]
-  end
-
-  defp handle_timeout_error(req) do
-    r = inspect(req)
-    k = inspect(get(:"$key"))
-    Logger.error("Key #{k} timeout error while processing request #{r}.")
-  end
-
-  # Run request and decide to reply or not to.
-  defp run_and_reply(req, value) do
-    case run(req, [value]) do
-      {:ok, result} ->
-        reply(req.from, result)
-
-      {:error, :expired} ->
-        handle_timeout_error(req)
-    end
-  end
+  def dict(worker \\ self()), do: info(worker)[:dictionary]
+  def queue(worker), do: info(worker)[:messages]
+  def queue_len(worker \\ self()), do: info(worker)[:message_queue_len]
 
   ##
   ## HANDLE
   ##
 
+  defp reply(nil, msg), do: :ignore
+  defp reply(from, msg), do: GenServer.reply(from, msg)
+
   defp handle(%{action: :max_processes} = req) do
-    reply(req.from, get(:"$max_processes"))
+    GenServer.reply(req.from, get(:"$max_processes"))
     put(:"$max_processes", req.data)
   end
 
   defp handle(%{action: :get} = req) do
-    if get(:"$processes") < get(:"$max_processes") do
-      k = get(:"$key")
-      v = get(:"$value")
+    run_and_reply = fn req, value ->
+      case run(req, unbox(value)) do
+        {:ok, result} ->
+          GenServer.reply(req.from, result)
 
+        {:error, :expired} ->
+          handle_timeout_error(req)
+      end
+    end
+
+    k = get(:"$key")
+    v = get(:"$value")
+
+    if get(:"$processes") < get(:"$max_processes") do
       worker = self()
 
       Task.start_link(fn ->
-        put(:"$key", k)
-        put(:"$value", v)
+        for {prop, value} <- dict(worker) do
+          put(prop, value)
+        end
 
-        run_and_reply(req, unbox(v))
+        run_and_reply.(req, v)
 
         send(worker, %{info: :done, !: true})
       end)
 
       inc(:"$processes")
     else
-      run_and_reply(req, unbox(get(:"$value")))
+      run_and_reply.(req, v)
     end
   end
 
@@ -95,12 +90,12 @@ defmodule AgentMap.Worker do
       {:ok, {get}} ->
         reply(req.from, get)
 
-      {:ok, {get, value}} ->
-        set(value)
+      {:ok, {get, v}} ->
+        put(:"$value", {:value, v})
         reply(req.from, get)
 
-      {:ok, {:chain, {_kf, _fks} = d, value}} ->
-        set(value)
+      {:ok, {:chain, {_kf, _fks} = d, v}} ->
+        put(:"$value", {:value, v})
 
         req = %{req | data: d, action: :chain}
         send(get(:"$gen_server"), req)
@@ -124,12 +119,8 @@ defmodule AgentMap.Worker do
     delete(:"$value")
   end
 
-  defp handle(%{action: :put} = req) do
-    set(req.value)
-  end
-
   defp handle(%{action: :send} = req) do
-    reply(req.to, {self(), get(:"$value")})
+    send(req.to, {self(), get(:"$value")})
   end
 
   defp handle(%{action: :receive} = req) do
@@ -140,8 +131,8 @@ defmodule AgentMap.Worker do
       :drop ->
         delete(:"$value")
 
-      {:value, v} ->
-        set(v)
+      {:value, v} = box ->
+        put(:"$value", box)
     after
       0 ->
         handle(req)
@@ -231,10 +222,10 @@ defmodule AgentMap.Worker do
 
         receive do
           :continue ->
-            # 1. Next time wait a few ms longer;
+            # 1. Next time wait a few ms longer:
             put(:"$wait", wait + rand(5))
 
-            # 2. use selective receive as queue is empty.
+            # 2. use selective receive again:
             put(:"$selective_receive", true)
             loop()
 

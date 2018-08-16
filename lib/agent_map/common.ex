@@ -5,33 +5,89 @@ defmodule AgentMap.Common do
 
   require Logger
 
-  def unbox_(nil), do: 5000
-  def unbox_({_, timeout}), do: timeout
-  def unbox_(timeout), do: timeout
+  ##
+  ## BOXING
+  ##
 
-  def dict(worker \\ self()) do
-    Process.info(worker)[:dictionary]
+  def unbox(nil), do: nil
+  def unbox({:value, value}), do: value
+
+  ##
+  ## STATE RELATED
+  ##
+
+  defp box(value, p, custom_max_p, max_p)
+
+  defp box(value, 0, max_p, max_p), do: value
+  defp box(value, p, max_p, max_p), do: {value, p}
+  defp box(value, p, max_p, _), do: {value, {p, max_p}}
+
+  defp pack(key, value, {p, custom_max_p}, {map, max_p}) do
+    case box(value, p, custom_max_p, max_p) do
+      nil ->
+        {Map.delete(map, key), max_p}
+
+      box ->
+        {%{map | key => box}, max_p}
+    end
   end
 
-  # Apply extra args to `fun`.
-  def apply(fun, extra_args \\ [])
+  def unpack(key, {map, max_p}) do
+    case map[key] do
+      {:pid, worker} ->
+        {:pid, worker}
 
-  def apply({m, f, a}, extra_args) do
-    Kernel.apply(m, f, extra_args ++ a)
+      {_value, {_p, _custom_max_p}} = box ->
+        box
+
+      {value, p} ->
+        {value, {p, max_p}}
+
+      value ->
+        {value, {0, max_p}}
+    end
   end
 
-  def apply({fun, args}, extra_args) do
-    Kernel.apply(fun, extra_args ++ args)
+  def spawn_worker(key, state) do
+    {map, max_p} = state
+
+    unless match?({:pid, _}, map[key]) do
+      ref = make_ref()
+
+      worker =
+        spawn_link(fn ->
+          Worker.loop({ref, self()}, key, unpack(key, state))
+        end)
+
+      receive do
+        {^ref, _} ->
+          :continue
+      end
+
+      {%{map | key => {:pid, worker}}, max_p}
+    end || state
   end
 
-  def apply(fun, args) do
-    Kernel.apply(fun, args)
+  ##
+  ## TIME RELATED
+  ##
+
+  def to_ms(time) do
+    convert_time_unit(time, :milliseconds, :native)
   end
 
+  defp expired?(%{timeout: {_, timeout}, inserted_at: t}) do
+    system_time() >= t + to_ms(timeout)
+  end
+
+  defp expired?(_), do: false
+
+  ##
+  ## APPLY AND RUN
+  ##
 
   def safe_apply(fun, args) do
-    {:ok, __MODULE__.apply(fun, args)}
-
+    {:ok, apply(fun, args)}
   rescue
     BadFunctionError ->
       {:error, :badfun}
@@ -47,38 +103,19 @@ defmodule AgentMap.Common do
       {:error, {:exit, reason}}
   end
 
-  def reply({_pid, _tag} = to, what) do
-    GenServer.reply(to, what)
-  end
-
-  def reply(nil, _), do: :nothing
-
-  def reply(to, what) do
-    send(to, what)
-  end
-
-  def to_ms(time) do
-    convert_time_unit(time, :milliseconds, :native)
-  end
-
-  defp expired?(%{timeout: {_, timeout}, inserted_at: t}) do
-    system_time() >= t + to_ms(timeout)
-  end
-
-  defp expired?(_), do: false
-
-  def run(%{fun: f, timeout: {:hard, timeout}} = req, args) do
+  def run(%{fun: f, timeout: {:break, timeout}} = req, arg) do
     if expired?(req) do
       {:error, :expired}
     else
       dict = dict()
 
       task = Task.async(fn ->
-        for {key, value} <- dict do
-          Process.put(key, value)
+        # clone process dictionary:
+        for {prop, value} <- dict do
+          Process.put(prop, value)
         end
 
-        __MODULE__.apply(f, args)
+        f.(arg)
       end)
 
       case Task.yield(task, timeout) || Task.shutdown(task) do
@@ -91,40 +128,26 @@ defmodule AgentMap.Common do
     end
   end
 
-  def run(req, args) do
+  def run(%{fun: f} = req, arg) do
     if expired?(req) do
       {:error, :expired}
     else
-      {:ok, __MODULE__.apply(req.fun, args)}
+      {:ok, f.(arg)}
     end
   end
 
-  # Run group of funs with a common timeout.
-  def run_group(funs, timeout) when is_list(funs) do
-    funs
-    |> Enum.map(
-      &Task.async(fn ->
-        safe_apply(&1, [])
-      end)
-    )
-    |> Task.yield_many(timeout)
-    |> Enum.map(fn {task, res} ->
-      res || Task.shutdown(task, :brutal_kill)
-    end)
-    |> Enum.map(fn
-      {:ok, _result} = id ->
-        id
+  ##
+  ##
+  ##
 
-      nil ->
-        {:error, :timeout}
-
-      {:exit, reason} ->
-        {:error, reason}
-    end)
+  def handle_timeout_error(req) do
+    r = inspect(req)
+    if get(:"$key") do
+      k = inspect(get(:"$key"))
+      Logger.error("Key #{k} timeout error while processing request #{r}.")
+    else
+      ks = inspect(get(:"$keys")
+      Logger.error("Keys #{ks} timeout error while processing transaction request #{r}.")
+    end
   end
-
-  defguard is_fun(f, arity)
-           when is_function(f, arity)
-           or is_function(elem(f, 0), arity + length(elem(f, 1)))
-           or (is_atom(elem(f, 0)) and is_atom(elem(f, 1)) and is_list(elem(f, 2)))
 end
