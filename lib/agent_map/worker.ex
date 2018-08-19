@@ -94,11 +94,11 @@ defmodule AgentMap.Worker do
         put(:"$value", {:value, v})
         reply(req.from, get)
 
-      {:ok, {:chain, {_kf, _fks} = d, v}} ->
-        put(:"$value", {:value, v})
+      # {:ok, {:chain, {_kf, _fks} = d, v}} ->
+      #   put(:"$value", {:value, v})
 
-        req = %{req | data: d, action: :chain}
-        send(get(:"$gen_server"), req)
+      #   req = %{req | data: d, action: :chain}
+      #   send(get(:"$gen_server"), req)
 
       {:ok, :id} ->
         reply(req.from, value)
