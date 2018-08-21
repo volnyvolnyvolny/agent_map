@@ -4,7 +4,7 @@ defmodule AgentMap do
   @enforce_keys [:link]
   defstruct @enforce_keys
 
-  alias AgentMap.{Common, Server, Req}
+  alias AgentMap.{Common, Server, Req, IncError}
 
   import Enum, only: [uniq: 1]
 
@@ -884,11 +884,6 @@ defmodule AgentMap do
     * `:pop`, similar to `Map.get_and_update/3` this returns value with given
       `key` and removes it from `agentmap`;
 
-    * `{:chain, {key, fun}, new_value}` — to change value and initiate another
-      `get_and_update/4` call. Nothing is returned yet.
-    * `{:chain, {fun, [keys]}, new_value}` — to change value and initiate
-      another `get_and_update/4` transaction call. Nothing is returned yet.
-
    In a transaction case `fun` can return:
 
     * a list with values `[{"get" value, new value} | {"get" value} | :id |
@@ -931,12 +926,6 @@ defmodule AgentMap do
     * `:id` to return values while not changing it;
     * `:pop` to return values while with given `keys` while removing them from
       `agentmap`';
-
-    * `{:chain, {key, fun}, [new_value] | :id | :drop}` — to setup a new values
-      and initiate another `get_and_update/4` call. Nothing is returned yet;
-    * `{:chain, {fun, keys}, [new_value] | :id | :drop}` — to setup a new values
-      and initiate another transaction `get_and_update/4` call. Nothing is
-      returned yet.
 
   For ex.:
 
@@ -1047,36 +1036,6 @@ defmodule AgentMap do
       [24, nil, :_, 44]
       iex> get(am, & &1, [:uno, :dos, :tres, :cuatro])
       [24, :_, nil, nil]
-
-  Chain calls (used rarely):
-
-      iex> import AgentMap
-      iex> am = new(uno: 24, dos: 33, tres: 42)
-      iex> call = {:dos, fn _ -> {:get, :dos} end}
-      iex> get_and_update(am, :uno, fn _ ->
-      ...>   {:chain, call, :uno}
-      ...> end)
-      :get
-      iex> get(am, & &1, [:uno, :dos])
-      [:uno, :dos]
-      #
-      # transaction chain calls:
-      #
-      iex> call = {fn _ -> {:get, [2, 3]} end, [:dos, :tres]}
-      iex> get_and_update(am, :uno, fn _ ->
-      ...>   {:chain, call, 1}
-      ...> end)
-      :get
-      iex> get(am, & &1, [:uno, :dos, :tres])
-      [1, 2, 3]
-      #
-      iex> call = {:uno, fn _ -> {:get, :u} end}
-      iex> get_and_update(am, fn _ ->
-      ...>   {:chain, call, [:d, :t]}
-      ...> end, [:dos, :tres])
-      :get
-      iex> get(am, & &1, [:uno, :dos, :tres])
-      [:u, :d, :t]
   """
   # 4
   @type cb(a) ::
@@ -1084,9 +1043,7 @@ defmodule AgentMap do
              {a}
              | {a, value}
              | :pop
-             | :id
-             | {:chain, {key, cb(a)}, value}
-             | {:chain, {cb_t(a), [key]}, value})
+             | :id)
 
   @type cb_t(a) ::
           ([value] ->
@@ -1094,9 +1051,7 @@ defmodule AgentMap do
              | {a, [value] | :drop | :id}
              | [{any} | {any, value} | :pop | :id]
              | :pop
-             | :id
-             | {:chain, {key, cb(a)}, [value] | :id | :drop}
-             | {:chain, {cb_t(a), [key]}, [value] | :id | :drop})
+             | :id)
 
   @spec get_and_update(am, key, cb(a), keyword) :: a | value
         when a: var
@@ -1470,9 +1425,7 @@ defmodule AgentMap do
       get(agentmap, key, fn value ->
         if Process.get(:"$value") do
           {:ok, value}
-        else
-          :error
-        end
+        end || :error
       end)
     end
   end
@@ -1557,13 +1510,13 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: false` — (boolean, `true`) to make
+    * `!: false` — (`boolean`, `true`) to make
     [non-priority](#module-priority-calls-true) put calls;
 
     * `timeout: {:drop, pos_integer}` — drops this call from queue when
     [timeout](#module-timeout) happen;
 
-    * `:timeout` — (timeout, `5000`).
+    * `:timeout` — (`timeout`, `5000`).
 
   ## Examples
 
@@ -1596,7 +1549,14 @@ defmodule AgentMap do
   @spec pop(agentmap, key, any, keyword) :: value | any
   def pop(agentmap, key, default \\ nil, opts \\ [!: true, timeout: 5000]) do
     opts = Keyword.put_new(opts, :!, true)
-    _call(agentmap, %Req{action: :pop, data: {key, default}}, opts)
+
+    fun = fn _ ->
+      if Process.get(:"$value") do
+        :pop
+      end || {default}
+    end
+
+    get_and_update(agentmap, key, fun, opts)
   end
 
   @doc """
@@ -1606,15 +1566,15 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: false` — (boolean, `true`) to make
+    * `!: false` — (`boolean`, `true`) to make
     [non-priority](#module-priority-calls-true) put calls;
 
-    * `cast: false` — (boolean, `true`) to wait until actual put happend;
+    * `cast: false` — (`boolean`, `true`) to wait until actual put happend;
 
     * `timeout: {:drop, pos_integer}` — drops this call from queue when
     [timeout](#module-timeout) happen;
 
-    * `:timeout` — (timeout, `5000`) ignored if cast is used.
+    * `:timeout` — (`timeout`, `5000`) ignored if cast is used.
 
   ## Examples
 
@@ -1687,15 +1647,15 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: true` — (boolean, `false`) to make
+    * `!: true` — (`boolean`, `false`) to make
     [priority](#module-priority-calls-true) delete calls;
 
-    * `cast: false` — (boolean, `true`) to wait until actual drop happend;
+    * `cast: false` — (`boolean`, `true`) to wait until actual drop happend;
 
     * `timeout: {:drop, pos_integer}` — drops this call from queue when
       [timeout](#module-timeout) happen;
 
-    * `:timeout` — (timeout, `5000`) ignored if cast is used.
+    * `:timeout` — (`timeout`, `5000`) ignored if cast is used.
 
   ## Examples
 
@@ -1712,7 +1672,8 @@ defmodule AgentMap do
   """
   @spec delete(agentmap, key, keyword) :: agentmap
   def delete(agentmap, key, opts \\ [!: false, cast: true]) do
-    req = %Req{action: :delete, data: key}
+    fun = fn _ -> :pop end
+    req = %Req{action: :get_and_update, data: {key, fun}}
     _call_or_cast(agentmap, req, opts)
   end
 
@@ -1733,7 +1694,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: true` — (boolean, `false`) to make [priority
+    * `!: true` — (`boolean`, `false`) to make [priority
       calls](#module-priority-calls-true);
 
     * `timeout: {:drop, pos_integer}` — to throw out a call from queue upon the
@@ -1755,10 +1716,11 @@ defmodule AgentMap do
   @spec drop(agentmap, Enumerable.t(), keyword) :: agentmap
   def drop(agentmap, keys, opts \\ [!: false, cast: true]) do
     fun = fn _ -> :drop end
+
     if Keyword.get(opts, :cast, true) do
       cast(agentmap, fun, keys, !: opts[:!])
     else
-      update(agentmap, fun, keys. !: opts[:!])
+      update(agentmap, fun, keys, !: opts[:!])
     end
   end
 
@@ -1806,7 +1768,7 @@ defmodule AgentMap do
 
   ### Options
 
-    * `!: (false) true` — (boolean) to count only (not) [priority
+    * `!: (false) true` — (`boolean`) to count only (not) [priority
       callbacks](#module-priority-calls-true) in the `key` queue.
 
   ### Examples
@@ -1822,12 +1784,12 @@ defmodule AgentMap do
       iex> :timer.sleep(10)
       iex> AgentMap.queue_len(am, :a)
       2
-      iex> AgentMap.queue_len(am, :b)
-      0
       iex> AgentMap.queue_len(am, :a, !: true)
       1
       iex> AgentMap.queue_len(am, :a, !: false)
       1
+      iex> AgentMap.queue_len(am, :b)
+      0
   """
   @spec queue_len(agentmap, key, [!: boolean] | []) :: non_neg_integer
   def queue_len(agentmap, key, opts \\ []) do
@@ -1845,17 +1807,17 @@ defmodule AgentMap do
 
   ### Options
 
-    * `:initial` — (number, `0`) if value does not exist it is considered to be
+    * `:initial` — (`number`, `0`) if value does not exist it is considered to be
       the one given as initial;
     * `initial: false` — raises `KeyError` if value does not exist;
-    * `:step` — (number, `1`) increment step;
-    * `!: true` — (boolean, `false`) makes this call a
+    * `:step` — (`number`, `1`) increment step;
+    * `!: true` — (`boolean`, `false`) makes this call a
       [priority](#module-priority-calls-true);
-    * `cast: false` — (boolean, `true`) to return only after decrement happend;
+    * `cast: false` — (`boolean`, `true`) to return only after decrement happend;
 
     * `timeout: {:drop, pos_integer}` — drops this call from queue after given
       number of milliseconds;
-    * `:timeout` — (timeout, `5000`) ignored if cast is used.
+    * `:timeout` — (`timeout`, `5000`) ignored if cast is used.
 
   ### Examples
 
@@ -1869,28 +1831,37 @@ defmodule AgentMap do
   """
   @spec inc(agentmap, key, keyword) :: agentmap
   def inc(agentmap, key, opts \\ [step: 1, cast: true, !: false, initial: 0]) do
-    opts =
-      opts
-      |> Keyword.put_new(:step, 1)
-      |> Keyword.put_new(:initial, 0)
+    step = opts[:step] || 1
+    initial = Keyword.get(opts, :initial, 0)
 
-    req = %Req{action: :inc, data: {key, opts[:initial], opts[:step]}}
+    fun = fn
+      v when is_number(v) ->
+        {:ok, v + step}
 
+      v ->
+        if Process.get(:"$value") do
+          raise IncError, key: key, value: v, step: step
+        else
+          if initial do
+            {:ok, initial + step}
+          else
+            raise KeyError, key: key
+          end
+        end
+    end
+
+    req = %Req{action: :get_and_update, data: {key, fun}}
     _call_or_cast(agentmap, req, opts)
     agentmap
   end
 
   @doc """
   Decrements value with given `key`.
+  It is a syntax sugar for
 
-  Keep in mind that
-
-      dec(agentmap, key, opts)
-
-  is just a syntax sugar for
-
-      import Keyword
-      inc(agentmap, key, update(opts, :step, -1, & -&1)
+      opts =
+        Keyword.update(opts, :step, -1, & -&1)
+      inc(agentmap, key, opts)
 
   See `inc/3` for details.
   """

@@ -129,12 +129,6 @@ defmodule AgentMap.Server do
     {:noreply, state}
   end
 
-  def handle_info(%{action: :chain} = req, state) do
-    Req
-    |> struct(%{req | action: :get_and_update})
-    |> Req.handle(state)
-  end
-
   def handle_info({worker, :mayidie?}, {map, max_p} = state) do
     # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.

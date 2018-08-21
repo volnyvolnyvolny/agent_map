@@ -48,26 +48,6 @@ defmodule AgentMap.Common do
     end
   end
 
-  def spawn_worker(key, state) do
-    {map, max_p} = state
-
-    unless match?({:pid, _}, map[key]) do
-      ref = make_ref()
-
-      worker =
-        spawn_link(fn ->
-          Worker.loop({ref, self()}, key, unpack(key, state))
-        end)
-
-      receive do
-        {^ref, _} ->
-          :continue
-      end
-
-      {%{map | key => {:pid, worker}}, max_p}
-    end || state
-  end
-
   ##
   ## TIME RELATED
   ##
@@ -134,6 +114,30 @@ defmodule AgentMap.Common do
     else
       {:ok, f.(arg)}
     end
+  end
+
+  def reply(nil, msg), do: :ignore
+  def reply(from, msg), do: GenServer.reply(from, msg)
+
+  def run_and_reply(req, value) do
+    case run(req, unbox(value)) do
+      {:ok, result} ->
+        reply(req.from, result)
+
+      {:error, :expired} ->
+        handle_timeout_error(req)
+    end
+  end
+
+  def spawn_get(key, box, req, server \\ nil) do
+    Task.start_link(fn ->
+      Process.put(:"$key", key)
+      Process.put(:"$value", box)
+
+      run_and_reply(to_msg(req), box)
+
+      server && send(server, %{info: :done})
+    end)
   end
 
   ##

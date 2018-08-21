@@ -6,8 +6,7 @@ defmodule AgentMap.Transaction do
   import Map, only: [keys: 1]
   import Worker, only: [unbox: 1]
   import Common, only: [dict: 1, run: 2, to_ms: 1, unbox_: 1]
-  import Req, only: [get_value: 2, spawn_worker: 2]
-  import Process, only: [get: 1, put: 2, delete: 1]
+  import Req, only: [get_value: 2]
   import System, only: [system_time: 0]
 
   require Logger
@@ -24,7 +23,7 @@ defmodule AgentMap.Transaction do
           send(worker, msg)
           unbox(d[:"$value"])
 
-        {value, _, _} ->
+        {value, _} ->
           unbox(value)
       end
     end
@@ -38,8 +37,28 @@ defmodule AgentMap.Transaction do
     end
   end
 
+  defp share(to: t) do
+    k = Process.get(:"$key")
+    v = Process.get(:"$value")
+    send(t, {k, v})
+  end
+
+  defp accept() do
+    receive do
+      :drop ->
+        :pop
+
+      # :id, {get}, {get, value}
+      msg when not is_map(msg) ->
+        msg
+    after
+      0 ->
+        accept()
+    end
+  end
+
   ##
-  ## STAGES
+  ## STAGES: prepair → collect → run → finalize
   ##
 
   defp prepair(%{action: :get, !: true}, state) do
@@ -48,23 +67,32 @@ defmodule AgentMap.Transaction do
 
   defp prepair(%{action: :get} = req, state) do
     {_, keys} = req.data
-    broadcast(keys, %{action: :send, to: self()}, state)
+
+    s = self()
+    f = fn _ ->
+      share(to: s)
+    end
+
+    for k <- keys do
+      Req.handle(%Req{action: :get, data: {k, f}}, state)
+    end
+
     state
   end
 
   defp prepair(%{action: :get_and_update} = req, state) do
     {_, keys} = req.data
-    {_, max_p} = state
 
-    Enum.reduce(keys, state, fn key, state ->
-      {map, _} = spawn_worker(key, state)
-      {:pid, worker} = map[key]
+    s = self()
+    f = fn _ ->
+      share(to: s)
+      accept()
+    end
 
-      send(worker, %{action: :send_and_receive, !: req.!, to: self()})
-      {map, max_p}
+    Enum.reduce(keys, state, fn k, state ->
+      # Turn off reply to a client (from: nil):
+      Req.handle(%{req | action: :get_and_update, from: nil, data: {, keys}}, state)
     end)
-
-    state
   end
 
   defp collect(%{action: :get, !: true} = req, state) do
@@ -207,7 +235,7 @@ defmodule AgentMap.Transaction do
       delete(:"$value")
       delete(:"$key")
 
-      Common.apply(fun, [[v]])
+      fun.([v])
     end
 
     Req.handle(%{req | data: {key, fun}}, state)
@@ -234,7 +262,7 @@ defmodule AgentMap.Transaction do
            {:ok, result} <- run(req, [values]),
            {:ok, get} <- finalize(req, result) do
         if get do
-          reply(req.from, get)
+          GenServer.reply(req.from, get)
         end
       else
         {:error, :expired} ->
