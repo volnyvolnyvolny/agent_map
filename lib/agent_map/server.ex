@@ -33,6 +33,23 @@ defmodule AgentMap.Server do
   ##     = {nil, {process, max_p by def.}}
   ##
 
+  def safe_apply(fun, args) do
+    {:ok, apply(fun, args)}
+  rescue
+    BadFunctionError ->
+      {:error, :badfun}
+
+    BadArityError ->
+      {:error, :badarity}
+
+    exception ->
+      {:error, exception}
+
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
+  end
+
   ##
   ## GenServer callbacks
   ##

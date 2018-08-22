@@ -23,13 +23,15 @@ defmodule AgentMap.Common do
   defp box(value, p, max_p, _), do: {value, {p, max_p}}
 
   defp pack(key, value, {p, custom_max_p}, {map, max_p}) do
-    case box(value, p, custom_max_p, max_p) do
+    map = case box(value, p, custom_max_p, max_p) do
       nil ->
-        {Map.delete(map, key), max_p}
+        Map.delete(map, key)
 
       box ->
-        {%{map | key => box}, max_p}
+        %{map | key => box}
     end
+
+    {map, max_p}
   end
 
   def unpack(key, {map, max_p}) do
@@ -66,34 +68,16 @@ defmodule AgentMap.Common do
   ## APPLY AND RUN
   ##
 
-  def safe_apply(fun, args) do
-    {:ok, apply(fun, args)}
-  rescue
-    BadFunctionError ->
-      {:error, :badfun}
-
-    BadArityError ->
-      {:error, :badarity}
-
-    exception ->
-      {:error, exception}
-
-  catch
-    :exit, reason ->
-      {:error, {:exit, reason}}
-  end
-
   def run(%{fun: f, timeout: {:break, timeout}} = req, arg) do
     if expired?(req) do
       {:error, :expired}
     else
-      dict = dict()
+      k = Process.get(:"$key")
+      b = Process.get(:"$value")
 
       task = Task.async(fn ->
-        # clone process dictionary:
-        for {prop, value} <- dict do
-          Process.put(prop, value)
-        end
+        Process.put(:"$key", k)
+        Process.put(:"$value", b)
 
         f.(arg)
       end)
@@ -116,6 +100,10 @@ defmodule AgentMap.Common do
     end
   end
 
+  def run(%{data: {_, f}} = req, arg) do
+    run(%{req | fun: f}, arg)
+  end
+
   def reply(nil, msg), do: :ignore
   def reply(from, msg), do: GenServer.reply(from, msg)
 
@@ -129,29 +117,33 @@ defmodule AgentMap.Common do
     end
   end
 
-  def spawn_get(key, box, req, server \\ nil) do
-    Task.start_link(fn ->
-      Process.put(:"$key", key)
-      Process.put(:"$value", box)
-
-      run_and_reply(to_msg(req), box)
-
-      server && send(server, %{info: :done})
-    end)
-  end
-
   ##
   ##
   ##
 
   def handle_timeout_error(req) do
     r = inspect(req)
+    k = get(:"$key") || get(:"$keys") 
+
     if get(:"$key") do
-      k = inspect(get(:"$key"))
       Logger.error("Key #{k} timeout error while processing request #{r}.")
     else
-      ks = inspect(get(:"$keys")
-      Logger.error("Keys #{ks} timeout error while processing transaction request #{r}.")
+      Logger.error("Keys #{k} timeout error while processing transaction request #{r}.")
     end
+  end
+
+  ##
+  ## GET-REQUEST
+  ##
+
+  def spawn_get(key, box, req, server \\ nil) do
+    Task.start_link(fn ->
+      Process.put(:"$key", key)
+      Process.put(:"$value", box)
+
+      run_and_reply(req, box)
+
+      server && send(server, %{info: :done})
+    end)
   end
 end

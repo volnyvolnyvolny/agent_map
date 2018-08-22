@@ -412,7 +412,7 @@ defmodule AgentMap do
       1
   """
   def safe_apply(fun, args) do
-    Common.safe_apply(fun, args)
+    Server.safe_apply(fun, args)
   end
 
   ## ##

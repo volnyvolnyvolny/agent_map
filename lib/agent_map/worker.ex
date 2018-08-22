@@ -45,14 +45,14 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{action: :get} = req) do
-    k = get(:"$key")
-    b = get(:"$value")
-
     if get(:"$processes") < get(:"$max_processes") do
-      spawn_get(key, b, req, self())
+      key = get(:"$key")
+      box = get(:"$value")
+
+      spawn_get(key, box, req, self())
       inc(:"$processes")
     else
-      run_and_reply(req, v)
+      run_and_reply(req, box)
     end
   end
 
