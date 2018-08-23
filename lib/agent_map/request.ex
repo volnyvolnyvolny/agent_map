@@ -6,7 +6,7 @@ defmodule AgentMap.Req do
   alias AgentMap.{Common, Worker, Transaction, Req}
 
   import Worker, only: [queue: 1, dict: 1]
-  import Common, only: [unbox: 1, run: 2, spawn_get: 4, handle_timeout_error: 1]
+  import Common, only: [unbox: 1, extract: 2, run: 2, spawn_get: 4, handle_timeout_error: 1]
   import Enum, only: [count: 2, filter: 2]
 
   @enforce_keys [:action]
@@ -28,17 +28,17 @@ defmodule AgentMap.Req do
   ## MESSAGES TO WORKER
   ##
 
-  defp to_msg(%{data: {_, fun}} = req) when is_function(fun, 1) do
+  defp to_msg(req) when is_function(fun, 1) do
+    {_, fun} = req.data
     to_msg(req, req.action, fun)
   end
 
   defp to_msg(req, act, f) do
-    req =
-      req
-      |> Map.from_struct()
-      |> Map.delete(:data)
-
-    %{req | action: act, fun: f}
+    req
+    |> Map.from_struct()
+    |> Map.delete(:data)
+    |> Map.put(:action, act)
+    |> Map.put(:fun, f)
   end
 
   ##
@@ -46,12 +46,12 @@ defmodule AgentMap.Req do
   ##
 
   def get_value(key, state) do
-    case unpack(key, state) do
+    case extract(key, state) do
       {:pid, worker} ->
         dict(worker)[:"$value"]
 
-      {value, _} ->
-        value
+      {box, _} ->
+        box
     end
   end
 
@@ -62,11 +62,11 @@ defmodule AgentMap.Req do
   def spawn_worker(key, state) do
     {map, max_p} = state
 
-    case unpack(key, state) do
+    case extract(key, state) do
       {:pid, _} ->
         state
 
-      pack ->
+      {_, {_, _}} = pack ->
         ref = make_ref()
 
         worker =
@@ -75,11 +75,12 @@ defmodule AgentMap.Req do
           end)
 
         receive do
-          {^ref, _} ->
+          {^ref, :ok} ->
             :continue
         end
 
-        {%{map | key => {:pid, worker}}, max_p}
+        map = %{map | key => {:pid, worker}}
+        {map, max_p}
     end
   end
 
@@ -88,7 +89,7 @@ defmodule AgentMap.Req do
   ##
 
   # XNOR
-  defp _filter(%{info: _}, !: true), do: false
+  defp _filter(%{info: _}, _), do: false
   defp _filter(msg, !: true), do: msg[:!]
   defp _filter(msg, !: false), do: not msg[:!]
   defp _filter(msg, []), do: true
@@ -97,7 +98,7 @@ defmodule AgentMap.Req do
     {key, opts} = req.data
 
     num =
-      case unpack(key, state) do
+      case extract(key, state) do
         {:pid, worker} ->
           count(queue(worker), &_filter(&1, opts))
 
@@ -109,34 +110,47 @@ defmodule AgentMap.Req do
   end
 
   def handle(%{action: :keys}, state) do
-    keys = filter(Map.keys(map), &get_value(&1, state))
+    {map, _} = state
+
+    keys =
+      Map.keys(map)
+      |> filter(&get_value(&1, state))
 
     {:reply, keys, state}
   end
 
-  def handle(%{action: :values} = req, {map, _} = state) do
+  def handle(%{action: :values} = req, state) do
+    {map, _} = state
+
     fun = fn _ ->
       Map.values(Process.get(:"$map"))
     end
 
-    handle(%{req | action: :get, data: {fun, Map.keys(map)}}, state)
+    keys = Map.keys(map)
+    req = %{req | action: :get, data: {fun, keys}}
+    Transaction.handle(req, state)
   end
 
-  def handle(%{action: :max_processes, data: {key, new_max_p}} = req, state) do
-    case unpack(key, state) do
+  def handle(%{action: :max_processes} = req, state) do
+    {key, new_max_p} = req.data
+
+    case extract(key, state) do
       {:pid, worker} ->
-        msg = %{req | info: :max_processes, data: new_max_p}
+        msg = %{info: :max_processes, data: new_max_p}
         send(worker, msg)
         {:noreply, state}
 
-      {value, {p, old_max_p}} ->
-        state = pack(key, value, {p, new_max_p}, state)
+      {box, {p, old_max_p}} ->
+        pack = {box, {p, new_max_p}}
+        state = inject(key, pack, state)
         {:reply, old_max_p, state}
     end
   end
 
-  def handle(%{action: :max_processes, data: max_processes} = req, {map, old_one}) do
-    {:reply, old_one, {map, max_processes}}
+  def handle(%{action: :max_processes} = req, state) do
+    {map, old_max_p} = state
+
+    {:reply, old_max_p, {map, req.data}}
   end
 
   def handle(%{action: :fetch, data: key} = req, state) do
@@ -161,29 +175,28 @@ defmodule AgentMap.Req do
     {k, fun} = req.data
 
     box = get_value(key, state)
-    spawn_get(key, box, req)
+    spawn_get({key, box}, req)
 
     {:noreply, state}
   end
 
-  def handle(%{action: :get, !: false} = req, {map, max_p} = state) do
+  def handle(%{action: :get, !: false} = req, state) do
     {k, fun} = req.data
 
-    case unpack(key, state) do
+    case extract(key, state) do
       {:pid, worker} ->
         send(worker, to_msg(req))
 
       # Cannot spawn more Task's.
       {_, {p, p}} ->
-        state = spawn_worker(key, state)
-        handle(req, state)
+        handle(req, spawn_worker(key, state))
 
       # Can spawn.
-      {b, {p, custom_max_p}} ->
-        box = get_value(key, state)
-        spawn_get(key, box, req, self())
+      {box, {p, custom_max_p}} ->
+        spawn_get({key, box}, req, self())
 
-        state = pack(key, b, {p + 1, custom_max_p}, state)
+        pack = {box, {p + 1, custom_max_p}}
+        state = inject(key, pack, state)
         {:noreply, state}
     end
   end
@@ -191,16 +204,16 @@ defmodule AgentMap.Req do
   def handle(%{action: :put} = req, state) do
     {key, v} = req.data
 
-    case unpack(key, state) do
+    case extract(key, state) do
       {:pid, worker} ->
         fun = fn _ -> {:ok, v} end
         msg = to_msg(req, :get_and_update, fun)
         send(worker, msg)
         {:noreply, state}
 
-      {_old_value, p_info} ->
-        box = {:value, v}
-        state = pack(key, box, p_info, state)
+      {_, p_info} ->
+        pack = {{:value, v}, p_info}
+        state = inject(key, pack, state)
         {:reply, :ok, state}
     end
   end
@@ -209,7 +222,7 @@ defmodule AgentMap.Req do
   def handle(%{action: :get_and_update} = req, state) do
     {key, _} = req.data
 
-    case unpack(key, state) do
+    case extract(key, state) do
       {:pid, worker} ->
         send(worker, to_msg(req))
         {:noreply, state}

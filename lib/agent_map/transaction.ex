@@ -5,7 +5,7 @@ defmodule AgentMap.Transaction do
 
   import Map, only: [keys: 1]
   import Worker, only: [unbox: 1]
-  import Common, only: [dict: 1, run: 2, to_ms: 1, unbox_: 1]
+  import Common, only: [dict: 1, run: 2, to_ms: 1]
   import Req, only: [get_value: 2]
   import System, only: [system_time: 0]
 
@@ -48,12 +48,11 @@ defmodule AgentMap.Transaction do
       :drop ->
         :pop
 
-      # :id, {get}, {get, value}
-      msg when not is_map(msg) ->
-        msg
-    after
-      0 ->
-        accept()
+      :id ->
+        :id
+
+      {:value, v} ->
+        {:_, v}
     end
   end
 
@@ -61,7 +60,12 @@ defmodule AgentMap.Transaction do
   ## STAGES: prepair → collect → run → finalize
   ##
 
+  defp worker?(key, state) do
+    match?({:pid, _}, extract(key, state))
+  end
+
   defp prepair(%{action: :get, !: true}, state) do
+    # do nothing
     state
   end
 
@@ -69,12 +73,21 @@ defmodule AgentMap.Transaction do
     {_, keys} = req.data
 
     s = self()
-    f = fn _ ->
+
+    fun = fn _ ->
       share(to: s)
     end
 
-    for k <- keys do
-      Req.handle(%Req{action: :get, data: {k, f}}, state)
+    for key <- keys, worker?(key, state) do
+      req =
+        %Req{
+          action: :get_and_update,
+          data: {key, fun},
+          !: req.!,
+          timeout: :infinity
+        }
+
+      Req.handle(req, state)
     end
 
     state
@@ -84,14 +97,22 @@ defmodule AgentMap.Transaction do
     {_, keys} = req.data
 
     s = self()
-    f = fn _ ->
+
+    fun = fn _ ->
       share(to: s)
       accept()
     end
 
-    Enum.reduce(keys, state, fn k, state ->
-      # Turn off reply to a client (from: nil):
-      Req.handle(%{req | action: :get_and_update, from: nil, data: {, keys}}, state)
+    Enum.reduce(keys, state, fn key, state ->
+      req =
+        %Req{
+          action: :get_and_update,
+          data: {key, fun},
+          !: req.!,
+          timeout: :infinity
+        }
+
+      Req.handle(req, state)
     end)
   end
 
@@ -105,14 +126,21 @@ defmodule AgentMap.Transaction do
 
   defp collect(req, state) do
     {_, keys} = req.data
-    {map, _} = state
 
     known =
-      for key <- keys, not match?({:pid, _}, map[key]) do
+      for key <- keys, not worker?(key, state) do
         {key, get_value(key, state)}
       end
 
     passed = to_ms(system_time() - req.inserted_at)
+    timeout =
+      case req.timeout do
+        {_, timeout} ->
+          timeout
+
+        timeout ->
+          timeout
+      end
 
     if unbox_(req.timeout) > passed do
       _collect(known, keys -- Maps.keys(known), timeout - passed)

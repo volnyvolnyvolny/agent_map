@@ -10,43 +10,48 @@ defmodule AgentMap.Common do
   ##
 
   def unbox(nil), do: nil
-  def unbox({:value, value}), do: value
+  def unbox({:value, v}), do: v
 
   ##
   ## STATE RELATED
   ##
 
-  defp box(value, p, custom_max_p, max_p)
+  defp compress({box, {p, custom_max_p}}, max_p)
 
-  defp box(value, 0, max_p, max_p), do: value
-  defp box(value, p, max_p, max_p), do: {value, p}
-  defp box(value, p, max_p, _), do: {value, {p, max_p}}
+  defp compress({box, {0, max_p,}} max_p), do: box
+  defp compress({box, {p, max_p}}, max_p), do: {box, p}
+  defp compress(pack, _), do: pack
 
-  defp pack(key, value, {p, custom_max_p}, {map, max_p}) do
-    map = case box(value, p, custom_max_p, max_p) do
-      nil ->
-        Map.delete(map, key)
+  defp inject(key, pack, state) do
+    {map, max_p} = state
 
-      box ->
-        %{map | key => box}
-    end
+    map =
+      case compress(pack, max_p) do
+        nil ->
+          Map.delete(map, key)
+
+        pck ->
+          %{map | key => pack}
+      end
 
     {map, max_p}
   end
 
-  def unpack(key, {map, max_p}) do
+  def extract(key, state) do
+    {map, max_p} = state
+
     case map[key] do
-      {:pid, worker} ->
-        {:pid, worker}
+      {:pid, _} = pack ->
+        pack
 
-      {_value, {_p, _custom_max_p}} = box ->
-        box
+      {_, {_, _}} = pack ->
+        pack
 
-      {value, p} ->
-        {value, {p, max_p}}
+      {box, p} ->
+        {box, {p, max_p}}
 
-      value ->
-        {value, {0, max_p}}
+      box ->
+        {box, {0, max_p}}
     end
   end
 
@@ -136,7 +141,7 @@ defmodule AgentMap.Common do
   ## GET-REQUEST
   ##
 
-  def spawn_get(key, box, req, server \\ nil) do
+  def spawn_get({key, box}, req, server \\ nil) do
     Task.start_link(fn ->
       Process.put(:"$key", key)
       Process.put(:"$value", box)

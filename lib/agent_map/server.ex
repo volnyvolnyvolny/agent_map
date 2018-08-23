@@ -44,7 +44,6 @@ defmodule AgentMap.Server do
 
     exception ->
       {:error, exception}
-
   catch
     :exit, reason ->
       {:error, {:exit, reason}}

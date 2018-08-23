@@ -5,7 +5,7 @@ defmodule AgentMap.Worker do
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import System, only: [system_time: 0]
-  import Common, only: [run: 2, run_and_reply: 2, reply: 2, spawn_get: 4, handle_timeout_error: 1]
+  import Common, only: [run: 2, run_and_reply: 2, reply: 2, spawn_get: 3, handle_timeout_error: 1]
 
   @moduledoc false
 
@@ -39,17 +39,13 @@ defmodule AgentMap.Worker do
   ## handle
   ##
 
-  defp handle(%{info: :max_processes} = req) do
-    reply(req.from, get(:"$max_processes"))
-    put(:"$max_processes", req.data)
-  end
-
   defp handle(%{action: :get} = req) do
+    box = get(:"$value")
+
     if get(:"$processes") < get(:"$max_processes") do
       key = get(:"$key")
-      box = get(:"$value")
 
-      spawn_get(key, box, req, self())
+      spawn_get({key, box}, req, self())
       inc(:"$processes")
     else
       run_and_reply(req, box)
@@ -57,9 +53,9 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{action: :get_and_update} = req) do
-    value = unbox(get(:"$value"))
+    v = unbox(get(:"$value"))
 
-    case run(req, [value]) do
+    case run(req, [v]) do
       {:ok, {get}} ->
         reply(req.from, get)
 
@@ -89,8 +85,8 @@ defmodule AgentMap.Worker do
 
   # →
   # value = {:value, any} | nil
-  def loop({ref, server}, key, {value, {p, max_p}}) do
-    put(:"$value", value)
+  def loop({ref, server}, key, {box, {p, max_p}}) do
+    put(:"$value", box)
     send(server, {ref, :ok})
 
     put(:"$key", key)
@@ -132,6 +128,10 @@ defmodule AgentMap.Worker do
           %{info: :done} ->
             dec(:"$processes")
             loop()
+
+          %{info: :max_processes} = req ->
+            reply(req.from, get(:"$max_processes"))
+            put(:"$max_processes", req.data)
 
           %{!: true} = req ->
             handle(req)
