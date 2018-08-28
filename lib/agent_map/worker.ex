@@ -5,7 +5,9 @@ defmodule AgentMap.Worker do
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import System, only: [system_time: 0]
-  import Common, only: [run: 2, run_and_reply: 2, reply: 2, spawn_get: 3, handle_timeout_error: 1]
+
+  import Common,
+    only: [run: 2, run_and_reply: 2, reply: 2, spawn_get: 3, handle_timeout_error: 1, unbox: 1]
 
   @moduledoc false
 
@@ -65,11 +67,11 @@ defmodule AgentMap.Worker do
         reply(req.from, get)
 
       {:ok, :id} ->
-        reply(req.from, value)
+        reply(req.from, v)
 
       {:ok, :pop} ->
         delete(:"$value")
-        reply(req.from, value)
+        reply(req.from, v)
 
       {:ok, reply} ->
         raise CallbackError, got: reply
@@ -152,9 +154,12 @@ defmodule AgentMap.Worker do
     wait = get(:"$wait")
 
     receive do
-      req ->
+      %{} = req ->
         handle(req)
         loop()
+
+      _ ->
+        :ignore
     after
       wait ->
         send(get(:"$gen_server"), {self(), :mayidie?})

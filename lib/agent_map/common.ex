@@ -16,13 +16,13 @@ defmodule AgentMap.Common do
   ## STATE RELATED
   ##
 
-  defp compress({box, {p, custom_max_p}}, max_p)
+  defp compress(pack, max_p)
 
-  defp compress({box, {0, max_p,}} max_p), do: box
+  defp compress({box, {0, max_p}}, max_p), do: box
   defp compress({box, {p, max_p}}, max_p), do: {box, p}
   defp compress(pack, _), do: pack
 
-  defp inject(key, pack, state) do
+  def inject(key, pack, state) do
     {map, max_p} = state
 
     map =
@@ -30,7 +30,7 @@ defmodule AgentMap.Common do
         nil ->
           Map.delete(map, key)
 
-        pck ->
+        pack ->
           %{map | key => pack}
       end
 
@@ -80,12 +80,13 @@ defmodule AgentMap.Common do
       k = Process.get(:"$key")
       b = Process.get(:"$value")
 
-      task = Task.async(fn ->
-        Process.put(:"$key", k)
-        Process.put(:"$value", b)
+      task =
+        Task.async(fn ->
+          Process.put(:"$key", k)
+          Process.put(:"$value", b)
 
-        f.(arg)
-      end)
+          f.(arg)
+        end)
 
       case Task.yield(task, timeout) || Task.shutdown(task) do
         {:ok, _result} = res ->
@@ -105,11 +106,15 @@ defmodule AgentMap.Common do
     end
   end
 
+  def run(%{data: {f, _}} = req, arg) when is_function(f, 1) do
+    run(%{req | fun: f}, arg)
+  end
+
   def run(%{data: {_, f}} = req, arg) do
     run(%{req | fun: f}, arg)
   end
 
-  def reply(nil, msg), do: :ignore
+  def reply(nil, _msg), do: :ignore
   def reply(from, msg), do: GenServer.reply(from, msg)
 
   def run_and_reply(req, value) do
@@ -128,13 +133,13 @@ defmodule AgentMap.Common do
 
   def handle_timeout_error(req) do
     r = inspect(req)
-    k = get(:"$key") || get(:"$keys") 
+    k = Process.get(:"$key")
+    Logger.error("Key #{k} timeout error while processing request #{r}.")
+  end
 
-    if get(:"$key") do
-      Logger.error("Key #{k} timeout error while processing request #{r}.")
-    else
-      Logger.error("Keys #{k} timeout error while processing transaction request #{r}.")
-    end
+  def handle_timeout_error(req, keys) do
+    r = inspect(req)
+    Logger.error("Keys #{keys} timeout error while processing transaction request #{r}.")
   end
 
   ##

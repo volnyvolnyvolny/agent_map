@@ -5,9 +5,8 @@ defmodule AgentMap.Server do
   alias AgentMap.{Common, Req, Worker}
 
   import System, only: [system_time: 0]
-  import Common, only: [pack: 4, unpack: 2]
+  import Common, only: [inject: 3, extract: 2]
   import Worker, only: [dict: 1, queue_len: 1]
-  import Map, only: [delete: 2]
 
   use GenServer
 
@@ -61,7 +60,7 @@ defmodule AgentMap.Server do
           safe_apply(fun, [])
         end)
       end)
-      |> Task.yield_many(timeout)
+      |> Task.yield_many(args[:timeout])
       |> Enum.map(fn {task, res} ->
         res || Task.shutdown(task, :brutal_kill)
       end)
@@ -133,19 +132,20 @@ defmodule AgentMap.Server do
 
   def handle_info(%{info: :done, key: key} = msg, state) do
     state =
-      case unpack(key, state) do
+      case extract(key, state) do
         {:pid, worker} ->
           send(worker, msg)
           state
 
         {value, {p, custom_max_p}} ->
-          pack(key, value, {p - 1, custom_max_p}, state)
+          pack = {value, {p - 1, custom_max_p}}
+          inject(key, pack, state)
       end
 
     {:noreply, state}
   end
 
-  def handle_info({worker, :mayidie?}, {map, max_p} = state) do
+  def handle_info({worker, :mayidie?}, state) do
     # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.
     if queue_len(worker) > 0 do
@@ -160,12 +160,11 @@ defmodule AgentMap.Server do
       v = dict[:"$value"]
       k = dict[:"$key"]
 
-      state = pack(k, v, {p - 1, dict[:"$max_processes"]}, state)
+      pack = {v, {p - 1, dict[:"$max_processes"]}}
+      state = inject(k, pack, state)
       {:noreply, state}
     end
   end
-
-  def handle_info(msg, state), do: super(msg, state)
 
   ##
   ##
