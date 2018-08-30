@@ -23,8 +23,8 @@ defmodule AgentMap do
   `max_processes/3` function. A worker will commit suicide after `10` ms of
   inactivity.
 
-  `AgentMap` supports transactions — operations on a group of values (take a
-  look at the [examples](#examples)).
+  `AgentMap` supports transactions — operations on a group of values. See
+  `AgentMap.Transaction`.
 
   ## Examples
 
@@ -651,20 +651,8 @@ defmodule AgentMap do
   of the corresponding queue. If `!: true` option is given, `fun` will be
   executed immediately, passing current value as an argument.
 
-  This call has two forms:
-
-    * single key: `get(agentmap, key, fun, opts)`, where `fun` expected only one
-      value to be passed;
-    * or transaction: `get(agentmap, fun, [key1, key2, …], opts)`, where `fun`
-      expected to take a list of values.
-
-  Compare two calls:
-
-      get(Account, &Enum.sum/1, [:alice, :bob])
-      get(Account, :alice, & &1)
-
-  — the first one returns sum of Alice and Bob balances in one operation, while
-  the second one returns amount of money Alice has.
+  Special syntax sugar `get(agentmap, fun, key, opts)` is supported for
+  the `AgentMap.Transaction.get/4`.
 
   ## Options
 
@@ -694,57 +682,21 @@ defmodule AgentMap do
 
     * `:timeout` — (`pos_integer | :infinity`, `5000`).
 
-  ## Special process dictionary keys
-
-  For a single-key calls one can use `:"$key"` and `:"$value"` dictionary keys.
-
-      iex> import AgentMap
-      iex> am = AgentMap.new(k: nil)
-      iex> get(am, k, fn _ -> Process.get(:"$key") end)
-      :k
-      iex> get(am, k, fn nil -> Process.get(:"$value") end)
-      {:value, nil}
-      iex> get(am, f, fn nil -> Process.get(:"$value") end)
-      nil
-
-  For a transactions, one can use `:"$keys"` and `:"$map"` keys.
-
-      iex> am = AgentMap.new(a: nil, b: 42)
-      iex> AgentMap.get(am, fn _ ->
-      ...>   Process.get(:"$keys")
-      ...> end, [:a, :b, :c])
-      [:a, :b, :c]
-      iex> AgentMap.get(am, fn [nil, 42, nil] ->
-      ...>   Process.get(:"$map")
-      ...> end, keys)
-      %{a: nil, b: 42}
-
   ## Examples
 
       iex> import AgentMap
       iex> am = AgentMap.new()
-      iex> get(am, :alice, & &1)
+      iex> get(am, :Alice, & &1)
       nil
-      iex> put(am, :alice, 42)
-      iex> get(am, :alice, & &1+1)
+      iex> put(am, :Alice, 42)
+      iex> get(am, :Alice, & &1+1)
       43
-      #
-      # Transactions.
-      iex> put(am, :bob, 43)
-      iex> get(am, &Enum.sum/1, [:alice, :bob])
-      85
-      # Order matters.
-      iex> get(am, {&Enum.reduce/3, [0, &-/2]}, [:alice, :bob])
-      1
-      iex> get(am, {&Enum.reduce/3, [0, &-/2]}, [:bob, :alice])
-      -1
 
    "Priority" calls:
 
       iex> import AgentMap
-      iex> import :timer
       iex> am = AgentMap.new(key: 42)
-      iex> cast(am, :key, fn _ -> sleep(100); 43 end)
+      iex> cast(am, :key, fn _ -> :timer.sleep(100); 43 end)
       iex> get(am, :key, & &1, !: true)
       42
       iex> am.key # the same
@@ -753,6 +705,19 @@ defmodule AgentMap do
       43
       iex> get(am, :key, & &1, !: true)
       43
+
+  ## Special process dictionary keys
+
+  One can use `:"$key"` and `:"$value"` dictionary keys:
+
+      iex> import AgentMap
+      iex> am = AgentMap.new(a: nil)
+      iex> get(am, :a, fn _ -> Process.get(:"$key") end)
+      :a
+      iex> get(am, :a, fn nil -> Process.get(:"$value") end)
+      {:value, nil}
+      iex> get(am, :b, fn nil -> Process.get(:"$value") end)
+      nil
   """
   @spec get(am, ([value] -> get), [key], keyword) :: get when get: var
   @spec get(am, key, (value -> get), keyword) :: get when get: var
@@ -853,123 +818,28 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Updates `agentmap` and returns some value.
+  Gets the value for `key` in `agentmap` and updates it, all in one pass.
 
   The function `fun` is sent to the `agentmap` which invokes callback passing
   the value associated with `key` (or `nil`). The result of the invocation is
   returned from this function.
 
-  This call has two forms:
-
-    * single key: `get_and_update(agentmap, key, fun, opts)`, where `fun` expected
-      only one value to be passed;
-    * and transactions: `get_and_update(agentmap, fun, [key1, key2, …], opts)`, where
-      `fun` expected to take a list of values.
-
-  Compare two calls:
-
-      get_and_update(account, fn [a,b] -> {:swapped, [b,a]} end, [:Alice, :Bob])
-      get_and_update(account, :Alice, & {&1, &1+1000000})
-
-  — the first one swapes Alice and Bob balances and returns `:swapped`, while
-  the second one returns current Alice balance and deposits `1000000` dollars to
-  it.
-
-  In a single key calls `fun` can return:
-
-    * a two element tuple: `{"get" value, new value}`;
-    * a one element tuple `{"get" value}` (value is not changed);
-    * `:id` to return a current value without changing it;
-    * `:pop`, similar to `Map.get_and_update/3` this returns value with given
-      `key` and removes it from `agentmap`;
-
-   In a transaction case `fun` can return:
-
-    * a list with values `[{"get" value, new value} | {"get" value} | :id |
-      :pop]`. This returns a list of "get" values. For ex.:
-
-          iex> am = AgentMap.new(a: 1, b: 2, c: 3)
-          iex> AgentMap.get_and_update(am, fn _ ->
-          ...>   [{:get, :newvalue}, {:get}, :pop, :id]
-          ...> end, [:a, :b, :c, :d])
-          [:get, :get, nil, 3]
-          iex> AgentMap.take(am, [:a, :b, :c, :d])
-          %{a: 2, b: 2}
-
-    * a tuple `{"get" value, [new value] | :id | :drop}`. For ex.:
-
-          iex> import AgentMap
-          iex> am = AgentMap.new(a: 1, b: 2, c: 3)
-          iex> get_and_update(am, fn _ ->
-          ...>   {:get, [4, 3, 2, 1]}
-          ...> end, [:a, :b, :c, :d])
-          :get
-          iex> take(am, [:a, :b, :c, :d])
-          %{a: 4, b: 3, c: 2, d: 1}
-          iex> get_and_update(am, fn _ ->
-          ...>   {:get, :id}
-          ...> end, [:a, :b, :c, :d])
-          :get
-          iex> take(am, [:a, :b, :c, :d])
-          %{a: 4, b: 3, c: 2, d: 1}
-          iex> get_and_update(am, fn _ ->
-          ...>   {:get, :drop}
-          ...> end, [:b, :c])
-          :get
-          iex> keys(am)
-          [:a, :d]
-
-    * a one element tuple `{"get" value}`, that is the same as `{"get" value,
-      :id}`;
-
-    * `:id` to return values while not changing it;
-    * `:pop` to return values while with given `keys` while removing them from
-      `agentmap`';
-
   For ex.:
 
-      iex> %{alice: 42, bob: 24}
-      ...> |> AgentMap.new()
-      ...> |> get_and_update(fn [a, b] ->
-      ...>      if a > 10 do
-      ...>        a = a - 10
-      ...>        b = b + 10
-      ...>        [{a, a}, {b, b}] # [{get, new_state}]
-      ...>      else
-      ...>        {{:error, "Alice does not have 10$ to give to Bob!"}, [a, b]} # {get, [new_state]}
-      ...>      end
-      ...>    end, [:alice, :bob])
-      [32, 34]
+      get_and_update(account, :Alice, & {&1, &1 + 1_000_000})
 
-  or:
+  returns the balance of Alice before the deposit of a million dollars was made.
 
-      iex> am = AgentMap.new(alice: 42, bob: 24)
-      iex> AgentMap.get_and_update(am, fn _ ->
-      ...>   [:pop, :id]
-      ...> end, [:alice, :bob])
-      [42, 24]
-      iex> AgentMap.get(am, & &1, [:alice, :bob])
-      [nil, 24]
+  A `fun` can return:
 
-  (!) State changing transactions (such as a `get_and_update`) will block all
-  the involving states. For ex.:
+    * a two element tuple: `{"get" value, new value}`;
+    * a one element tuple `{"get" value}` — the value is not changed;
+    * `:pop` — similar to `Map.get_and_update/3` this returns value with given
+      `key` and removes it from `agentmap`;
+    * `:id` to return a current value, while not changing it.
 
-      iex> import :timer
-      iex> %{alice: 42, bob: 24, chris: 0}
-      ...> |> AgentMap.new()
-      ...> |> AgentMap.get_and_update(
-      ...>      &sleep(1000) && {:slept_well, &1},
-      ...>      [:alice, :bob]
-      ...>    )
-      :slept_well
-
-  will block the possibility to `get_and_update`, `update`, `cast` and even
-  non-priority `get` on `:alice` and `:bob` keys for 1 sec. Nonetheless values
-  are always available for "priority" `get` calls. `chris` state is not blocked.
-
-  Transactions are *Isolated* and *Durabled* (see, ACID model). *Atomicity* can
-  be implemented inside callbacks and *Consistency* is out of question here as
-  its the application level concept.
+  Special syntax sugar `get_and_update(agentmap, fun, key, opts)` is supported
+  for the `AgentMap.Transaction.get_and_update/4`.
 
   ## Options
 
@@ -1008,36 +878,6 @@ defmodule AgentMap do
       nil
       iex> has_key?(am, :uno)
       true
-
-  Transactions:
-
-      iex> import AgentMap
-      iex> am = new(uno: 22, dos: 24)
-      iex> get_and_update(am, fn [u, d] ->
-      ...>   [{u, d}, {d, u}]
-      ...> end, [:uno, :dos])
-      [22, 24]
-      iex> get(am, & &1, [:uno, :dos])
-      [24, 22]
-      #
-      iex> get_and_update(am, fn _ -> :pop end, [:dos])
-      [22]
-      iex> has_key?(am, :dos)
-      false
-      #
-      iex> get_and_update(am, [:dos], fn _ -> {:get} end)
-      :get
-      iex> has_key?(am, :dos)
-      false
-      #
-      iex> put(am, :tres, 42)
-      iex> put(am, :cuatro, 44)
-      iex> get_and_update(am, fn _ ->
-      ...>   [:id, {nil, :_}, {:_, nil}, :pop]
-      ...> end, [:uno, :dos, :tres, :cuatro])
-      [24, nil, :_, 44]
-      iex> get(am, & &1, [:uno, :dos, :tres, :cuatro])
-      [24, :_, nil, nil]
   """
   # 4
   @typedoc """
@@ -1081,25 +921,16 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Updates the values of `agentmap`.
+  Updates the `key` in `agentmap` with the given `fun`.
 
   This function always returns the same `agentmap` to make piping work.
 
-  Keep in mind that
-
-      update(am, key, fun, opts)
-      update(am, fun, keys, opts)
-
-  is no more than a syntax sugar for
+  This call is no more than a syntax sugar for
 
       get_and_update(am, key, &{am, fun.(&1)}, opts)
-      get_and_update(am, &{am, fun.(&1)}, keys, opts)
 
-  So `fun`s for transactions can return:
-
-    * a list of new values;
-    * `:id` — leave values as they are;
-    * `:drop`.
+  Special syntax sugar `update(agentmap, fun, key, opts)` is supported for the
+  `AgentMap.Transaction.update/4`.
 
   ## Options
 
@@ -1107,11 +938,9 @@ defmodule AgentMap do
 
   ## Examples
 
-      update(account, :alice, & &1 + 1_000_000)
-      update(account, fn [a,b] -> [b,a] end, [:alice, :bob])
+      update(account, :Alice, & &1 + 1_000_000)
 
-  — the first one call deposits 1000000 dollars to Alices balance, while the
-  second swapes balances of Alice and Bob.
+  returns the balance of Alice before the deposit of a million dollars was made.
 
       iex> {:ok, pid} = AgentMap.start_link(key: fn -> 42 end)
       iex> pid
@@ -1123,25 +952,6 @@ defmodule AgentMap do
       ...> |> AgentMap.update(:otherkey, fn nil -> 42 end)
       ...> |> AgentMap.get(:otherkey, & &1)
       42
-
-  For ex.:
-
-      iex> am = AgentMap.new(a: 42, b: 24, c: 33, d: 51)
-      iex> AgentMap.get(am, & &1, [:a, :b, :c, :d])
-      [42, 24, 33, 51]
-      iex> am
-      ...> |> AgentMap.update(&Enum.reverse/1, [:a, :b])
-      ...> |> AgentMap.get(& &1, [:a, :b, :c, :d])
-      [24, 42, 33, 51]
-      iex> am
-      ...> |> AgentMap.update(fn _ -> :drop end, [:a, :b])
-      ...> |> AgentMap.keys()
-      [:c, :d]
-      iex> am
-      ...> |> AgentMap.update(fn _ -> :drop end, [:c])
-      ...> |> AgentMap.update(:d, fn _ -> :drop end)
-      ...> |> AgentMap.get(& &1, [:c, :d])
-      [nil, :drop]
   """
   # 4
   @spec update(am, key, (value -> value), keyword) :: am
@@ -1277,28 +1087,16 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Perform `cast` ("fire and forget"). Works the same as `update/4`, but uses
+  Performs `cast` ("fire and forget"). Works the same as `update/4`, but uses
   `GenServer.cast/2`.
 
   Immediately returns unchanged `agentmap` argument to support piping.
 
-  ## Options
+  The options are the same as for `get_and_update/4`, except for the `timeout:
+  pos_integer`.
 
-    * `!: true` — (`boolean`, `false`) to make [priority
-      calls](#module-priority-calls-true). `key` could have an associated queue
-      of callbacks, awaiting of execution. If such queue exists, "priority"
-      version will add call to the begining of the queue (via "selective
-      receive");
-
-    * `timeout: {:drop, pos_integer}` — to throw out a call from queue upon the
-      occurence of a timeout. See [timeout section](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to throw out from queue or cancel a
-      running call upon the occurence of a timeout. See [timeout
-      section](#module-timeout).
-
-  As this call uses `GenServer.cast/2`, `timeout: pos_integer` option is not
-  available.
+  Special syntax sugar `cast(agentmap, fun, key, opts)` is supported for the
+  `AgentMap.Transaction.cast/4`.
   """
   @spec cast(am, key, (value -> value), keyword) :: am
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
