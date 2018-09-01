@@ -23,7 +23,7 @@ defmodule AgentMap do
   `max_processes/3` function. A worker will commit suicide after `10` ms of
   inactivity.
 
-  `AgentMap` supports transactions — operations on a group of values. See
+  `AgentMap` supports transactions — operations on a group of keys. See
   `AgentMap.Transaction`.
 
   ## Examples
@@ -45,7 +45,7 @@ defmodule AgentMap do
   [allows](#module-enumerable-protocol-and-access-behaviour) to use the
   `Enumerable` protocol and to take benefit from the `Access` behaviour.
 
-  Also `AgentMap` can be started in an `Agent` manner:
+  Also, `AgentMap` can be started in an `Agent` manner:
 
       iex> {:ok, pid} = AgentMap.start_link()
       iex> pid
@@ -281,7 +281,7 @@ defmodule AgentMap do
       iex> am =
       ...>   AgentMap.new(key: 42)
       iex> am
-      ...> |> cast(:key, & sleep(50); &1 - 9)
+      ...> |> cast(:key, fn v -> sleep(50); v - 9 end)
       ...> |> put(:key, 24, timeout: 10)
       iex> Process.info(self())[:message_queue_len]
       1
@@ -303,7 +303,7 @@ defmodule AgentMap do
       iex> am =
       ...>   AgentMap.new(key: 42)
       iex> am
-      ...> |> cast(:key, & sleep(50); &1 - 9)
+      ...> |> cast(:key, fn v -> sleep(50); v - 9 end)
       ...> |> put(:key, 24, timeout: {:drop, 10})
       ...> |> get(:key, !: false)
       33
@@ -357,17 +357,13 @@ defmodule AgentMap do
   @typedoc "Return values for the `start*` functions"
   @type on_start :: {:ok, pid} | {:error, {:already_started, pid} | term}
 
-  @typedoc "The `AgentMap` name"
   @type name :: atom | {:global, term} | {:via, module, term}
 
-  @typedoc "The `AgentMap` server (name, link, pid, …)"
+  @typedoc "`AgentMap` server (name, link, pid, …)"
   @type agentmap :: pid | {atom, node} | name | %AgentMap{}
   @type am :: agentmap
 
-  @typedoc "The `AgentMap` key"
   @type key :: term
-
-  @typedoc "The `AgentMap` value"
   @type value :: term
 
   @doc false
@@ -447,7 +443,7 @@ defmodule AgentMap do
       [:a, :b]
 
       iex> {:ok, pid} = AgentMap.start_link()
-      iex> pid
+      iex> am = pid
       ...> |> AgentMap.new()
       ...> |> AgentMap.put(:a, 1)
       iex> am.a
@@ -555,7 +551,9 @@ defmodule AgentMap do
   `{:exit, reason}` or an arbitrary exception. For example:
 
       iex> {:ok, pid} =
-      ...>   AgentMap.start_link(f: fn -> Calc.fib(4) end, timeout: 5000)
+      ...>   AgentMap.start_link(f: fn ->
+      ...>     Calc.fib(4)
+      ...>   end, timeout: 5000)
       iex> AgentMap.get(pid, :f)
       3
 
@@ -567,8 +565,6 @@ defmodule AgentMap do
 
       iex> AgentMap.start(f: 3)
       {:error, f: :badfun}
-      iex> AgentMap.start(f: {&Calc.fib/1, [4, :extraarg]})
-      {:error, f: :badarity}
       iex> AgentMap.start(f: & &1)
       {:error, f: :badarity}
       iex> {:error, f: {exception, _stacktrace}} =
@@ -597,14 +593,14 @@ defmodule AgentMap do
   ## Examples
 
       iex> import :timer
-      iex> AgentMap.start(one: 42,
-      ...>                two: fn -> sleep(150) end,
-      ...>                three: fn -> sleep(:infinity) end,
+      iex> AgentMap.start(a: 42,
+      ...>                b: fn -> sleep(150) end,
+      ...>                c: fn -> sleep(:infinity) end,
       ...>                timeout: 100)
-      {:error, one: :badfun, two: :timeout, three: :timeout}
-      iex> err = AgentMap.start(one: 76,
-      ...>                      two: fn -> raise "oops" end)
-      iex> {:error, one: :badfun, two: {exception, _stacktrace}} = err
+      {:error, a: :badfun, b: :timeout, c: :timeout}
+      iex> err = AgentMap.start(a: 76,
+      ...>                      b: fn -> raise "oops" end)
+      iex> {:error, a: :badfun, b: {exception, _stacktrace}} = err
       iex> exception
       %RuntimeError{message: "oops"}
   """
@@ -643,7 +639,7 @@ defmodule AgentMap do
 
   The function `fun` is sent to the `agentmap` which invokes callback, passing
   the value associated with `key` (or `nil`). The result of the invocation is
-  returned from this function. This call does not change state, so a series of
+  returned from this function. This call does not change value, so a series of
   `get`-calls can and will be executed as a parallel `Task`s (see
   `max_processes/3`).
 
@@ -845,9 +841,8 @@ defmodule AgentMap do
 
     * `!: true` — (`boolean`, `false`) to make [priority
       calls](#module-priority-calls-true). `key` could have an associated queue
-      of callbacks, awaiting of execution. If such queue exists, "priority"
-      version will add call to the begining of the queue (via "selective
-      receive");
+      of callbacks, awaiting of execution. If such queue exists, asks worker via
+      "selective receive" to process this callback in prioriry order;
 
     * `timeout: {:drop, pos_integer}` — to throw out a call from queue upon the
       occurence of a timeout. See [timeout section](#module-timeout);
@@ -925,9 +920,8 @@ defmodule AgentMap do
 
   This function always returns the same `agentmap` to make piping work.
 
-  This call is no more than a syntax sugar for
-
-      get_and_update(am, key, &{am, fun.(&1)}, opts)
+  This call is no more than a syntax sugar for `get_and_update(am, key, &{am,
+  fun.(&1)}, opts)`.
 
   Special syntax sugar `update(agentmap, fun, key, opts)` is supported for the
   `AgentMap.Transaction.update/4`.
@@ -1150,7 +1144,7 @@ defmodule AgentMap do
       |> AgentMap.cast(:key, fn _ -> sleep(100) end)
       |> AgentMap.cast(:key, fn _ -> sleep(100) end)
 
-  will run for 200 ms as `agentmap` can parallelize any sequence of `get/3`
+  will run for `200` ms as `agentmap` can parallelize any sequence of `get/3`
   calls ending with `get_and_update/3`, `update/3` or `cast/3`.
 
   Use `max_processes: 1` to execute `get` calls in sequence.
@@ -1482,7 +1476,7 @@ defmodule AgentMap do
       update(agentmap, fn _ -> :drop end, keys)
       cast(agentmap, fn _ -> :drop end, keys)
 
-  By default, returns `agentmap` without waiting for actual drop happens.
+  By default, returns `agentmap` without waiting for actual drop happen.
 
   ## Options
 
@@ -1495,7 +1489,7 @@ defmodule AgentMap do
     * `:timeout` — (`pos_integer | :infinity`, `5000`) if `cast: false` is
       given;
 
-    * `:cast` — (`boolean`, `true`) wait for actual drop happens?
+    * `:cast` — (`boolean`, `true`) wait for actual drop happen?
 
   ## Examples
 
