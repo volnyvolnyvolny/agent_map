@@ -9,6 +9,8 @@ defmodule AgentMap.Common do
   ## BOXING
   ##
 
+  defguard is_box(b) when is_nil(b) or (is_tuple(b) and elem(b, 0) == :value)
+
   def unbox(nil), do: nil
   def unbox({:value, v}), do: v
 
@@ -16,42 +18,64 @@ defmodule AgentMap.Common do
   ## STATE RELATED
   ##
 
-  defp compress(pack, max_p)
+  ##
+  ## State:
+  ##
+  ##   {map, default `max_processes` (max_p)}
+  ##
+  ## Each map key has a value:
+  ##
+  ##   * {:pid, worker}
+  ##
+  ##   * {{:value, v}, {processes, max_p}}
+  ##
+  ##   * {{:value, v}, p}
+  ##     = {{:value, v}, {p, max_p}}
+  ##
+  ##   * {:value, v}
+  ##     = {{:value, v}, {0, max_p}}
+  ##
+  ## No value:
+  ##
+  ##   * {nil, {processes, max_p}}
+  ##
+  ##   * {nil, processes}
+  ##     = {nil, {process, max_p}}
+  ##
 
-  defp compress({box, {0, max_p}}, max_p), do: box
-  defp compress({box, {p, max_p}}, max_p), do: {box, p}
+  defp compress({b, {0, max_p}}, max_p) when is_box(b), do: b
+  defp compress({b, {p, max_p}}, max_p) when is_box(b), do: {b, p}
   defp compress(pack, _), do: pack
 
-  def inject(key, pack, state) do
+  defp decompress({b, {_, _}} = pack, _) when is_box(b), do: pack
+  defp decompress({b, p}, max_p) when is_box(b), do: {b, {p, max_p}}
+  defp decompress(b, max_p) when is_box(b), do: {b, {0, max_p}}
+
+  def put(state, key, pack) do
     {map, max_p} = state
 
     map =
-      case compress(pack, max_p) do
-        nil ->
+      case decompress(pack, max_p) do
+        {nil, {0, ^max_p}} ->
           Map.delete(map, key)
 
         pack ->
-          %{map | key => pack}
+          pack = compress(pack, max_p)
+          Map.put(map, key, pack)
       end
 
     {map, max_p}
   end
 
-  def extract(key, state) do
+  def get(state, key) do
     {map, max_p} = state
 
     case map[key] do
       {:pid, _} = pack ->
         pack
 
-      {_, {_, _}} = pack ->
-        pack
-
-      {box, p} ->
-        {box, {p, max_p}}
-
-      box ->
-        {box, {0, max_p}}
+      pack ->
+        decompress(pack, max_p)
     end
   end
 

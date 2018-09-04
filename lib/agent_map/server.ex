@@ -5,32 +5,10 @@ defmodule AgentMap.Server do
   alias AgentMap.{Common, Req, Worker}
 
   import System, only: [system_time: 0]
-  import Common, only: [inject: 3, extract: 2]
+  import Common, only: [put: 3, get: 2]
   import Worker, only: [dict: 1, queue_len: 1]
 
   use GenServer
-
-  ##
-  ## The state of this GenServer is a pair:
-  ##
-  ##   {map, default `max_processes` (max_p)}
-  ##
-  ## For each map key, value is one of the:
-  ##
-  ##   * {:pid, worker}
-  ##
-  ##   * {{:value, v}, {processes, max_p}}
-  ##   * {{:value, v}, p}
-  ##     = {{:value, v}, {p, max_p by def.}}
-  ##   * {:value, v}
-  ##     = {{:value, v}, {0, max_p by def.}}
-  ##
-  ## No value:
-  ##
-  ##   * {nil, {processes, max_p}}
-  ##   * {nil, processes}
-  ##     = {nil, {process, max_p by def.}}
-  ##
 
   def safe_apply(fun, args) do
     {:ok, apply(fun, args)}
@@ -53,6 +31,8 @@ defmodule AgentMap.Server do
   ##
 
   def init(args) do
+    keys = Keyword.keys(args[:funs])
+
     results =
       args[:funs]
       |> Enum.map(fn {_key, fun} ->
@@ -65,34 +45,31 @@ defmodule AgentMap.Server do
         res || Task.shutdown(task, :brutal_kill)
       end)
       |> Enum.map(fn
-        {:ok, _result} = id ->
-          id
+        {:ok, result} ->
+          result
+
+        {:exit, _reason} = e ->
+          {:error, e}
 
         nil ->
           {:error, :timeout}
       end)
+      |> Enum.zip(keys)
 
-    {kv, errors} =
-      args[:funs]
-      |> Keyword.keys()
-      |> Enum.zip(results)
-      |> Enum.split_with(&match?({:ok, _}, &1))
+    errors =
+      for {{:error, reason}, key} <- results do
+        {key, reason}
+      end
 
-    if [] == errors do
-      # no errors
+    if Enum.empty?(errors) do
       map =
-        for {key, {:ok, v}} <- kv, into: %{} do
+        for {{:ok, v}, key} <- results, into: %{} do
           {key, {:value, v}}
         end
 
       {:ok, {map, args[:max_processes]}}
     else
-      reason =
-        for {key, {:error, reason}} <- errors do
-          {key, reason}
-        end
-
-      {:stop, reason}
+      {:stop, errors}
     end
   end
 
@@ -101,10 +78,12 @@ defmodule AgentMap.Server do
   ##
 
   def handle_call(%{timeout: {_, _}, inserted_at: nil} = req, from, state) do
+    IO.inspect(:a)
     handle_call(%{req | inserted_at: system_time()}, from, state)
   end
 
   def handle_call(req, from, state) do
+    IO.inspect(:b)
     Req.handle(%{req | from: from}, state)
   end
 
@@ -119,10 +98,10 @@ defmodule AgentMap.Server do
   def handle_cast(req, state) do
     case Req.handle(req, state) do
       {:reply, _, state} ->
-        {:noreply, state}
+        {:reply, {:noreply, state}}
 
-      {:noreply, _} = r ->
-        r
+      noreply ->
+        {:noreply, noreply}
     end
   end
 
@@ -132,14 +111,14 @@ defmodule AgentMap.Server do
 
   def handle_info(%{info: :done, key: key} = msg, state) do
     state =
-      case extract(key, state) do
+      case get(state, key) do
         {:pid, worker} ->
           send(worker, msg)
           state
 
         {value, {p, custom_max_p}} ->
           pack = {value, {p - 1, custom_max_p}}
-          inject(key, pack, state)
+          put(state, key, pack)
       end
 
     {:noreply, state}
@@ -161,7 +140,7 @@ defmodule AgentMap.Server do
       k = dict[:"$key"]
 
       pack = {v, {p - 1, dict[:"$max_processes"]}}
-      state = inject(k, pack, state)
+      state = put(state, k, pack)
       {:noreply, state}
     end
   end

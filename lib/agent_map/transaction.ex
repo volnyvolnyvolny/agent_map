@@ -3,9 +3,9 @@ defmodule AgentMap.Transaction do
   This module contains functions for making transactional calls.
 
   Each transaction is executed in a separate process, which is responsible for
-  collecting the values, performing the callback, returning the result, and
-  processing the timeout. Computation can start after all the related values
-  will be known. If transaction call is a value-changing (`get_and_update/4`,
+  collecting the values, invoking the callback, returning the result, and
+  handling the timeout. Computation can start after all the related values will
+  be known. If transaction call is a value-changing (`get_and_update/4`,
   `update/4`, `cast/4`), for every involved `key` will be created worker and
   special "return me a value and wait for a new one" request will be added to
   the end of the workers queue.
@@ -18,7 +18,7 @@ defmodule AgentMap.Transaction do
 
   alias AgentMap.{Common, Req, CallbackError}
 
-  import Common, only: [run: 2, to_ms: 1, reply: 2, extract: 2, handle_timeout_error: 2]
+  import Common, only: [run: 2, to_ms: 1, reply: 2, get: 2, handle_timeout_error: 2]
   import Req, only: [get_value: 2, timeout: 1]
   import System, only: [system_time: 0]
 
@@ -61,7 +61,7 @@ defmodule AgentMap.Transaction do
   ##
 
   defp worker?(key, state) do
-    match?({:pid, _}, extract(key, state))
+    match?({:pid, _}, get(state, key))
   end
 
   defp prepair(%{action: :get, !: true}, state) do
@@ -143,7 +143,7 @@ defmodule AgentMap.Transaction do
         known =
           case value do
             {:value, v} ->
-              %{known | key => v}
+              Map.put(known, key, v)
 
             nil ->
               known
@@ -158,7 +158,7 @@ defmodule AgentMap.Transaction do
 
   defp broadcast(keys, msg, state) do
     for key <- keys do
-      {:pid, worker} = extract(key, state)
+      {:pid, worker} = get(state, key)
       send(worker, msg)
     end
   end
@@ -187,7 +187,7 @@ defmodule AgentMap.Transaction do
 
       {get, values} when length(values) == length(keys) ->
         for {key, value} <- Enum.zip(keys, values) do
-          {:pid, worker} = extract(key, state)
+          {:pid, worker} = get(state, key)
           send(worker, value)
         end
 
@@ -207,22 +207,22 @@ defmodule AgentMap.Transaction do
 
             case ret do
               {get, v} ->
-                {:pid, worker} = extract(key, state)
+                {:pid, worker} = get(state, key)
                 send(worker, v)
                 get
 
               {get} ->
-                {:pid, worker} = extract(key, state)
+                {:pid, worker} = get(state, key)
                 send(worker, :id)
                 get
 
               :id ->
-                {:pid, worker} = extract(key, state)
+                {:pid, worker} = get(state, key)
                 send(worker, :id)
                 get
 
               :pop ->
-                {:pid, worker} = extract(key, state)
+                {:pid, worker} = get(state, key)
                 send(worker, :drop)
                 get
             end
@@ -273,7 +273,7 @@ defmodule AgentMap.Transaction do
                 handle_timeout_error(req, keys)
 
                 for key <- keys do
-                  {:pid, worker} = extract(key, state)
+                  {:pid, worker} = get(state, key)
                   send(worker, :id)
                 end
             end
@@ -299,21 +299,21 @@ defmodule AgentMap.Transaction do
   invocation is returned.
 
   For example, `get(account, [:Alice, :Bob], &Enum.sum/1)` call returns the sum
-  of the account balances of Alice and Bob. Suppose that `:Alice` has an
-  associated worker that holds the queue of callbacks. Some of this callbacks
-  will change the amount of money she has, and some will use the information to
-  make calculations. This call will create a special temporary process
-  responsible for transaction. This process will take value stored for `:Bob`
-  and add a special get-request to the end of the `:Alice`'s worker queue. After
-  this request will be fulfilled, `Enum.sum/1` will be called, passing the
-  amount of money `:Alice` and `:Bob` has as a single list argument.
+  of the account balances of Alice and Bob. Suppose that `:Alice` has a worker
+  that holds a queue of callbacks. Some of this callbacks will change the amount
+  of money she has, and some will make calculations using this information. This
+  call will create a special temporary process responsible for the transaction.
+  It will take value stored for `:Bob` and add a special get-request to the end
+  of the `:Alice`'s worker queue. After this request will be fulfilled,
+  `Enum.sum/1` will be called, passing the amount of money `:Alice` and `:Bob`
+  has as a single list argument.
 
   ## Options
 
     * `!: true` — (`boolean`, `false`) if given, `fun` will be executed
       immediately, passing current values as an argument.
 
-      To achieve the same affect on the client side use the following:
+      To achieve the same on the client side use:
 
           for key <- keys do
             case AgentMap.fetch(agentmap, key) do
@@ -346,6 +346,7 @@ defmodule AgentMap.Transaction do
       ...>   Process.get(:"$keys")
       ...> end)
       [:a, :b, :c]
+      #
       iex> T.get(am, [:a, :b, :c], fn [nil, 42, nil] ->
       ...>   Process.get(:"$map")
       ...> end)
@@ -356,10 +357,14 @@ defmodule AgentMap.Transaction do
       iex> alias AgentMap.Transaction, as: T
       iex> am = AgentMap.new()
       iex> T.update(am, [:Alice, :Bob], [42, 43])
-      iex> T.get(am, [:Alice, :Bob], fn [a, b] -> a - b end)
+      iex> T.get(am, [:Alice, :Bob], fn [a, b] ->
+      ...>   a - b
+      ...> end)
       -1
       # Order matters:
-      iex> T.get(am, [:Bob, :Alice], fn [b, a] -> b - a end)
+      iex> T.get(am, [:Bob, :Alice], fn [b, a] ->
+      ...>   b - a
+      ...> end)
       1
 
    "Priority" calls:
@@ -391,13 +396,12 @@ defmodule AgentMap.Transaction do
   values associated with `keys` (`nil`s for missing keys) as an argument. The
   `fun` must produce "get"-value and a new values list for `keys`. For example,
   `get_and_update(account, [:Alice, :Bob], fn [a,b] -> {:swapped, [b,a]} end)`
-  produces `:swapped` "get"-value and swaped the Alice's and Bob's balances as
-  an updated values.
+  produces `:swapped` "get"-value and swaped Alice's and Bob's balances as an
+  updated values.
 
-  See the [begining of this module docs](#content) for the details of
-  processing.
+  See the [begining of this docs](#content) for the details of processing.
 
-  Transaction `fun` can return:
+  Transaction callback (`fun`) can return:
 
     * a list with values `[{"get"-value, new value} | {"get"-value} | :id | :pop]`.
       This returns a list of "get"-values. For ex.:
@@ -659,8 +663,13 @@ defmodule AgentMap.Transaction do
 
   Immediately returns the `agentmap` argument unchanged to support piping.
 
-  The options are the same as for `get_and_update/4`, except for the `timeout:
-  pos_integer`.
+  ## Special process dictionary keys
+
+  Are the same as for `get_and_update/4`.
+
+  ## Options
+
+  Are the same as for `get_and_update/4`, except for the `timeout: pos_integer`.
   """
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
