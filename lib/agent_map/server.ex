@@ -2,10 +2,10 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Common, Req, Worker}
+  alias AgentMap.{Req, Worker, Transaction, Server.State}
 
   import System, only: [system_time: 0]
-  import Common, only: [put: 3, get: 2]
+  import State, only: [put: 3, get: 2]
   import Worker, only: [dict: 1, queue_len: 1]
 
   use GenServer
@@ -77,22 +77,44 @@ defmodule AgentMap.Server do
   ## CALL
   ##
 
-  def handle_call(%{timeout: {_, _}, inserted_at: nil} = req, from, state) do
-    IO.inspect(:a)
-    handle_call(%{req | inserted_at: system_time()}, from, state)
+  def handle_call(%{from: nil} = req, f, state) do
+    handle_call(%{req | from: f}, :_, state)
   end
 
-  def handle_call(req, from, state) do
-    IO.inspect(:b)
-    Req.handle(%{req | from: from}, state)
+  def handle_call(%{inserted_at: nil} = req, :_, state) do
+    handle_call(%{req | inserted_at: system_time()}, :_, state)
+  end
+
+  # This call must be made in one go.
+  def handle_call(%{action: :values} = req, :_, state) do
+    {map, _} = state
+
+    fun = fn _ ->
+      Map.values(Process.get(:"$map"))
+    end
+
+    req = %{req | action: :get, data: {fun, Map.keys(map)}}
+    handle_call(req, :_, map)
+  end
+
+  def handle_call(%{data: {_fun, keys}} = req, :_, state) when is_list(keys) do
+    Transaction.handle(req, state)
+  end
+
+  def handle_call(req, :_, state) do
+    Req.handle(req, state)
   end
 
   ##
   ## CAST
   ##
 
-  def handle_cast(%{timeout: {_, _}, inserted_at: nil} = req, state) do
+  def handle_cast(%{inserted_at: nil} = req, state) do
     handle_cast(%{req | inserted_at: system_time()}, state)
+  end
+
+  def handle_cast(%{data: {_fun, keys}} = req, state) when is_list(keys) do
+    Transaction.handle(req, state)
   end
 
   def handle_cast(req, state) do
@@ -116,8 +138,8 @@ defmodule AgentMap.Server do
           send(worker, msg)
           state
 
-        {value, {p, custom_max_p}} ->
-          pack = {value, {p - 1, custom_max_p}}
+        {value, {p, max_p}} ->
+          pack = {value, {p - 1, max_p}}
           put(state, key, pack)
       end
 
@@ -131,6 +153,7 @@ defmodule AgentMap.Server do
       send(worker, :continue)
       {:noreply, state}
     else
+      #!
       dict = dict(worker)
       send(worker, :die!)
 

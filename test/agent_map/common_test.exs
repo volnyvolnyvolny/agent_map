@@ -1,5 +1,7 @@
 defmodule AgentMapCommonTest do
   import AgentMap.Common
+  alias AgentMap.Req
+  import System, only: [system_time: 0]
 
   use ExUnit.Case
 
@@ -39,5 +41,17 @@ defmodule AgentMapCommonTest do
     assert(get({%{k: b}, 5}, :k) == {b, {0, 5}})
     assert(get({%{k: {b, 1}}, 5}, :k) == {b, {1, 5}})
     assert(get({%{k: {b, {4, 6}}}, 5}, :k) == {b, {4, 6}})
+  end
+
+  test "run" do
+    req =
+      %Req{
+        action: :_,
+        inserted_at: system_time(),
+        data: {:key, & &1 * 2},
+        timeout: 100
+      }
+
+    assert(run(req, 21) == {:ok, 42})
   end
 end

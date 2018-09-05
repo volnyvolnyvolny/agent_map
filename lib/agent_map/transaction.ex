@@ -16,11 +16,13 @@ defmodule AgentMap.Transaction do
   request will be added to the end of the workers queue.
   """
 
-  alias AgentMap.{Common, Req, CallbackError}
+  alias AgentMap.{Common, Req, CallbackError, Server.State, Worker}
 
-  import Common, only: [run: 2, to_ms: 1, reply: 2, get: 2, handle_timeout_error: 2]
-  import Req, only: [get_value: 2, timeout: 1]
+  import Common, only: [run: 3]
+  import Req, only: [timeout: 1, compress: 1, left: 2]
   import System, only: [system_time: 0]
+  import Enum, only: [filter: 2]
+  import State
 
   require Logger
 
@@ -34,161 +36,126 @@ defmodule AgentMap.Transaction do
   @type value :: term
 
   ##
-  ## HELPERS
+  ## CALLBACKS
   ##
 
   defp share(to: t) do
     k = Process.get(:"$key")
-    v = Process.get(:"$value")
-    send(t, {k, v})
+    b = Process.get(:"$value")
+    send(t, {k, b})
   end
 
-  defp accept() do
+  defp accept(ref) do
     receive do
-      :drop ->
+      {^ref, :drop} ->
         :pop
 
-      :id ->
+      {^ref, :id} ->
         :id
 
-      {:value, v} ->
-        {:_, v}
+      {^ref, b} ->
+        {:_get, unbox(b)}
     end
   end
 
   ##
-  ## STAGES: prepair → collect → run → finalize
+  ##
   ##
 
-  defp worker?(key, state) do
-    match?({:pid, _}, get(state, key))
-  end
+  defp prepair(%Req{action: :get}, state), do: state
 
-  defp prepair(%{action: :get, !: true}, state) do
-    # do nothing
-    state
-  end
-
-  defp prepair(%{action: :get} = req, state) do
-    {_, keys} = req.data
-
-    s = self()
-
-    fun = fn _ ->
-      share(to: s)
-    end
-
-    req = %{req | timeout: :infinity}
-
-    for key <- keys, worker?(key, state) do
-      Req.handle(%{req | data: {key, fun}}, state)
-    end
-
-    state
-  end
-
-  defp prepair(%{action: :get_and_update} = req, state) do
-    {_, keys} = req.data
-
-    s = self()
-
-    fun = fn _ ->
-      share(to: s)
-      accept()
-    end
-
-    req = %{req | timeout: :infinity}
-
+  defp prepair(%Req{action: :get_and_update, data: {_, keys}}, state) do
     Enum.reduce(keys, state, fn key, state ->
-      Req.handle(%{req | data: {key, fun}}, state)
+      spawn_worker(state, key)
     end)
   end
 
-  defp collect(%{action: :get, !: true} = req, state) do
-    {_, keys} = req.data
+  ##
+  ##
+  ##
 
-    for key <- keys do
-      {key, get_value(key, state)}
-    end
+  defp collect(%Req{action: :get, !: true, data: {_, keys}}, state) do
+    {:ok, take(state, keys)}
   end
 
-  defp collect(req, state) do
-    {_, keys} = req.data
+  defp collect(%Req{data: {_, keys}} = req, state) do
+    ref = Process.get(:"$ref")
+    req = %{req | timeout: :infinity}
 
-    known =
-      for key <- keys, not worker?(key, state), into: %{} do
-        {key, get_value(key, state)}
+    me = self()
+
+    f = fn _ ->
+      share(to: me)
+
+      if req.action == :get_and_update do
+        accept(ref)
       end
-
-    passed = to_ms(system_time() - req.inserted_at)
-
-    if timeout(req) > passed do
-      unknown = keys -- Map.keys(known)
-      _collect(known, unknown, timeout(req) - passed)
-    else
-      {:error, :expired}
     end
+
+    broadcast(state, keys, %{compress(req) | fun: f})
+
+    known = filter(keys, &(not worker?(state, &1)))
+    map = take(state, known)
+
+    t = left(timeout(req), since: req.inserted_at)
+    _collect(map, keys -- known, t)
   end
 
-  defp _collect(known, [], _), do: {:ok, known}
+  defp _collect(map, [], _), do: {:ok, map}
+  defp _collect(_, _, t) when t < 0, do: {:error, :expired}
 
-  defp _collect(known, unknown, timeout) do
-    now = system_time()
+  defp _collect(map, unknown, timeout) do
+    past = system_time()
 
     receive do
-      {key, value} ->
-        passed = to_ms(system_time() - now)
-        timeout = timeout - passed
+      {key, nil} ->
+        t = left(timeout, since: past)
+        _collect(map, unknown -- [key], t)
 
-        known =
-          case value do
-            {:value, v} ->
-              Map.put(known, key, v)
-
-            nil ->
-              known
-          end
-
-        _collect(known, unknown -- [key], timeout)
+      {key, {:value, v}} ->
+        map = Map.put(map, key, v)
+        t = left(timeout, since: past)
+        _collect(map, unknown -- [key], t)
     after
       timeout ->
         {:error, :expired}
     end
   end
 
-  defp broadcast(keys, msg, state) do
-    for key <- keys do
-      {:pid, worker} = get(state, key)
-      send(worker, msg)
-    end
-  end
+  ##
+  ##
+  ##
 
-  defp commit(%{action: :get}, _, _, _), do: :nothing
+  defp commit(:get, result, _state), do: {:ok, result}
 
-  defp commit(%{action: :get_and_update} = req, values, result, state) do
-    {_, keys} = req
+  defp commit(:get_and_update, result, state) do
+    ref = Process.get(:"$ref")
+    keys = Process.get(:"$keys")
+    map = Process.get(:"$map")
 
     case result do
       :pop ->
-        broadcast(keys, :drop, state)
-        {:ok, values}
+        broadcast(state, keys, {ref, :drop})
+        vs = Enum.map(keys, &map[&1])
+        {:ok, vs}
 
       :id ->
-        broadcast(keys, :id, state)
-        {:ok, values}
+        broadcast(state, keys, {ref, :id})
+        vs = Enum.map(keys, &map[&1])
+        {:ok, vs}
 
       {get, :id} ->
-        broadcast(keys, :id, state)
+        broadcast(state, keys, {ref, :id})
         {:ok, get}
 
       {get, :drop} ->
-        broadcast(keys, :id, state)
+        broadcast(state, keys, {ref, :drop})
         {:ok, get}
 
       {get, values} when length(values) == length(keys) ->
         for {key, value} <- Enum.zip(keys, values) do
           {:pid, worker} = get(state, key)
-          send(worker, value)
+          send(worker, {ref, {:value, value}})
         end
 
         {:ok, get}
@@ -197,38 +164,33 @@ defmodule AgentMap.Transaction do
         {:error, {:update, values}}
 
       {get} ->
-        broadcast(keys, :id, state)
+        broadcast(state, keys, {ref, :id})
         {:ok, get}
 
       lst when is_list(lst) and length(lst) == length(keys) ->
         get =
           for {key, ret} <- Enum.zip(keys, lst) do
-            get = get_value(key, state)
+            {:pid, w} = get(state, key)
+
+            b = Worker.dict(w)[:"$value"]
+            g = unbox(b)
 
             case ret do
-              {get, v} ->
-                {:pid, worker} = get(state, key)
-                send(worker, v)
-                get
+              {g, v} ->
+                send(w, {ref, {:value, v}}) || g
 
-              {get} ->
-                {:pid, worker} = get(state, key)
-                send(worker, :id)
-                get
+              {g} ->
+                send(w, {ref, :id}) || g
 
               :id ->
-                {:pid, worker} = get(state, key)
-                send(worker, :id)
-                get
+                send(w, {ref, :id}) || g
 
               :pop ->
-                {:pid, worker} = get(state, key)
-                send(worker, :drop)
-                get
+                send(w, {ref, :drop}) || g
             end
           end
 
-        {:ok, {:get, get}}
+        {:ok, get}
 
       _err ->
         {:error, {:callback, result}}
@@ -236,55 +198,65 @@ defmodule AgentMap.Transaction do
   end
 
   ##
-  ## MULTIPLE KEY HANDLERS
   ##
-
-  ##
-  ## (prepair) → (collect)
-  ## → (Common.run) in a separate Task
-  ## → (commit) → (Common.reply)
   ##
 
   @doc false
-  def handle(req, state) do
-    {_, keys} = req.data
+  def handle(%Req{data: {fun, ks}} = req, state) do
+    state = prepair(req, state)
 
     Task.start_link(fn ->
-      state = prepair(req, state)
+      ws =
+        for key <- ks, worker?(state, key), into: %{} do
+          {:pid, worker} = get(state, key)
+          {key, worker}
+        end
 
-      case collect(req, state) do
-        {:ok, known} ->
-          Task.async(fn ->
-            Process.put(:"$map", known)
-            Process.put(:"$keys", keys)
-            values = Enum.map(keys, &known[&1])
+      Process.put(:"$workers", ws)
+      Process.put(:"$keys", ks)
+      Process.put(:"$ref", make_ref())
 
-            with {:ok, result} <- run(req, values),
-                 {:ok, get} <- commit(req, values, result, state) do
-              reply(req.from, get)
-            else
-              {:error, {:callback, result}} ->
-                raise CallbackError, got: result
+      with {:ok, m} <- collect(req, state),
+           Process.put(:"$map", m),
+           values = Enum.map(ks, &m[&1]),
+           {:ok, result} <- run(fun, values, compress(req)),
+           {:ok, get} <- commit(req.action, result, state) do
+        if req.from do
+          reply(req.from, get)
+        end
+      else
+        {:error, {:callback, result}} ->
+          raise CallbackError, got: result
 
-              {:error, {:update, values}} ->
-                raise CallbackError, len: length(values)
+        {:error, {:update, values}} ->
+          raise CallbackError, len: length(values)
 
-              {:error, :expired} ->
-                handle_timeout_error(req, keys)
-
-                for key <- keys do
-                  {:pid, worker} = get(state, key)
-                  send(worker, :id)
-                end
-            end
-          end)
-
-        {:error, :expired} ->
-          handle_timeout_error(req, keys)
+        err ->
+          handle_error(err, req, state)
       end
 
       {:noreply, state}
     end)
+  end
+
+  defp err_msg({:error, :expired}, ks, r) do
+    "Takes too long to collect values for the keys #{ks}. Req: #{r}."
+  end
+
+  defp err_msg({:error, :toolong}, ks, r) do
+    "Keys #{ks} transaction call takes too long and will be terminated. Req: #{r}."
+  end
+
+  defp handle_error(err, %Req{data: {_, keys}} = req, state) do
+    ref = Process.get(:"$ref")
+
+    if req.action == :get_and_update do
+      broadcast(state, keys, {ref, :id})
+    end
+
+    ks = inspect(keys)
+    r = inspect(req)
+    Logger.error(err_msg(err, ks, r))
   end
 
   ##
@@ -635,7 +607,7 @@ defmodule AgentMap.Transaction do
   More:
 
       iex> alias AgentMap.Transaction, as: T
-      iex> am = new(a: 42, b: 24, c: 33, d: 51)
+      iex> am = AgentMap.new(a: 42, b: 24, c: 33, d: 51)
       iex> T.get(am, [:a, :b, :c, :d], & &1)
       [42, 24, 33, 51]
       iex> am
@@ -676,5 +648,16 @@ defmodule AgentMap.Transaction do
   def cast(agentmap, keys, fun, opts \\ [!: false]) when is_function(fun, 1) and is_list(keys) do
     req = %Req{action: :get_and_update, data: {fun, keys}}
     AgentMap._call(agentmap, req, opts)
+  end
+
+  @doc false
+  def reply(key, :id), do: _reply(key, :id)
+  def reply(key, :drop), do: _reply(key, :drop)
+  def reply(key, {:value, _} = b), do: _reply(key, b)
+
+  def _reply(key, msg) do
+    ref = Process.get(:"$ref")
+    worker = Process.get(:"$workers")[key]
+    send(worker, {ref, msg})
   end
 end

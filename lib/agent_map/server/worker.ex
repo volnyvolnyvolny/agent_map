@@ -1,17 +1,16 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Common, CallbackError}
+  alias AgentMap.{Common, CallbackError, Server.State}
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import System, only: [system_time: 0]
-
-  import Common,
-    only: [run: 2, run_and_reply: 2, reply: 2, spawn_get: 3, handle_timeout_error: 1, unbox: 1]
+  import Common, only: [run: 3, reply: 2]
+  import State
 
   @moduledoc false
 
-  @compile {:inline, rand: 1, dec: 1, inc: 1, dict: 1, queue: 1, queue_len: 1}
+  @compile {:inline, rand: 1, dict: 1, queue: 1, queue_len: 1}
 
   # ms
   @wait 10
@@ -20,8 +19,8 @@ defmodule AgentMap.Worker do
   ## HELPERS
   ##
 
-  # Great for generating numbers < 1000.
-  defp rand(to) when to < 1000, do: rem(system_time(), to)
+  # Great for generating numbers < 100.
+  defp rand(to) when to < 100, do: rem(system_time(), to)
 
   ##
   ## DICTIONARY
@@ -31,54 +30,87 @@ defmodule AgentMap.Worker do
   def queue(worker), do: info(worker)[:messages]
   def queue_len(worker \\ self()), do: info(worker)[:message_queue_len]
 
-  defp inc(key, step \\ 1) do
-    put(key, get(key) + step)
+  ##
+  ## HANDLERS
+  ##
+
+  def run_and_reply(fun, arg, opts) do
+    from = opts[:from]
+
+    case run(fun, arg, opts) do
+      {:ok, result} ->
+        if opts.action == :get_and_update do
+          case result do
+            {get} ->
+              reply(from, get)
+
+            {get, v} ->
+              put(:"$value", box(v))
+              reply(from, get)
+
+            :id ->
+              reply(from, arg)
+
+            :pop ->
+              delete(:"$value")
+              reply(from, arg)
+
+            reply ->
+              raise CallbackError, got: reply
+          end
+        end || reply(opts[:from], result)
+
+      e ->
+        handle_error(e, opts)
+    end
   end
 
-  defp dec(key), do: inc(key, -1)
+  defp handle(%{action: :get} = msg) do
+    b = get(:"$value")
+    p = get(:"$processes")
+    max_p = get(:"$max_processes")
 
-  ##
-  ## handle
-  ##
+    if p < max_p do
+      k = get(:"$key")
+      s = get(:"$server")
 
-  defp handle(%{action: :get} = req) do
-    box = get(:"$value")
+      Task.start_link(fn ->
+        put(:"$key", k)
+        put(:"$value", b)
 
-    if get(:"$processes") < get(:"$max_processes") do
-      key = get(:"$key")
+        run_and_reply(msg.fun, unbox(b), msg)
 
-      spawn_get({key, box}, req, self())
-      inc(:"$processes")
+        send(s, %{info: :done, key: k})
+      end)
+
+      put(:"$processes", p + 1)
     else
-      run_and_reply(req, box)
+      run_and_reply(msg.fun, unbox(b), msg)
     end
   end
 
-  defp handle(%{action: :get_and_update} = req) do
-    v = unbox(get(:"$value"))
+  defp handle(%{action: :get_and_update} = msg) do
+    b = get(:"$value")
+    run_and_reply(msg.fun, unbox(b), msg)
+  end
 
-    case run(req, [v]) do
-      {:ok, {get}} ->
-        reply(req.from, get)
+  defp handle(%{action: :max_processes} = msg) do
+    reply(msg.from, get(:"$max_processes"))
+    put(:"$max_processes", msg.data)
+  end
 
-      {:ok, {get, v}} ->
-        box = {:value, v}
-        put(:"$value", box)
-        reply(req.from, get)
+  defp err_msg({:error, :expired}, k, r) do
+    "Key #{k} call is expired and will not be executed. Req: #{r}."
+  end
 
-      {:ok, :id} ->
-        reply(req.from, v)
+  defp err_msg({:error, :toolong}, k, r) do
+    "Key #{k} call takes too long and will be terminated. Req: #{r}."
+  end
 
-      {:ok, :pop} ->
-        delete(:"$value")
-        reply(req.from, v)
-
-      {:ok, reply} ->
-        raise CallbackError, got: reply
-
-      {:error, :expired} ->
-        handle_timeout_error(req)
-    end
+  def handle_error(e, details) do
+    k = inspect(Process.get(:"$key"))
+    r = inspect(details)
+    Logger.error(err_msg(e, k, r))
   end
 
   ##
@@ -128,12 +160,14 @@ defmodule AgentMap.Worker do
         # Selective receive.
         receive do
           %{info: :done} ->
-            dec(:"$processes")
+            p = get(:"$processes")
+            put(:"$processes", p - 1)
             loop()
 
-          %{info: :max_processes} = req ->
-            reply(req.from, get(:"$max_processes"))
-            put(:"$max_processes", req.data)
+          %{info: :get!} ->
+            p = get(:"$processes")
+            put(:"$processes", p + 1)
+            loop()
 
           %{!: true} = req ->
             handle(req)

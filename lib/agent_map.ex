@@ -1124,8 +1124,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Sets the `:max_processes` value for the given `key`.
-  Returns the old value.
+  Sets the `:max_processes` value for the given `key`. Returns the old value.
 
   `agentmap` can execute `get/4` calls on the same key concurrently.
   `max_processes` option specifies number of processes allowed per key (`-1` for
@@ -1157,19 +1156,35 @@ defmodule AgentMap do
 
   Use `max_processes: 1` to execute `get` calls in sequence.
 
+  ## Options
+
+    * `!: true` — (`boolean`, `false`) to return immediately the current
+      `:max_processes` value.
+
   ## Examples
 
+      iex> import AgentMap
       iex> am = AgentMap.new()
-      iex> AgentMap.max_processes(am, :a, 42)
+      iex> max_processes(am, :k, 42)
       5
-      iex> AgentMap.max_processes(am, :a, :infinity)
+      iex> max_processes(am, :k, :infinity)
       42
+      #
+      iex> import :timer
+      iex> am
+      ...> |> cast(:k, fn _ -> sleep(100) end)
+      ...> |> max_processes(:k, 42, !: true)
+      :infinity
+      iex> max_processes(:k, 1, !: true)
+      :infinity
+      iex> max_processes(:k, :infinity)
+      1
   """
-  @spec max_processes(agentmap, key, pos_integer | :infinity) :: pos_integer | :infinity
-  def max_processes(agentmap, key, value)
+  @spec max_processes(agentmap, key, pos_integer | :infinity, !: false) :: pos_integer | :infinity
+  def max_processes(agentmap, key, value, opts)
       when (is_integer(value) or value == :infinity) and value > 0 do
-    req = %Req{action: :max_processes, data: {key, value}, !: true}
-    _call(agentmap, req, [])
+    req = %Req{action: :max_processes, data: {key, value}, timeout: :infinity}
+    _call(agentmap, req, opts)
   end
 
   @doc """
