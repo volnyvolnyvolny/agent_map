@@ -17,6 +17,8 @@ defmodule AgentMap.Server.State do
   def unbox(nil), do: nil
   def unbox({:value, v}), do: v
 
+  def un(box), do: unbox(box)
+
   @type worker :: pid
 
   @typedoc "Maximum get-tasks can be used per key."
@@ -110,16 +112,16 @@ defmodule AgentMap.Server.State do
             :continue
         end
 
-        map = Map.put(map, key, {:pid, worker})
-        {map, max_p}
+        pack = {:pid, worker}
+        {Map.put(map, key, pack), max_p}
     end
   end
 
   def broadcast(state, keys, msg) do
     packs = Enum.map(keys, &get(state, &1))
 
-    for {:pid, worker} <- packs do
-      send(worker, msg)
+    for {:pid, w} <- packs do
+      send(w, msg)
     end
   end
 
@@ -130,8 +132,8 @@ defmodule AgentMap.Server.State do
   def take(state, keys) do
     packs = Enum.map(keys, &{&1, fetch(state, &1)})
 
-    for {key, {:ok, v}} <- packs, into: %{} do
-      {key, v}
+    for {k, {:ok, v}} <- packs, into: %{} do
+      {k, v}
     end
   end
 end

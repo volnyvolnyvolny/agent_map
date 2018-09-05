@@ -4,7 +4,9 @@
            "lib/agent_map/server/*.ex",
            "lib/agent_map/*.ex",
            "lib/agent_map.ex",
-           "test/account.ex",
-           "test/memo.ex",
+           "test/*.ex",
+           "test/*.exs",
+           "test/*/*.exs",
+           "test/*/*/*.exs",
           ]
 ]

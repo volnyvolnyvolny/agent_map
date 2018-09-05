@@ -2,11 +2,11 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Req, Worker, Transaction, Server.State}
+  alias AgentMap.{Req, Worker, Transaction, Server.State, Common}
 
   import System, only: [system_time: 0]
   import State, only: [put: 3, get: 2]
-  import Worker, only: [dict: 1, queue_len: 1]
+  import Common, only: [now: 0]
 
   use GenServer
 
@@ -81,8 +81,8 @@ defmodule AgentMap.Server do
     handle_call(%{req | from: f}, :_, state)
   end
 
-  def handle_call(%{inserted_at: nil} = req, :_, state) do
-    handle_call(%{req | inserted_at: system_time()}, :_, state)
+  def handle_call(%{timeout: {_, _}, inserted_at: nil} = req, :_, state) do
+    handle_call(%{req | inserted_at: now()}, :_, state)
   end
 
   # This call must be made in one go.
@@ -109,8 +109,8 @@ defmodule AgentMap.Server do
   ## CAST
   ##
 
-  def handle_cast(%{inserted_at: nil} = req, state) do
-    handle_cast(%{req | inserted_at: system_time()}, state)
+  def handle_cast(%{timeout: {_, _}, inserted_at: nil} = req, state) do
+    handle_cast(%{req | inserted_at: now()}, state)
   end
 
   def handle_cast(%{data: {_fun, keys}} = req, state) when is_list(keys) do
@@ -146,16 +146,16 @@ defmodule AgentMap.Server do
     {:noreply, state}
   end
 
-  def handle_info({worker, :mayidie?}, state) do
+  def handle_info({w, :mayidie?}, state) do
     # Msgs could came during a small delay between
     # this call happend and :mayidie? was sent.
-    if queue_len(worker) > 0 do
-      send(worker, :continue)
+    if Worker.queue_len(w) > 0 do
+      send(w, :continue)
       {:noreply, state}
     else
       #!
-      dict = dict(worker)
-      send(worker, :die!)
+      dict = Worker.dict(w)
+      send(w, :die!)
 
       #!
       p = dict[:"$processes"]

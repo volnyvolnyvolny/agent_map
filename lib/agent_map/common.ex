@@ -7,6 +7,8 @@ defmodule AgentMap.Common do
   ## TIME RELATED
   ##
 
+  def now(), do: system_time()
+
   def to_native(t) do
     convert_time_unit(t, :milliseconds, :native)
   end
@@ -16,7 +18,7 @@ defmodule AgentMap.Common do
   end
 
   defp expired?(inserted_at, timeout) do
-    system_time() >= inserted_at + to_native(timeout)
+    now() >= inserted_at + to_native(timeout)
   end
 
   ##

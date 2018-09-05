@@ -18,9 +18,8 @@ defmodule AgentMap.Transaction do
 
   alias AgentMap.{Common, Req, CallbackError, Server.State, Worker}
 
-  import Common, only: [run: 3]
-  import Req, only: [timeout: 1, compress: 1, left: 2]
-  import System, only: [system_time: 0]
+  import Common, only: [run: 3, now: 0]
+  import Req, only: [compress: 2, compress: 1, left: 2, timeout_left: 1]
   import Enum, only: [filter: 2]
   import State
 
@@ -40,9 +39,9 @@ defmodule AgentMap.Transaction do
   ##
 
   defp share(to: t) do
-    k = Process.get(:"$key")
-    b = Process.get(:"$value")
-    send(t, {k, b})
+    key = Process.get(:"$key")
+    box = Process.get(:"$value")
+    send(t, {key, box})
   end
 
   defp accept(ref) do
@@ -53,8 +52,8 @@ defmodule AgentMap.Transaction do
       {^ref, :id} ->
         :id
 
-      {^ref, b} ->
-        {:_get, unbox(b)}
+      {^ref, box} ->
+        {:_get, un(box)}
     end
   end
 
@@ -62,9 +61,9 @@ defmodule AgentMap.Transaction do
   ##
   ##
 
-  defp prepair(%Req{action: :get}, state), do: state
+  defp prepair(:get, _keys, state), do: state
 
-  defp prepair(%Req{action: :get_and_update, data: {_, keys}}, state) do
+  defp prepair(:get_and_update, keys, state) do
     Enum.reduce(keys, state, fn key, state ->
       spawn_worker(state, key)
     end)
@@ -78,34 +77,33 @@ defmodule AgentMap.Transaction do
     {:ok, take(state, keys)}
   end
 
-  defp collect(%Req{data: {_, keys}} = req, state) do
+  defp collect(%Req{data: {_, keys}, action: act} = req, state) do
     ref = Process.get(:"$ref")
-    req = %{req | timeout: :infinity}
 
     me = self()
 
     f = fn _ ->
       share(to: me)
 
-      if req.action == :get_and_update do
+      if act == :get_and_update do
         accept(ref)
       end
     end
 
-    broadcast(state, keys, %{compress(req) | fun: f})
+    msg = compress(req, fun: f, timeout: :infinity)
+    broadcast(state, keys, msg)
 
     known = filter(keys, &(not worker?(state, &1)))
     map = take(state, known)
 
-    t = left(timeout(req), since: req.inserted_at)
-    _collect(map, keys -- known, t)
+    _collect(map, keys -- known, timeout_left(req))
   end
 
   defp _collect(map, [], _), do: {:ok, map}
   defp _collect(_, _, t) when t < 0, do: {:error, :expired}
 
   defp _collect(map, unknown, timeout) do
-    past = system_time()
+    past = now()
 
     receive do
       {key, nil} ->
@@ -203,7 +201,7 @@ defmodule AgentMap.Transaction do
 
   @doc false
   def handle(%Req{data: {fun, ks}} = req, state) do
-    state = prepair(req, state)
+    state = prepair(req.action, ks, state)
 
     Task.start_link(fn ->
       ws =

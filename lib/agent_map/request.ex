@@ -5,10 +5,9 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Worker, Req, Server.State, Common}
 
-  import Worker, only: [queue: 1, dict: 1, run_and_reply: 3]
+  import Worker, only: [run_and_reply: 3]
   import Enum, only: [count: 2, filter: 2]
-  import System, only: [system_time: 0]
-  import Common, only: [to_ms: 1]
+  import Common, only: [to_ms: 1, now: 0]
   import State
 
   @enforce_keys [:action]
@@ -26,14 +25,14 @@ defmodule AgentMap.Req do
     !: false
   ]
 
-  def timeout(%Req{timeout: t}), do: timeout(t)
-  def timeout({_, t}), do: t
-  def timeout(t), do: t
+  def timeout_left(%Req{timeout: :infinity}), do: :infinity
+  def timeout_left(%Req{timeout: {_, t}, inserted_at: i}), do: left(t, since: i)
+  def timeout_left(%Req{timeout: t, inserted_at: i}), do: left(t, since: i)
 
   def left(:infinity, _), do: :infinity
 
   def left(timeout, since: past) do
-    timeout - to_ms(system_time() - past)
+    timeout - to_ms(now() - past)
   end
 
   # Drops struct field.
@@ -43,6 +42,10 @@ defmodule AgentMap.Req do
     |> Map.put(:action, act)
     |> Map.put(:fun, f)
     |> compress()
+  end
+
+  def compress(req, opts) do
+    compress(struct(req, opts))
   end
 
   ## Remove fields that are not used.
@@ -74,15 +77,15 @@ defmodule AgentMap.Req do
     |> Map.delete(:inserted_at)
   end
 
-  defp spawn_get_task(%{data: {k, fun}} = req, b) do
+  defp spawn_get_task(%{data: {k, fun}} = req, box) do
     server = self()
 
     Task.start_link(fn ->
       Process.put(:"$key", k)
-      Process.put(:"$value", b)
+      Process.put(:"$value", box)
 
       opts = compress(req)
-      run_and_reply(fun, unbox(b), opts)
+      run_and_reply(fun, un(box), opts)
 
       send(server, %{info: :done, key: k})
     end)
@@ -101,8 +104,8 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :queue_len, data: {key, opts}}, state) do
     num =
       case get(state, key) do
-        {:pid, worker} ->
-          count(queue(worker), &_filter(&1, opts))
+        {:pid, w} ->
+          count(Worker.queue(w), &_filter(&1, opts))
 
         _ ->
           0
@@ -120,13 +123,13 @@ defmodule AgentMap.Req do
 
   def handle(%Req{action: :max_processes, data: {key, max_p}} = req, state) do
     case get(state, key) do
-      {:pid, worker} ->
+      {:pid, w} ->
         if req.! do
-          max_p = dict(worker)[:"$max_processes"]
-          send(worker, compress(%{req | from: nil}))
+          max_p = Worker.dict(w)[:"$max_processes"]
+          send(w, compress(%{req | from: nil}))
           {:reply, max_p, state}
         else
-          send(worker, compress(req))
+          send(w, compress(req))
           {:noreply, state}
         end
 
@@ -147,10 +150,10 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :get, !: true, data: {key, _}} = req, state) do
     state =
       case get(state, key) do
-        {:pid, worker} ->
-          b = dict(worker)[:"$value"]
+        {:pid, w} ->
+          b = Worker.dict(w)[:"$value"]
           spawn_get_task(req, b)
-          send(worker, %{info: :get!})
+          send(w, %{info: :get!})
           state
 
         {b, {p, max_p}} ->

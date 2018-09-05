@@ -6,8 +6,6 @@ defmodule AgentMap do
 
   alias AgentMap.{Server, Req, IncError, Transaction}
 
-  import Req, only: [timeout: 1]
-
   @moduledoc """
   The `AgentMap` can be seen as a stateful `Map` that parallelize operations
   made on different keys. Basically, it can be used as a cache, memoization,
@@ -604,6 +602,9 @@ defmodule AgentMap do
     {args, opts} = prepair(funs_and_opts)
     GenServer.start(Server, args, opts)
   end
+
+  defp timeout({_, t}), do: t
+  defp timeout(t), do: t
 
   @doc false
   def _call(agentmap, req, opts) do

@@ -4,9 +4,8 @@ defmodule AgentMap.Worker do
   alias AgentMap.{Common, CallbackError, Server.State}
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
-  import System, only: [system_time: 0]
-  import Common, only: [run: 3, reply: 2]
-  import State
+  import Common, only: [run: 3, reply: 2, now: 0]
+  import State, only: [box: 1, un: 1]
 
   @moduledoc false
 
@@ -20,7 +19,7 @@ defmodule AgentMap.Worker do
   ##
 
   # Great for generating numbers < 100.
-  defp rand(to) when to < 100, do: rem(system_time(), to)
+  defp rand(to) when to < 100, do: rem(now(), to)
 
   ##
   ## DICTIONARY
@@ -66,8 +65,8 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{action: :get} = msg) do
-    b = get(:"$value")
     p = get(:"$processes")
+    box = get(:"$value")
     max_p = get(:"$max_processes")
 
     if p < max_p do
@@ -76,22 +75,22 @@ defmodule AgentMap.Worker do
 
       Task.start_link(fn ->
         put(:"$key", k)
-        put(:"$value", b)
+        put(:"$value", box)
 
-        run_and_reply(msg.fun, unbox(b), msg)
+        run_and_reply(msg.fun, un(box), msg)
 
         send(s, %{info: :done, key: k})
       end)
 
       put(:"$processes", p + 1)
     else
-      run_and_reply(msg.fun, unbox(b), msg)
+      run_and_reply(msg.fun, un(box), msg)
     end
   end
 
   defp handle(%{action: :get_and_update} = msg) do
-    b = get(:"$value")
-    run_and_reply(msg.fun, unbox(b), msg)
+    box = get(:"$value")
+    run_and_reply(msg.fun, un(box), msg)
   end
 
   defp handle(%{action: :max_processes} = msg) do
@@ -193,7 +192,7 @@ defmodule AgentMap.Worker do
         loop()
 
       _ ->
-        :ignore
+        :drop
     after
       wait ->
         send(get(:"$gen_server"), {self(), :mayidie?})

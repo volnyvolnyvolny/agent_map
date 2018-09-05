@@ -3,7 +3,7 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-#  doctest AgentMap
+  #  doctest AgentMap
 
   # test "main" do
   #   Process.flag(:trap_exit, true)
