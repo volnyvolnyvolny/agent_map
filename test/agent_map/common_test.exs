@@ -3,15 +3,20 @@ defmodule AgentMapCommonTest do
 
   use ExUnit.Case
 
+  defp opts(t, i, b? \\ nil) do
+    %{timeout: t, inserted_at: i, break: b?}
+  end
+
+  defp ms(), do: 1_000_000
+
   test "run" do
-    assert(run(&(&1 * 2), [1]) == {:ok, 2})
-    assert(run(&(&1 * 2), [1], timeout: 100, inserted_at: now()) == {:ok, 2})
+    fun = &(&1 * 2)
+    assert(run(fun, [1]) == {:ok, 2})
+    assert(run(fun, [1], opts(100, now())) == {:ok, 2})
 
     # drop
-    past = now()
-    :timer.sleep(10)
-    assert(run(&(&1 * 2), [1], timeout: 11, inserted_at: past) == {:ok, 2})
-    assert(run(&(&1 * 2), [1], timeout: 9, inserted_at: past) == {:error, :expired})
+    assert(run(fun, [1], opts(11, now() - 10 * ms())) == {:ok, 2})
+    assert(run(fun, [1], opts(9, now() - 10 * ms())) == {:error, :expired})
 
     fun = fn v ->
       :timer.sleep(10)
@@ -19,16 +24,9 @@ defmodule AgentMapCommonTest do
     end
 
     # break
-    assert(run(fun, [1], timeout: 11, inserted_at: now(), break: true) == {:ok, 2})
-
-    past = now()
-    :timer.sleep(2)
-    assert(run(fun, [1], timeout: 11, inserted_at: past, break: true) == {:error, :toolong})
-
-    past = now()
-    :timer.sleep(2)
-    assert(run(fun, [1], timeout: 13, inserted_at: past, break: true) == {:ok, 2})
-
-    assert(run(fun, [1], timeout: 9, inserted_at: now(), break: true) == {:error, :toolong})
+    assert(run(fun, [1], opts(11, now(), true)) == {:ok, 2})
+    assert(run(fun, [1], opts(11, now() - 3 * ms(), true)) == {:error, :toolong})
+    assert(run(fun, [1], opts(13, now() - 2 * ms(), true)) == {:ok, 2})
+    assert(run(fun, [1], opts(9, now(), true)) == {:error, :toolong})
   end
 end

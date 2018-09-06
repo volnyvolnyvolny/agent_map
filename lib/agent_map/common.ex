@@ -43,6 +43,7 @@ defmodule AgentMap.Common do
 
         task =
           Task.async(fn ->
+            IO.inspect(:matrix)
             for {k, v} <- dict do
               Process.put(k, v)
             end
@@ -50,13 +51,14 @@ defmodule AgentMap.Common do
             apply(fun, args)
           end)
 
-        t = left(timeout, since: inserted_at)
+        t = left(timeout, since: inserted_at) |> IO.inspect()
 
         case Task.yield(task, t) || Task.shutdown(task) do
           {:ok, _result} = res ->
             res
 
           nil ->
+            IO.inspect(:xxxxx)
             {:error, :toolong}
         end
       else

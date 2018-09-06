@@ -66,7 +66,8 @@ defmodule AgentMap.Worker do
           reply(msg[:from], get)
 
         e ->
-          Worker.handle_error(e, msg)
+          IO.inspect(e)
+          handle_error(e, msg)
       end
 
       send(opts[:server], %{info: :done, key: key})
@@ -140,12 +141,20 @@ defmodule AgentMap.Worker do
 
   defp handle_error({:error, :expired}, msg) do
     k = inspect(get(:"$key"))
-    Logger.error("Key #{k} call is expired and will not be executed. Details: #{inspect(msg)}.")
+
+    Logger.error("""
+    Key #{k} call is expired and will not be executed.
+    Details: #{inspect(msg)}.
+    """)
   end
 
   defp handle_error({:error, :toolong}, msg) do
     k = inspect(get(:"$key"))
-    Logger.error("Key #{k} call takes too long and will be terminated. Details: #{inspect(msg)}.")
+
+    Logger.error("""
+    Key #{k} call takes too long and will be terminated.
+    Details: #{inspect(msg)}.
+    """)
   end
 
   ##
