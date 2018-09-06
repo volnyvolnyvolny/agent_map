@@ -4,7 +4,6 @@ defmodule AgentMap.Server do
 
   alias AgentMap.{Req, Worker, Transaction, Server.State, Common}
 
-  import System, only: [system_time: 0]
   import State, only: [put: 3, get: 2]
   import Common, only: [now: 0]
 

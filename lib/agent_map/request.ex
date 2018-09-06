@@ -5,9 +5,9 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Worker, Req, Server.State, Common}
 
-  import Worker, only: [run_and_reply: 3]
+  import Worker, only: [spawn_get_task: 2]
+  import Common, only: [left: 2]
   import Enum, only: [count: 2, filter: 2]
-  import Common, only: [to_ms: 1, now: 0]
   import State
 
   @enforce_keys [:action]
@@ -29,13 +29,7 @@ defmodule AgentMap.Req do
   def timeout_left(%Req{timeout: {_, t}, inserted_at: i}), do: left(t, since: i)
   def timeout_left(%Req{timeout: t, inserted_at: i}), do: left(t, since: i)
 
-  def left(:infinity, _), do: :infinity
-
-  def left(timeout, since: past) do
-    timeout - to_ms(now() - past)
-  end
-
-  # Drops struct field.
+  # Drops unused fields.
   def to_msg(req, act, f) do
     req
     |> Map.from_struct()
@@ -75,20 +69,6 @@ defmodule AgentMap.Req do
     msg
     |> Map.delete(:timeout)
     |> Map.delete(:inserted_at)
-  end
-
-  defp spawn_get_task(%{data: {k, fun}} = req, box) do
-    server = self()
-
-    Task.start_link(fn ->
-      Process.put(:"$key", k)
-      Process.put(:"$value", box)
-
-      opts = compress(req)
-      run_and_reply(fun, un(box), opts)
-
-      send(server, %{info: :done, key: k})
-    end)
   end
 
   ##
@@ -152,12 +132,16 @@ defmodule AgentMap.Req do
       case get(state, key) do
         {:pid, w} ->
           b = Worker.dict(w)[:"$value"]
-          spawn_get_task(req, b)
+
+          req
+          |> compress()
+          |> spawn_get_task({key, b})
+
           send(w, %{info: :get!})
           state
 
         {b, {p, max_p}} ->
-          spawn_get_task(req, b)
+          spawn_get_task({key, b}, compress(req))
           put(state, key, {b, {p + 1, max_p}})
       end
 

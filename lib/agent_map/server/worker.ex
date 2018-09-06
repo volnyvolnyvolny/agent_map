@@ -5,7 +5,7 @@ defmodule AgentMap.Worker do
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import Common, only: [run: 3, reply: 2, now: 0]
-  import State, only: [box: 1, un: 1]
+  import State, only: [un: 1, box: 1]
 
   @moduledoc false
 
@@ -13,6 +13,29 @@ defmodule AgentMap.Worker do
 
   # ms
   @wait 10
+
+  ##
+  ## CALLBACKS
+  ##
+
+  def share_value(to: t) do
+    key = Process.get(:"$key")
+    box = Process.get(:"$value")
+    send(t, {key, box})
+  end
+
+  def accept_value(ref) do
+    receive do
+      {^ref, :drop} ->
+        :pop
+
+      {^ref, :id} ->
+        :id
+
+      {^ref, box} ->
+        {:_get, un(box)}
+    end
+  end
 
   ##
   ## HELPERS
@@ -30,39 +53,35 @@ defmodule AgentMap.Worker do
   def queue_len(worker \\ self()), do: info(worker)[:message_queue_len]
 
   ##
-  ## HANDLERS
+  ## MESSAGE
   ##
 
-  def run_and_reply(fun, arg, opts) do
-    from = opts[:from]
+  def spawn_get_task(msg, {key, box}, opts \\ [server: self()]) do
+    Task.start_link(fn ->
+      Process.put(:"$key", key)
+      Process.put(:"$value", box)
 
-    case run(fun, arg, opts) do
-      {:ok, result} ->
-        if opts.action == :get_and_update do
-          case result do
-            {get} ->
-              reply(from, get)
+      case run(msg.fun, [un(box)], opts(msg)) do
+        {:ok, get} ->
+          reply(msg[:from], get)
 
-            {get, v} ->
-              put(:"$value", box(v))
-              reply(from, get)
+        e ->
+          Worker.handle_error(e, msg)
+      end
 
-            :id ->
-              reply(from, arg)
-
-            :pop ->
-              delete(:"$value")
-              reply(from, arg)
-
-            reply ->
-              raise CallbackError, got: reply
-          end
-        end || reply(opts[:from], result)
-
-      e ->
-        handle_error(e, opts)
-    end
+      send(opts[:server], %{info: :done, key: key})
+    end)
   end
+
+  def opts(%{timeout: {a, t}, inserted_at: i} = _msg) do
+    %{timeout: t, inserted_at: i, break: a == :break}
+  end
+
+  def opts(_), do: %{}
+
+  ##
+  ## HANDLERS
+  ##
 
   defp handle(%{action: :get} = msg) do
     p = get(:"$processes")
@@ -73,24 +92,45 @@ defmodule AgentMap.Worker do
       k = get(:"$key")
       s = get(:"$server")
 
-      Task.start_link(fn ->
-        put(:"$key", k)
-        put(:"$value", box)
-
-        run_and_reply(msg.fun, un(box), msg)
-
-        send(s, %{info: :done, key: k})
-      end)
+      spawn_get_task(msg, {k, box}, server: s)
 
       put(:"$processes", p + 1)
     else
-      run_and_reply(msg.fun, un(box), msg)
+      case run(msg.fun, [un(box)], opts(msg)) do
+        {:ok, get} ->
+          reply(msg[:from], get)
+
+        e ->
+          handle_error(e, msg)
+      end
     end
   end
 
   defp handle(%{action: :get_and_update} = msg) do
     box = get(:"$value")
-    run_and_reply(msg.fun, un(box), msg)
+    arg = un(box)
+
+    case run(msg.fun, [arg], opts(msg)) do
+      {:ok, {get}} ->
+        reply(msg[:from], get)
+
+      {:ok, {get, v}} ->
+        put(:"$value", box(v))
+        reply(msg[:from], get)
+
+      {:ok, :id} ->
+        reply(msg[:from], arg)
+
+      {:ok, :pop} ->
+        delete(:"$value")
+        reply(msg[:from], arg)
+
+      {:ok, reply} ->
+        raise CallbackError, got: reply
+
+      e ->
+        handle_error(e, msg)
+    end
   end
 
   defp handle(%{action: :max_processes} = msg) do
@@ -98,18 +138,14 @@ defmodule AgentMap.Worker do
     put(:"$max_processes", msg.data)
   end
 
-  defp err_msg({:error, :expired}, k, r) do
-    "Key #{k} call is expired and will not be executed. Req: #{r}."
+  defp handle_error({:error, :expired}, msg) do
+    k = inspect(get(:"$key"))
+    Logger.error("Key #{k} call is expired and will not be executed. Details: #{inspect(msg)}.")
   end
 
-  defp err_msg({:error, :toolong}, k, r) do
-    "Key #{k} call takes too long and will be terminated. Req: #{r}."
-  end
-
-  def handle_error(e, details) do
-    k = inspect(Process.get(:"$key"))
-    r = inspect(details)
-    Logger.error(err_msg(e, k, r))
+  defp handle_error({:error, :toolong}, msg) do
+    k = inspect(get(:"$key"))
+    Logger.error("Key #{k} call takes too long and will be terminated. Details: #{inspect(msg)}.")
   end
 
   ##

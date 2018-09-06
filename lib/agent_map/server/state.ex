@@ -117,23 +117,26 @@ defmodule AgentMap.Server.State do
     end
   end
 
-  def broadcast(state, keys, msg) do
-    packs = Enum.map(keys, &get(state, &1))
-
-    for {:pid, w} <- packs do
-      send(w, msg)
-    end
-  end
-
-  def worker?(state, key) do
-    match?({:pid, _}, get(state, key))
-  end
-
   def take(state, keys) do
     packs = Enum.map(keys, &{&1, fetch(state, &1)})
 
     for {k, {:ok, v}} <- packs, into: %{} do
       {k, v}
     end
+  end
+
+  def separate(state, keys) do
+    Enum.reduce(keys, {%{}, %{}}, fn key, {map, workers} ->
+      case get(state, key) do
+        {:pid, w} ->
+          {map, Map.put(workers, key, w)}
+
+        {{:value, v}, _} ->
+          {Map.put(map, key, v), workers}
+
+        {nil, _} ->
+          {map, workers}
+      end
+    end)
   end
 end

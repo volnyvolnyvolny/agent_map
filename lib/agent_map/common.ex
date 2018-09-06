@@ -7,67 +7,63 @@ defmodule AgentMap.Common do
   ## TIME RELATED
   ##
 
-  def now(), do: system_time()
+  def to_ms(t) do
+    convert_time_unit(t, :native, :milliseconds)
+  end
 
   def to_native(t) do
     convert_time_unit(t, :milliseconds, :native)
   end
 
-  def to_ms(t) do
-    convert_time_unit(t, :native, :milliseconds)
-  end
+  def now(), do: system_time()
 
   defp expired?(inserted_at, timeout) do
     now() >= inserted_at + to_native(timeout)
+  end
+
+  def left(:infinity, _), do: :infinity
+
+  def left(timeout, since: past) do
+    timeout - to_ms(now() - past)
   end
 
   ##
   ## APPLY AND RUN
   ##
 
-  def run(fun, arg, %{timeout: {:break, t}, inserted_at: i}) do
-    import Process, only: [get: 1, put: 2]
+  def run(fun, args, opts \\ []) do
+    timeout = opts[:timeout]
+    inserted_at = opts[:inserted_at]
 
-    if expired?(i, t) do
+    if timeout && expired?(inserted_at, timeout) do
       {:error, :expired}
     else
-      {k, b} = {get(:"$key"), get(:"$value")}
-      {ks, m, r, ws} = {get(:"$keys"), get(:"$map"), get(:"$ref"), get(:"$workers")}
+      if opts[:break] do
+        dict = Process.info(self())[:dictionary]
 
-      task =
-        Task.async(fn ->
-          if ks do
-            put(:"$keys", ks)
-            put(:"$map", m)
-            put(:"$ref", r)
-            put(:"$workers", ws)
-          else
-            put(:"$key", k)
-            put(:"$value", b)
-          end
+        task =
+          Task.async(fn ->
+            for {k, v} <- dict do
+              Process.put(k, v)
+            end
 
-          fun.(arg)
-        end)
+            apply(fun, args)
+          end)
 
-      case Task.yield(task, t) || Task.shutdown(task) do
-        {:ok, _result} = res ->
-          res
+        t = left(timeout, since: inserted_at)
 
-        nil ->
-          {:error, :toolong}
+        case Task.yield(task, t) || Task.shutdown(task) do
+          {:ok, _result} = res ->
+            res
+
+          nil ->
+            {:error, :toolong}
+        end
+      else
+        {:ok, apply(fun, args)}
       end
     end
   end
-
-  def run(fun, arg, %{timeout: {:drop, t}, inserted_at: i}) do
-    if expired?(i, t) do
-      {:error, :expired}
-    else
-      {:ok, fun.(arg)}
-    end
-  end
-
-  def run(fun, arg, _opts), do: {:ok, fun.(arg)}
 
   def reply(nil, _msg), do: :nothing
   def reply(from, msg), do: GenServer.reply(from, msg)
