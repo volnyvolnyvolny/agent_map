@@ -11,15 +11,7 @@ defmodule AgentMap.Common do
     convert_time_unit(t, :native, :milliseconds)
   end
 
-  def to_native(t) do
-    convert_time_unit(t, :milliseconds, :native)
-  end
-
   def now(), do: system_time()
-
-  defp expired?(inserted_at, timeout) do
-    now() >= inserted_at + to_native(timeout)
-  end
 
   def left(:infinity, _), do: :infinity
 
@@ -31,39 +23,34 @@ defmodule AgentMap.Common do
   ## APPLY AND RUN
   ##
 
-  def run(fun, args, opts \\ []) do
-    timeout = opts[:timeout]
-    inserted_at = opts[:inserted_at]
+  def run(_fun, _args, timeout, _break?) when timeout <= 0 do
+    {:error, :expired}
+  end
 
-    if timeout && expired?(inserted_at, timeout) do
-      {:error, :expired}
-    else
-      if opts[:break] do
-        dict = Process.info(self())[:dictionary]
+  def run(fun, args, _timeout, false), do: {:ok, apply(fun, args)}
 
-        task =
-          Task.async(fn ->
-            IO.inspect(:matrix)
-            for {k, v} <- dict do
-              Process.put(k, v)
-            end
+  def run(fun, args, timeout, true) do
+    dict = Process.info(self())[:dictionary]
 
-            apply(fun, args)
-          end)
+    past = now()
 
-        t = left(timeout, since: inserted_at) |> IO.inspect()
-
-        case Task.yield(task, t) || Task.shutdown(task) do
-          {:ok, _result} = res ->
-            res
-
-          nil ->
-            IO.inspect(:xxxxx)
-            {:error, :toolong}
+    task =
+      Task.async(fn ->
+        for {k, v} <- dict do
+          Process.put(k, v)
         end
-      else
-        {:ok, apply(fun, args)}
-      end
+
+        apply(fun, args)
+      end)
+
+    spent = to_ms(now() - past)
+
+    case Task.yield(task, timeout - spent) || Task.shutdown(task) do
+      {:ok, _result} = res ->
+        res
+
+      nil ->
+        {:error, :toolong}
     end
   end
 

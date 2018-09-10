@@ -2,7 +2,7 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Req, Worker, Transaction, Server.State, Common}
+  alias AgentMap.{Req, Worker, Server.State, Common}
 
   import State, only: [put: 3, get: 2]
   import Common, only: [now: 0]
@@ -76,50 +76,30 @@ defmodule AgentMap.Server do
   ## CALL
   ##
 
-  def handle_call(%{from: nil} = req, f, state) do
-    handle_call(%{req | from: f}, :_, state)
+  def handle_call(%_{from: nil} = req, from, state) do
+    handle_call(%{req | from: from}, :_from, state)
   end
 
-  def handle_call(%{timeout: {_, _}, inserted_at: nil} = req, :_, state) do
-    handle_call(%{req | inserted_at: now()}, :_, state)
+  def handle_call(%_{timeout: {_, _t}, inserted_at: nil} = req, from, state) do
+    handle_call(%{req | inserted_at: now()}, from, state)
   end
 
-  # This call must be made in one go.
-  def handle_call(%{action: :values} = req, :_, state) do
-    {map, _} = state
-
-    fun = fn _ ->
-      Map.values(Process.get(:"$map"))
-    end
-
-    req = %{req | action: :get, data: {fun, Map.keys(map)}}
-    handle_call(req, :_, map)
-  end
-
-  def handle_call(%{data: {_fun, keys}} = req, :_, state) when is_list(keys) do
-    Transaction.handle(req, state)
-  end
-
-  def handle_call(req, :_, state) do
-    Req.handle(req, state)
+  def handle_call(%r{} = req, _from, state) do
+    r.handle(req, state)
   end
 
   ##
   ## CAST
   ##
 
-  def handle_cast(%{timeout: {_, _}, inserted_at: nil} = req, state) do
+  def handle_cast(%_{timeout: {_, _t}, inserted_at: nil} = req, state) do
     handle_cast(%{req | inserted_at: now()}, state)
   end
 
-  def handle_cast(%{data: {_fun, keys}} = req, state) when is_list(keys) do
-    Transaction.handle(req, state)
-  end
-
-  def handle_cast(req, state) do
-    case Req.handle(req, state) do
+  def handle_cast(%r{} = req, _from, state) do
+    case r.handle(req, state) do
       {:reply, _, state} ->
-        {:reply, {:noreply, state}}
+        {:noreply, state}
 
       noreply ->
         {:noreply, noreply}
@@ -137,34 +117,33 @@ defmodule AgentMap.Server do
           send(worker, msg)
           state
 
-        {value, {p, max_p}} ->
-          pack = {value, {p - 1, max_p}}
+        {b, {p, max_p}} ->
+          pack = {b, {p - 1, max_p}}
           put(state, key, pack)
       end
 
     {:noreply, state}
   end
 
-  def handle_info({w, :mayidie?}, state) do
+  def handle_info({pid, :die?}, state) do
     # Msgs could came during a small delay between
-    # this call happend and :mayidie? was sent.
-    if Worker.queue_len(w) > 0 do
-      send(w, :continue)
-      {:noreply, state}
-    else
-      #!
-      dict = Worker.dict(w)
-      send(w, :die!)
+    # this call happen and :die? was sent.
+    state =
+      if Worker.queue_len(pid) == 0 do
+        #!
+        dict = Worker.dict(pid)
+        send(pid, :die!)
 
-      #!
-      p = dict[:"$processes"]
-      v = dict[:"$value"]
-      k = dict[:"$key"]
+        #!
+        m = dict[:"$max_processes"]
+        p = dict[:"$processes"]
+        b = dict[:"$value"]
+        k = dict[:"$key"]
 
-      pack = {v, {p - 1, dict[:"$max_processes"]}}
-      state = put(state, k, pack)
-      {:noreply, state}
-    end
+        put(state, k, {b, {p - 1, m}})
+      end || state
+
+    {:noreply, state}
   end
 
   ##
@@ -174,7 +153,7 @@ defmodule AgentMap.Server do
   def code_change(_old, {map, _max_p} = state, fun) do
     state =
       Enum.reduce(Map.keys(map), state, fn key, state ->
-        req = %Req{action: :cast, data: {key, fun}}
+        req = %Req{action: :cast, key: key, fun: fun}
 
         case Req.handle(req, state) do
           {:reply, _, state} ->

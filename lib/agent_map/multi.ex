@@ -1,30 +1,24 @@
-defmodule AgentMap.Transaction do
-  @moduledoc """
-  This module contains functions for making transactional calls.
+defmodule AgentMap.Multi do
+  alias AgentMap.Multi.Req
 
-  Each transaction is executed in a separate process, which is responsible for
-  collecting the values, invoking the callback, returning the result, and
-  handling the timeout. Computation can start after all the related values will
-  be known. If transaction call is a value-changing (`get_and_update/4`,
-  `update/4`, `cast/4`), for every involved `key` will be created worker and
-  special "return me a value and wait for a new one" request will be added to
-  the end of the workers queue.
+  import AgentMap, only: [pid: 1, _call: 3]
+
+  @moduledoc """
+  This module contains functions for making multi-key calls.
+
+  Each multi-key callback is executed in a separate process, which is
+  responsible for collecting the values, invoking callback, returning the
+  result, and handling the timeout and possible errors. Computation can start
+  after all the related values will be known. If a call is a value-changing
+  (`get_and_update/4`, `update/4`, `cast/4`), for every involved `key` will be
+  created worker and a special "return me a value and wait for a new one"
+  request will be added to the end of the workers queue.
 
   When performing `get/4` with option `!: true`, values are fetched immediately,
   without sending any requests and creating workers. If `!: false` option (by
   default) is given, no workers will be created and special "return me a value"
   request will be added to the end of the workers queue.
   """
-
-  alias AgentMap.{Common, Req, CallbackError, Server.State, Worker}
-
-  import Worker, only: [share_value: 1, accept_value: 1, opts: 1]
-  import Common, only: [run: 3, now: 0, left: 2]
-  import Req, only: [compress: 2, compress: 1, timeout_left: 1]
-  import Enum, only: [filter: 2]
-  import State
-
-  require Logger
 
   @type name :: atom | {:global, term} | {:via, module, term}
 
@@ -35,208 +29,9 @@ defmodule AgentMap.Transaction do
   @type key :: term
   @type value :: term
 
-  defp broadcast(workers, msg) do
-    for w <- workers, do: send(w, msg)
-  end
-
-  # On server
-  def prepair(%Req{action: :get, !: true, data: {_, keys}}, state) do
-    {state, {take(state, keys), %{}}}
-  end
-
-  def prepair(%Req{data: {_, keys}}, state) do
-    Enum.reduce(keys, state, fn key, state ->
-      spawn_worker(state, key)
-    end)
-
-    split = {_map, workers} = separate(state, keys)
-
-    pids = Map.values(workers)
-    broadcast(pids, :dontdie!)
-
-    {state, split}
-  end
-
-  # On transaction process
-  def prepair(req, workers) do
-    ref = make_ref()
-    me = self()
-    act = req.action
-
-    f = fn _ ->
-      Worker.share_value(to: me)
-
-      if act == :get_and_update do
-        Worker.accept_value(ref)
-      end
-    end
-
-    msg = compress(req, fun: f, timeout: :infinity)
-
-    workers
-    |> Map.values()
-    |> broadcast(msg)
-
-    Process.put(:"$keys", elem(req.data, 0))
-    Process.put(:"$ref", ref)
-
-    if act == :get_and_update do
-      Process.put(:"$workers", workers)
-    end
-  end
-
-  ##
-  ##
-  ##
-
-  defp collect(map, [], _), do: {:ok, map}
-
-  defp collect(_, _, timeout) when timeout < 0 do
-    {:error, :expired}
-  end
-
-  defp collect(map, unknown, t) do
-    past = now()
-
-    receive do
-      {key, nil} ->
-        collect(map, unknown -- [key], left(t, since: past))
-
-      {key, {:value, v}} ->
-        map = Map.put(map, key, v)
-        collect(map, unknown -- [key], left(t, since: past))
-    after
-      t ->
-        {:error, :expired}
-    end
-  end
-
-  ##
-  ##
-  ##
-
-  defp commit(:get, result), do: {:ok, result}
-
-  defp commit(:get_and_update, result) do
-    ref = Process.get(:"$ref")
-    keys = Process.get(:"$keys")
-    map = Process.get(:"$map")
-
-    workers = Process.get(:"$workers")
-    pids = Map.values(workers)
-
-    case result do
-      :pop ->
-        broadcast(pids, {ref, :drop})
-        {:ok, Enum.map(keys, &map[&1])}
-
-      :id ->
-        broadcast(pids, {ref, :id})
-        {:ok, Enum.map(keys, &map[&1])}
-
-      {get, :id} ->
-        broadcast(pids, {ref, :id})
-        {:ok, get}
-
-      {get, :drop} ->
-        broadcast(pids, {ref, :drop})
-        {:ok, get}
-
-      {get, values} when length(values) == length(keys) ->
-        for {key, v} <- Enum.zip(keys, values) do
-          send(workers[key], {ref, box(v)})
-        end
-
-        {:ok, get}
-
-      {_, values} ->
-        {:error, {:update, values}}
-
-      {get} ->
-        broadcast(pids, {ref, :id})
-        {:ok, get}
-
-      lst when is_list(lst) and length(lst) == length(keys) ->
-        get =
-          for {key, ret} <- Enum.zip(keys, lst) do
-            w = workers[key]
-            b = Worker.dict(w)[:"$value"]
-            g = unbox(b)
-
-            case ret do
-              {g, v} ->
-                send(w, {ref, {:value, v}}) && g
-
-              {g} ->
-                send(w, {ref, :id}) && g
-
-              :id ->
-                send(w, {ref, :id}) && g
-
-              :pop ->
-                send(w, {ref, :drop}) && g
-            end
-          end
-
-        {:ok, get}
-
-      _err ->
-        {:error, {:callback, result}}
-    end
-  end
-
-  ##
-  ##
-  ##
-
-  @doc false
-  def handle(%Req{data: {fun, keys}} = req, state) do
-    {state, {map, workers}} = prepair(req, state)
-
-    Task.start_link(fn ->
-      with prepair(req, workers),
-           {:ok, map} <- collect(map, Map.keys(workers), timeout_left(req)),
-           Process.put(:"$map", map),
-           arg = Enum.map(keys, &map[&1]),
-           {:ok, result} <- run(fun, [arg], opts(req)),
-           {:ok, get} <- commit(req.action, result) do
-        reply(req.from, get)
-      else
-        {:error, {:callback, result}} ->
-          raise CallbackError, got: result
-
-        {:error, {:update, values}} ->
-          raise CallbackError, len: length(values)
-
-        err ->
-          handle_error(err, req)
-      end
-    end)
-
-    {:noreply, state}
-  end
-
-  defp err_msg({:error, :expired}, ks, r) do
-    "Takes too long to collect values for the keys #{ks}. Req: #{r}."
-  end
-
-  defp err_msg({:error, :toolong}, ks, r) do
-    "Keys #{ks} transaction call takes too long and will be terminated. Req: #{r}."
-  end
-
-  defp handle_error(err, %Req{data: {_, keys}} = req) do
-    if req.action == :get_and_update do
-      workers = Process.get(:"$workers")
-      pids = Map.values(workers)
-
-      ref = Process.get(:"$ref")
-
-      broadcast(pids, {ref, :id})
-    end
-
-    ks = inspect(keys)
-    r = inspect(req)
-    Logger.error(err_msg(err, ks, r))
+  defp _cast(agentmap, req, opts) do
+    GenServer.cast(pid(agentmap), struct(req, opts))
+    agentmap
   end
 
   ##
@@ -247,16 +42,16 @@ defmodule AgentMap.Transaction do
   Computes the `fun`, using `keys` values in the `agentmap` as an argument.
 
   The `fun` is sent to the `agentmap` which invokes it, passing the list of
-  values associated with `keys` (`nil`s for missing keys). The result of the
+  values associated with the `keys` (`nil`s for missing keys). The result of the
   invocation is returned.
 
   For example, `get(account, [:Alice, :Bob], &Enum.sum/1)` call returns the sum
   of the account balances of Alice and Bob. Suppose that `:Alice` has a worker
   that holds a queue of callbacks. Some of this callbacks will change the amount
   of money she has, and some will make calculations using this information. This
-  call will create a special temporary process responsible for the transaction.
-  It will take value stored for `:Bob` and add a special get-request to the end
-  of the `:Alice`'s worker queue. After this request will be fulfilled,
+  call will create a special temporary process responsible for the multi-key
+  call. It will take value stored for `:Bob` and add a special get-request to
+  the end of the `:Alice`'s worker queue. After this request will be fulfilled,
   `Enum.sum/1` will be called, passing the amount of money `:Alice` and `:Bob`
   has as a single list argument.
 
@@ -292,53 +87,54 @@ defmodule AgentMap.Transaction do
 
   One can use `:"$keys"` and `:"$map"` keys:
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(a: nil, b: 42)
-      iex> T.get(am, [:a, :b, :c], fn _ ->
+      iex> M.get(am, [:a, :b, :c], fn _ ->
       ...>   Process.get(:"$keys")
       ...> end)
       [:a, :b, :c]
       #
-      iex> T.get(am, [:a, :b, :c], fn [nil, 42, nil] ->
+      iex> M.get(am, [:a, :b, :c], fn [nil, 42, nil] ->
       ...>   Process.get(:"$map")
       ...> end)
       %{a: nil, b: 42}
 
   ## Examples
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new()
-      iex> T.update(am, [:Alice, :Bob], [42, 43])
-      iex> T.get(am, [:Alice, :Bob], fn [a, b] ->
+      iex> M.update(am, [:Alice, :Bob], [42, 43])
+      iex> M.get(am, [:Alice, :Bob], fn [a, b] ->
       ...>   a - b
       ...> end)
       -1
       # Order matters:
-      iex> T.get(am, [:Bob, :Alice], fn [b, a] ->
+      iex> M.get(am, [:Bob, :Alice], fn [b, a] ->
       ...>   b - a
       ...> end)
       1
 
    "Priority" calls:
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> import :timer
       iex> am = AgentMap.new(key: 42)
       iex> AgentMap.cast(am, :key, fn _ -> sleep(10); 43 end)
-      iex> T.get(am, [:key], & &1, !: true)
+      iex> M.get(am, [:key], & &1, !: true)
       [42]
       iex> am.key # the same
       42
-      iex> T.get(am, [:key], & &1, !: false)
+      iex> M.get(am, [:key], & &1, !: false)
       [43]
       # — executed in 10 ms.
       iex> am.key
       43
   """
   @spec get(am, [key], ([value] -> get), keyword) :: get when get: var
-  def get(agentmap, keys, fun, opts) when is_function(fun, 1) and is_list(keys) do
-    req = %Req{action: :get, data: {fun, keys}}
-    AgentMap._call(agentmap, req, opts)
+  def get(agentmap, keys, fun, opts \\ [!: false, timeout: 5000])
+      when is_function(fun, 1) and is_list(keys) do
+    req = %Req{action: :get, keys: keys, fun: fun}
+    _call(agentmap, req, opts)
   end
 
   @doc """
@@ -353,15 +149,15 @@ defmodule AgentMap.Transaction do
 
   See the [begining of this docs](#content) for the details of processing.
 
-  Transaction callback (`fun`) can return:
+  Callback (`fun`) can return:
 
     * a list with values `[{"get"-value, new value} | {"get"-value} | :id | :pop]`.
       This returns a list of "get"-values. For ex.:
 
-          iex> alias AgentMap.Transaction, as: T
+          iex> alias AgentMap.Multi, as: M
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> T.get_and_update(am, keys, fn _ ->
+          iex> M.get_and_update(am, keys, fn _ ->
           ...>   [{:get, :new_value}, {:get}, :pop, :id]
           ...> end)
           [:get, :get, 3, nil]
@@ -371,23 +167,23 @@ defmodule AgentMap.Transaction do
     * a tuple `{"get" value, [new value] | :id | :drop}`.
       For ex.:
 
-          iex> alias AgentMap.Transaction, as: T
+          iex> alias AgentMap.Multi, as: M
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> T.get_and_update(am, keys, fn _ ->
+          iex> M.get_and_update(am, keys, fn _ ->
           ...>   {:get, [4, 3, 2, 1]}
           ...> end)
           :get
           iex> AgentMap.take(am, keys)
           %{a: 4, b: 3, c: 2, d: 1}
-          iex> T.get_and_update(am, keys, fn _ ->
+          iex> M.get_and_update(am, keys, fn _ ->
           ...>   {:get, :id}
           ...> end)
           :get
           iex> AgentMap.take(am, keys)
           %{a: 4, b: 3, c: 2, d: 1}
           # — no changes.
-          iex> T.get_and_update(am, [:b, :c], fn _ ->
+          iex> M.get_and_update(am, [:b, :c], fn _ ->
           ...>   {:get, :drop}
           ...> end)
           :get
@@ -398,10 +194,10 @@ defmodule AgentMap.Transaction do
       value, :id}`.
       For ex.:
 
-          iex> alias AgentMap.Transaction, as: T
+          iex> alias AgentMap.Multi, as: T
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> T.get_and_update(am, keys, fn _ -> {:get} end)
+          iex> M.get_and_update(am, keys, fn _ -> {:get} end)
           :get
           iex> AgentMap.take(am, keys)
           %{a: 1, b: 2, c: 3}
@@ -410,10 +206,10 @@ defmodule AgentMap.Transaction do
     * `:id` to return list of values while not changing them.
       For ex.:
 
-          iex> alias AgentMap.Transaction, as: T
+          iex> alias AgentMap.Multi, as: M
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> T.get_and_update(am, keys, fn _ -> :id end)
+          iex> M.get_and_update(am, keys, fn _ -> :id end)
           [1, 2, 3, nil]
           iex> AgentMap.take(am, keys)
           %{a: 1, b: 2, c: 3}
@@ -422,15 +218,15 @@ defmodule AgentMap.Transaction do
     * `:pop` to return values while removing them from `agentmap`.
       For ex.:
 
-          iex> alias AgentMap.Transaction, as: T
+          iex> alias AgentMap.Multi, as: M
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> T.get_and_update(am, keys, fn _ -> :pop end)
+          iex> M.get_and_update(am, keys, fn _ -> :pop end)
           [1, 2, 3, nil]
           iex> AgentMap.take(am, keys)
           %{}
 
-  Transactions are *Isolated* and *Durabled* (by ACID model). *Atomicity* can be
+  Multis are *Isolated* and *Durabled* (by ACID model). *Atomicity* can be
   implemented inside callbacks and *Consistency* is out of question here as it
   is the application level concept.
 
@@ -438,9 +234,9 @@ defmodule AgentMap.Transaction do
 
   One can use `:"$keys"` and `:"$map"` keys:
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(a: nil, b: 42)
-      iex> T.get_and_update(am, [:a, :b, :c], fn _ ->
+      iex> M.get_and_update(am, [:a, :b, :c], fn _ ->
       ...>   keys = Process.get(:"$keys")
       ...>   map = Process.get(:"$map")
       ...>   {keys, map}
@@ -450,7 +246,7 @@ defmodule AgentMap.Transaction do
   ## Options
 
     * `!: true` — (`boolean`, `false`) to make
-      [priority](AgentMap.html#module-priority-calls-true) transactional calls.
+      [priority](AgentMap.html#module-priority-calls-true) multi-key calls.
 
       Asks involved workers via "selective receive" to process "return me a
       value and wait for a new one" [request](#content) in a prioriry order.
@@ -467,10 +263,10 @@ defmodule AgentMap.Transaction do
 
   ## Examples
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> %{Alice: 42, Bob: 24}
       ...> |> AgentMap.new()
-      ...> |> T.get_and_update([:Alice, :Bob], fn [a, b] ->
+      ...> |> M.get_and_update([:Alice, :Bob], fn [a, b] ->
       ...>      if a > 10 do
       ...>        a = a - 10
       ...>        b = b + 10
@@ -483,13 +279,13 @@ defmodule AgentMap.Transaction do
 
   or:
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(Alice: 42, Bob: 24)
-      iex> T.get_and_update(am, [:Alice, :Bob], fn _ ->
+      iex> M.get_and_update(am, [:Alice, :Bob], fn _ ->
       ...>   [:pop, :id]
       ...> end)
       [42, 24]
-      iex> T.get(am, [:Alice, :Bob], & &1)
+      iex> M.get(am, [:Alice, :Bob], & &1)
       [nil, 24]
 
   (!) Value changing transactions (`get_and_update/4`, `update/4`, `cast/4`)
@@ -503,21 +299,21 @@ defmodule AgentMap.Transaction do
       ...> end)
       "10 ms later"
 
-  will delay for `10` ms any execution of the (single key or transactional)
+  will delay for `10` ms any execution of the (single key or multi-key)
   `get_and_update/4`, `update/4`, `cast/4` or `get/4` (`!: false`) calls that
   involves `:Alice` and `:Bob` keys . Priority calls that are not changing
   values will not be delayed. `:Chris` key is not influenced.
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(a: 22, b: 24)
-      iex> T.get_and_update(am, [:a, :b], fn [u, d] ->
+      iex> M.get_and_update(am, [:a, :b], fn [u, d] ->
       ...>   [{u, d}, {d, u}]
       ...> end)
       [22, 24]
-      iex> T.get(am, [:a, :b], & &1)
+      iex> M.get(am, [:a, :b], & &1)
       [24, 22]
       #
-      iex> T.get_and_update(am, [:b, :c, :d], fn _ ->
+      iex> M.get_and_update(am, [:b, :c, :d], fn _ ->
       ...>   [:pop, {42, 42}, {44, 44}]
       ...> end)
       [22, 42, 44]
@@ -525,38 +321,39 @@ defmodule AgentMap.Transaction do
       false
       #
       iex> keys = [:a, :b, :c, :d]
-      iex> T.get_and_update(am, keys, fn _ ->
+      iex> M.get_and_update(am, keys, fn _ ->
       ...>   [:id, {nil, :_}, {:_, nil}, :pop]
       ...> end)
       [24, nil, :_, 44]
-      iex> T.get(am, keys, & &1)
+      iex> M.get(am, keys, & &1)
       [24, :_, nil, nil]
   """
 
   @typedoc """
-  Callback that is used for a transactional call.
+  Callback that is used for a multi-key call.
   """
-  @type cb_t(get) ::
+  @type cb_m(get) ::
           ([value] ->
              {get}
              | {get, [value] | :drop | :id}
              | [{any} | {any, value} | :pop | :id]
              | :pop
              | :id)
-  @spec get_and_update(am, [key], cb_t(get), keyword) :: get | [value]
+  @spec get_and_update(am, [key], cb_m(get), keyword) :: get | [value]
         when get: var
-  def get_and_update(agentmap, keys, fun, opts) when is_function(fun, 1) and is_list(keys) do
+  def get_and_update(agentmap, keys, fun, opts \\ [!: false, timeout: 5000])
+      when is_function(fun, 1) and is_list(keys) do
     unless keys == Enum.uniq(keys) do
       raise """
             expected uniq keys for `update`, `get_and_update` and
             `cast` transactions. Got: #{inspect(keys)}. Please
-            check #{inspect(keys -- Enum.uniq(keys))} keys.
+            check #{inspect(keys -- Enum.uniq(keys))}.
             """
             |> String.replace("\n", " ")
     end
 
-    req = %Req{action: :get_and_update, data: {fun, keys}}
-    AgentMap._call(agentmap, req, opts)
+    req = %Req{action: :get_and_update, keys: keys, fun: fun}
+    _call(agentmap, req, opts)
   end
 
   @doc """
@@ -568,7 +365,7 @@ defmodule AgentMap.Transaction do
   This call is no more than a syntax sugar for `get_and_update(am, keys, &{am,
   fun.(&1)}, opts)`.
 
-  Transactional `fun` can return:
+  Multial `fun` can return:
 
     * a list of new values;
     * `:id` — instructs to leave values as they are;
@@ -586,22 +383,22 @@ defmodule AgentMap.Transaction do
 
   More:
 
-      iex> alias AgentMap.Transaction, as: T
+      iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(a: 42, b: 24, c: 33, d: 51)
-      iex> T.get(am, [:a, :b, :c, :d], & &1)
+      iex> M.get(am, [:a, :b, :c, :d], & &1)
       [42, 24, 33, 51]
       iex> am
-      ...> |> T.update([:a, :b], &Enum.reverse/1)
-      ...> |> T.get([:a, :b, :c, :d], & &1)
+      ...> |> M.update([:a, :b], &Enum.reverse/1)
+      ...> |> M.get([:a, :b, :c, :d], & &1)
       [24, 42, 33, 51]
       iex> am
-      ...> |> T.update([:a, :b], fn _ -> :drop end)
+      ...> |> M.update([:a, :b], fn _ -> :drop end)
       ...> |> AgentMap.keys()
       [:c, :d]
       iex> am
-      ...> |> T.update([:c], fn _ -> :drop end)
+      ...> |> M.update([:c], fn _ -> :drop end)
       ...> |> AgentMap.update(:d, fn _ -> :drop end)
-      ...> |> T.get([:c, :d], & &1)
+      ...> |> M.get([:c, :d], & &1)
       [nil, :drop]
   """
   @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword) :: am
@@ -626,18 +423,7 @@ defmodule AgentMap.Transaction do
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
   def cast(agentmap, keys, fun, opts \\ [!: false]) when is_function(fun, 1) and is_list(keys) do
-    req = %Req{action: :get_and_update, data: {fun, keys}}
-    AgentMap._call(agentmap, req, opts)
-  end
-
-  @doc false
-  def reply(key, :id), do: _reply(key, :id)
-  def reply(key, :drop), do: _reply(key, :drop)
-  def reply(key, {:value, _} = b), do: _reply(key, b)
-
-  def _reply(key, msg) do
-    ref = Process.get(:"$ref")
-    worker = Process.get(:"$workers")[key]
-    send(worker, {ref, msg})
+    req = %Req{action: :get_and_update, keys: keys, fun: &{:_get, fun.(&1)}}
+    _cast(agentmap, req, opts)
   end
 end

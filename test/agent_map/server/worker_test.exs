@@ -6,22 +6,26 @@ defmodule AgentMapWorkerTest do
   use ExUnit.Case
 
   import ExUnit.CaptureLog
+  import :timer
 
   defp ms(), do: 1_000_000
 
+  def a <~> b, do: (a - b) in -1..1
+
   test "spawn_get_task" do
     fun = fn value ->
+      sleep(10)
       key = Process.get(:"$key")
       box = Process.get(:"$value")
 
       {value, {key, box}}
     end
 
-    req = %Req{action: :get, from: f = {self(), :_}, data: {:_, fun}}
+    msg = %{action: :get, from: {self(), :_}, fun: fun}
 
-    msg = Req.compress(req)
-    Worker.spawn_get_task(msg, {:key, box(42)})
-    assert_receive {:_, {42, {:key, {:value, 42}}}}
+    b = box(42)
+    Worker.spawn_get_task(msg, {:key, b})
+    assert_receive {:_, {42, {:key, ^b}}}
     assert_receive %{info: :done, key: :key}
 
     # fresh
@@ -37,11 +41,11 @@ defmodule AgentMapWorkerTest do
 
     msg =
       msg
-      |> Map.put(:timeout, {:break, 5})
+      |> Map.put(:timeout, {:break, 15})
       |> Map.put(:inserted_at, now() - 3 * ms())
 
-    Worker.spawn_get_task(msg, {:key, box(42)})
-    assert_receive {:_, {42, {:key, {:value, 42}}}}
+    Worker.spawn_get_task(msg, {:key, b})
+    assert_receive {:_, {42, {:key, ^b}}}
     assert_receive %{info: :done, key: :key}
 
     # expired
@@ -50,10 +54,9 @@ defmodule AgentMapWorkerTest do
       |> Map.put(:timeout, {:drop, 5})
       |> Map.put(:inserted_at, now() - 7 * ms())
 
-    Worker.spawn_get_task(msg, {:key, box(42)})
-
     assert capture_log(fn ->
-             refute_receive {:_, {42, {:key, {:value, 42}}}}
+             Worker.spawn_get_task(msg, {:key, b})
+             refute_receive {:_, {42, {:key, ^b}}}
              assert_receive %{info: :done, key: :key}
            end) =~ "Key :key call is expired and will not be executed."
 
@@ -62,56 +65,237 @@ defmodule AgentMapWorkerTest do
       |> Map.put(:timeout, {:break, 5})
       |> Map.put(:inserted_at, now() - 7 * ms())
 
-    Worker.spawn_get_task(msg, {:key, box(42)})
+    assert capture_log(fn ->
+             Worker.spawn_get_task(msg, {:key, b})
+             refute_receive {:_, {42, {:key, ^b}}}
+             assert_receive %{info: :done, key: :key}
+           end) =~ "Key :key call is expired and will not be executed."
+
+    msg =
+      msg
+      |> Map.put(:timeout, {:break, 5})
+      |> Map.put(:inserted_at, now() - 4 * ms())
 
     assert capture_log(fn ->
-             refute_receive {:_, {42, {:key, {:value, 42}}}}
+             Worker.spawn_get_task(msg, {:key, box(42)})
+             refute_receive {:_, {42, {:key, ^b}}}
              assert_receive %{info: :done, key: :key}
            end) =~ "Key :key call takes too long and will be terminated."
   end
 
-  test "handle(%{action: get}" do
-    # state =
-    #   {%{}, 7}
-    #   |> put(:a, box(42))
-    #   |> put(:b, {box(1), 4})
-    #   |> put(:c, {box(4), {1, 6}})
-    #   |> put(:d, {nil, 5})
-    #   |> spawn_worker(:b)
-    #   |> spawn_worker(:c)
-
-    # assert false
-  end
-
-  test "handle(%{action: :max_processes}" do
+  test "handle(%{action: :get}" do
     state =
       {%{}, 7}
       |> put(:a, box(42))
+      |> put(:b, {box(1), 4})
+      |> put(:c, {box(4), {1, 6}})
+      |> put(:d, {nil, 5})
       |> spawn_worker(:a)
+      |> spawn_worker(:b)
+      |> spawn_worker(:c)
+      |> spawn_worker(:d)
 
-    {:pid, w} = get(state, :a)
-    assert Worker.dict(w)[:"$processes"] == 1
-    assert Worker.dict(w)[:"$max_processes"] == 5
+    {:pid, wa} = get(state, :a)
+    {:pid, wb} = get(state, :b)
+    {:pid, wc} = get(state, :c)
+    {:pid, wd} = get(state, :d)
 
-    r = %Req{action: :max_processes, data: {:a, 1}, from: {self(), :_}}
-    send(w, Req.to_msg(r))
+    r = %{action: :get, from: {self(), :_ref}, fun: &{Process.get(:"$key"), &1}}
+    send(wa, r)
+    send(wb, r)
+    send(wc, r)
+    send(wd, r)
 
-    assert Worker.dict(w)[:"$max_processes"] == 1
+    assert_receive {:_ref, {:a, 42}}
+    assert_receive {:_ref, {:b, 1}}
+    assert_receive {:_ref, {:c, 4}}
+    assert_receive {:_ref, {:d, nil}}
+
+    r = %Req{action: :max_processes, key: :a, data: 3, from: {self(), :_ref}}
+    send(wa, Req.compress(r))
+    assert_receive {:_ref, 7}
+    assert Worker.dict(wa)[:"$max_processes"] == 3
+    assert Worker.dict(wa)[:"$processes"] == 1
+
+    req =
+      &%{
+        action: :get,
+        from: {self(), :_ref},
+        fun: fn _ ->
+          sleep(10)
+          &1
+        end
+      }
+
+    past = now()
+
+    send(wa, req.(1))
+    send(wa, req.(2))
+    send(wa, req.(3))
+
+    assert_receive {:_ref, 1}
+    t1 = to_ms(now() - past)
+    assert_receive {:_ref, 2}
+    t2 = to_ms(now() - past)
+    assert_receive {:_ref, 3}
+    t3 = to_ms(now() - past)
+
+    assert(t1 <~> t2)
+    assert(t2 <~> t3)
+
+    sleep(1)
+    past = now()
+
+    send(wa, req.(1))
+    send(wa, req.(2))
+    send(wa, req.(3))
+    send(wa, req.(4))
+
+    assert_receive {:_ref, 1}
+    t1 = to_ms(now() - past)
+    assert_receive {:_ref, 2}
+    t2 = to_ms(now() - past)
+    assert_receive {:_ref, 3}
+    t3 = to_ms(now() - past)
+    assert_receive {:_ref, 4}
+    t4 = to_ms(now() - past)
+
+    assert(t1 <~> t2)
+    assert(t2 <~> t3)
+    assert(t3 < t4)
   end
 
-  # test "get" do
-  #   assert false
-  # end
+  test "handle(%{action: :get_and_update}" do
+    state =
+      {%{}, 3}
+      |> put(:a, box(42))
+      |> put(:b, {box(1), 4})
+      |> put(:c, {box(4), {1, 6}})
+      |> put(:d, {nil, 5})
+      |> spawn_worker(:a)
+      |> spawn_worker(:b)
+      |> spawn_worker(:c)
+      |> spawn_worker(:d)
 
-  # test "selective receive" do
-  #   assert false
-  # end
+    {:pid, wa} = get(state, :a)
+    {:pid, wb} = get(state, :b)
+    {:pid, wc} = get(state, :c)
+    {:pid, wd} = get(state, :d)
 
-  # test ":get!" do
-  #   assert false
-  # end
+    r = %Req{action: :get_and_update, from: {self(), :_ref}}
+    send(wa, Req.compress(%{r | fun: fn _ -> {Process.get(:"$key")} end}))
+    send(wb, Req.compress(%{r | fun: fn _ -> {Process.get(:"$key"), 0} end}))
+    send(wc, Req.compress(%{r | fun: fn _ -> :pop end}))
+    send(wd, Req.compress(%{r | fun: fn _ -> :id end}))
 
-  # test ":done" do
-  #   assert false
-  # end
+    assert_receive {:_ref, :a}
+    assert_receive {:_ref, :b}
+    assert_receive {:_ref, 4}
+    assert_receive {:_ref, nil}
+
+    f = fn v ->
+      sleep(10)
+      {v, v + 1}
+    end
+
+    r_get = %Req{action: :get, from: {self(), :_ref}, fun: f}
+    r = %{r_get | action: :get_and_update}
+
+    sleep(5)
+    assert(Worker.dict(wa)[:"$processes"] == 1)
+    past = now()
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r))
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r_get))
+
+    assert_receive {:_ref, {42, 43}}
+    t1 = to_ms(now() - past)
+    assert_receive {:_ref, {42, 43}}
+    t2 = to_ms(now() - past)
+    assert_receive {:_ref, 42}
+    t3 = to_ms(now() - past)
+
+    # %{info: :done} * 2 messages just sent →
+    assert_receive {:_ref, {43, 44}}
+    t4 = to_ms(now() - past)
+
+    # →
+    assert_receive {:_ref, {43, 44}}
+    t5 = to_ms(now() - past)
+    assert_receive {:_ref, {43, 44}}
+    t6 = to_ms(now() - past)
+
+    assert(t1 <~> t2)
+    assert(t2 <~> t3)
+
+    assert(t3 < t4)
+    assert(t4 < t5)
+    assert(t5 <~> t6)
+
+    sleep(5)
+    assert(Worker.dict(wa)[:"$processes"] == 1)
+
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r_get))
+    send(wa, Req.compress(r_get))
+
+    sleep(5)
+    send(wa, Req.compress(%{r | !: true}))
+
+    assert_receive {:_ref, {43, 44}}
+    assert_receive {:_ref, {43, 44}}
+    assert_receive {:_ref, {43, 44}}
+    assert_receive {:_ref, 43}
+    assert_receive {:_ref, {44, 45}}
+
+    sleep(5)
+    assert(Worker.dict(wa)[:"$processes"] == 1)
+
+    for _ <- 1..102 do
+      send(
+        wa,
+        Req.compress(%{
+          r_get
+          | fun: fn v ->
+              sleep(1)
+              v
+            end
+        })
+      )
+    end
+
+    send(wa, Req.compress(%{r | !: true, fun: &{:ok, &1 + 1}}))
+
+    assert_receive {:_ref, 44}
+    assert_receive {:_ref, :ok}
+    assert_receive {:_ref, 45}
+
+    sleep(100)
+    assert(Worker.dict(wa)[:"$processes"] == 1)
+
+    assert capture_log(fn ->
+             for _ <- 1..104 do
+               send(
+                 wa,
+                 Req.compress(%{
+                   r_get
+                   | fun: fn v ->
+                       sleep(1)
+                       v
+                     end
+                 })
+               )
+             end
+
+             send(wa, Req.compress(%{r | !: true, fun: &{:ok, &1 + 1}}))
+
+             assert_receive {:_ref, 45}
+             assert_receive {:_ref, :ok}, 1000
+             refute_receive {:_ref, 46}
+           end) =~ "Selective receive is turned off"
+  end
 end

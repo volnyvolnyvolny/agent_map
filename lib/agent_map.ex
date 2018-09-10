@@ -1,10 +1,10 @@
 defmodule AgentMap do
-  @behaviour Access
-
   @enforce_keys [:link]
   defstruct @enforce_keys
 
-  alias AgentMap.{Server, Req, IncError, Transaction}
+  @behaviour Access
+
+  alias AgentMap.{Server, Req, IncError, Multi}
 
   @moduledoc """
   The `AgentMap` can be seen as a stateful `Map` that parallelize operations
@@ -20,8 +20,8 @@ defmodule AgentMap do
   key, the degree of parallelization can be tweaked using the `max_processes/3`
   function. The worker will die after about `10` ms of inactivity.
 
-  `AgentMap` supports transactions — operations on a group of keys. See
-  `AgentMap.Transaction`.
+  `AgentMap` supports multi-key calls — operations on a group of keys. See
+  `AgentMap.Multi`.
 
   ## Examples
 
@@ -81,7 +81,7 @@ defmodule AgentMap do
 
   Also, take a look at the `test/memo.ex`.
 
-  `AgentMap` provides possibility to make transactions (operations on multiple
+  `AgentMap` provides possibility to make multi-key calls (operations on multiple
   keys). Let's see an accounting demo:
 
       defmodule Account do
@@ -138,7 +138,7 @@ defmodule AgentMap do
         Trasfers money. Returns `:ok` or `:error`.
         \"""
         def transfer(from, to, amount) do
-          # Transaction call.
+          # Multi call.
           AgentMap.get_and_update(__MODULE__, fn
             [nil, _] -> {:error}
 
@@ -387,8 +387,11 @@ defmodule AgentMap do
 
   ## HELPERS ##
 
-  defp pid(%__MODULE__{link: am}), do: am
-  defp pid(am), do: am
+  @doc """
+  Process id of an `AgentMap` server.
+  """
+  def pid(%__MODULE__{link: am}), do: am
+  def pid(am), do: am
 
   @doc """
   Wraps the `fun` in the `try…catch` before applying `args`.
@@ -603,13 +606,18 @@ defmodule AgentMap do
     GenServer.start(Server, args, opts)
   end
 
-  defp timeout({_, t}), do: t
-  defp timeout(t), do: t
-
   @doc false
   def _call(agentmap, req, opts) do
-    t = timeout(opts[:timeout]) || 5000
-    GenServer.call(pid(agentmap), struct(req, opts), t)
+    am = pid(agentmap)
+    req = struct(req, opts)
+
+    case opts[:timeout] do
+      {_, t} ->
+        GenServer.call(am, req, t)
+
+      t ->
+        GenServer.call(am, req, t || 5000)
+    end
   end
 
   defp _cast(agentmap, %Req{} = req, opts) do
@@ -644,7 +652,7 @@ defmodule AgentMap do
   immediately, passing current value as an argument.
 
   Special syntax sugar `get(agentmap, fun, key, opts)` is supported for
-  the `AgentMap.Transaction.get/4`.
+  the `AgentMap.Multi.get/4`.
 
   ## Options
 
@@ -726,11 +734,11 @@ defmodule AgentMap do
   def get(agentmap, fun, keys, opts)
 
   def get(agentmap, fun, keys, opts) when is_function(fun, 1) and is_list(keys) do
-    Transaction.get(agentmap, keys, fun, opts)
+    Multi.get(agentmap, keys, fun, opts)
   end
 
   def get(agentmap, key, fun, opts) when is_function(fun, 1) do
-    req = %Req{action: :get, data: {key, fun}}
+    req = %Req{action: :get, key: key, fun: fun}
     _call(agentmap, req, opts)
   end
 
@@ -738,12 +746,11 @@ defmodule AgentMap do
   def get(agentmap, key, default)
 
   def get(agentmap, fun, keys) when is_function(fun, 1) and is_list(keys) do
-    req = %Req{action: :get, data: {fun, keys}}
-    _call(agentmap, req, [])
+    Multi.get(agentmap, keys, fun)
   end
 
   def get(agentmap, key, fun) when is_function(fun, 1) do
-    req = %Req{action: :get, data: {key, fun}}
+    req = %Req{action: :get, key: key, fun: fun}
     _call(agentmap, req, [])
   end
 
@@ -836,7 +843,7 @@ defmodule AgentMap do
   {&1})` just returns the balance.
 
   Special syntax sugar `get_and_update(agentmap, fun, key, opts)` is supported
-  for the `AgentMap.Transaction.get_and_update/4`.
+  for the `AgentMap.Multi.get_and_update/4`.
 
   ## Options
 
@@ -887,9 +894,9 @@ defmodule AgentMap do
              | :id)
 
   @typedoc """
-  Callback that is used for a transactional call.
+  Callback that is used for a multi-key call call.
   """
-  @type cb_t(get) ::
+  @type cb_m(get) ::
           ([value] ->
              {get}
              | {get, [value] | :drop | :id}
@@ -899,16 +906,16 @@ defmodule AgentMap do
 
   @spec get_and_update(am, key, cb(get), keyword) :: get | value
         when get: var
-  @spec get_and_update(am, cb_t(get), [key], keyword) :: get | [value]
+  @spec get_and_update(am, cb_m(get), [key], keyword) :: get | [value]
         when get: var
   def get_and_update(agentmap, key, fun, opts \\ [!: false, timeout: 5000])
 
   def get_and_update(agentmap, fun, keys, opts) when is_function(fun, 1) and is_list(keys) do
-    Transaction.get_and_update(agentmap, keys, fun, opts)
+    Multi.get_and_update(agentmap, keys, fun, opts)
   end
 
   def get_and_update(agentmap, key, fun, opts) when is_function(fun, 1) do
-    req = %Req{action: :get_and_update, data: {key, fun}}
+    req = %Req{action: :get_and_update, key: key, fun: fun}
     _call(agentmap, req, opts)
   end
 
@@ -924,7 +931,7 @@ defmodule AgentMap do
   operator work.
 
   Special syntax sugar `update(agentmap, fun, key, opts)` is supported for the
-  `AgentMap.Transaction.update/4`.
+  `AgentMap.Multi.update/4`.
 
   ## Options
 
@@ -953,7 +960,7 @@ defmodule AgentMap do
   def update(agentmap, key, fun, opts \\ [!: false, timeout: 5000])
 
   def update(agentmap, fun, keys, opts) when is_function(fun, 1) do
-    Transaction.update(agentmap, keys, fun, opts)
+    Multi.update(agentmap, keys, fun, opts)
   end
 
   def update(agentmap, key, fun, opts) when is_function(fun, 1) do
@@ -1084,11 +1091,10 @@ defmodule AgentMap do
   Performs `cast` ("fire and forget"). Works the same as `update/4`, but uses
   `GenServer.cast/2`.
 
-  Immediately returns unchanged `agentmap` argument to support using pipe
-  operator.
+  Immediately returns unchanged `agentmap` (for piping).
 
-  Special syntax sugar `cast(agentmap, fun, key, opts)` is supported for the
-  `AgentMap.Transaction.cast/4`.
+  Syntax sugar `cast(agentmap, fun, key, opts)` is supported for the
+  `AgentMap.Multi.cast/4`.
 
   ## Special process dictionary keys
 
@@ -1104,11 +1110,11 @@ defmodule AgentMap do
   def cast(agentmap, key, fun, opts \\ [!: false])
 
   def cast(agentmap, fun, keys, opts) when is_function(fun, 1) do
-    Transaction.cast(agentmap, keys, fun, opts)
+    Multi.cast(agentmap, keys, fun, opts)
   end
 
   def cast(agentmap, key, fun, opts) when is_function(fun, 1) do
-    req = %Req{action: :get_and_update, data: {key, &{:_, fun.(&1)}}}
+    req = %Req{action: :get_and_update, key: key, fun: &{:_get, fun.(&1)}}
     _cast(agentmap, req, opts)
   end
 
@@ -1181,10 +1187,11 @@ defmodule AgentMap do
       iex> max_processes(:k, :infinity)
       1
   """
-  @spec max_processes(agentmap, key, pos_integer | :infinity, !: false) :: pos_integer | :infinity
-  def max_processes(agentmap, key, value, opts)
+  @spec max_processes(agentmap, key, pos_integer | :infinity, !: boolean) ::
+          pos_integer | :infinity
+  def max_processes(agentmap, key, value, opts \\ [!: false])
       when (is_integer(value) or value == :infinity) and value > 0 do
-    req = %Req{action: :max_processes, data: {key, value}, timeout: :infinity}
+    req = %Req{action: :max_processes, key: key, data: value, timeout: :infinity}
     _call(agentmap, req, opts)
   end
 
@@ -1223,8 +1230,8 @@ defmodule AgentMap do
       iex> AgentMap.fetch(am, :b, !: false)
       {:ok, 42}
   """
-  @spec fetch(agentmap, key, !: boolean, timeout: 5000) :: {:ok, value} | :error
-  def fetch(agentmap, key, opts \\ [!: true, timeout: 5000]) do
+  @spec fetch(agentmap, key, !: boolean, timeout: timeout) :: {:ok, value} | :error
+  def fetch(agentmap, key, opts) do
     if Keyword.get(opts, :!, true) do
       req = %Req{action: :fetch, data: key}
       _call(agentmap, req, opts)
@@ -1236,6 +1243,9 @@ defmodule AgentMap do
       end)
     end
   end
+
+  @impl Access
+  def fetch(agentmap, key), do: fetch(agentmap, key, [])
 
   @doc """
   Fetches the value for a specific `key` from `agentmap`, erroring out if
@@ -1391,7 +1401,7 @@ defmodule AgentMap do
   @spec put(am, key, value, keyword) :: am
   def put(agentmap, key, value, opts \\ [!: true, cast: true]) do
     opts = Keyword.put_new(opts, :!, true)
-    req = %Req{action: :put, data: {key, value}}
+    req = %Req{action: :put, key: key, data: value}
     _call_or_cast(agentmap, req, opts)
 
     agentmap
@@ -1473,7 +1483,7 @@ defmodule AgentMap do
   @spec delete(agentmap, key, keyword) :: agentmap
   def delete(agentmap, key, opts \\ [!: false, cast: true]) do
     fun = fn _ -> :pop end
-    req = %Req{action: :get_and_update, data: {key, fun}}
+    req = %Req{action: :get_and_update, key: key, data: fun}
     _call_or_cast(agentmap, req, opts)
   end
 
@@ -1559,8 +1569,13 @@ defmodule AgentMap do
   """
   @spec values(agentmap, !: boolean, timeout: timeout) :: [value]
   def values(agentmap, opts \\ [!: true]) do
+    fun = fn _ ->
+      Map.values(Process.get(:"$map"))
+    end
+
     opts = Keyword.put_new(opts, :!, true)
-    _call(agentmap, %Req{action: :values}, opts)
+
+    Multi.get(agentmap, keys(agentmap), fun, opts)
   end
 
   @doc """
@@ -1594,7 +1609,7 @@ defmodule AgentMap do
   @spec queue_len(agentmap, key, [!: boolean] | []) :: non_neg_integer
   def queue_len(agentmap, key, opts \\ []) do
     opts = Keyword.take(opts, [:!])
-    _call(agentmap, %Req{action: :queue_len, data: {key, opts}}, [])
+    _call(agentmap, %Req{action: :queue_len, key: key, data: opts}, [])
   end
 
   @doc """
@@ -1655,7 +1670,7 @@ defmodule AgentMap do
         end
     end
 
-    req = %Req{action: :get_and_update, data: {key, fun}}
+    req = %Req{action: :get_and_update, key: key, fun: fun}
     _call_or_cast(agentmap, req, opts)
     agentmap
   end
@@ -1665,9 +1680,7 @@ defmodule AgentMap do
 
   It is a syntax sugar for
 
-      opts =
-        Keyword.update(opts, :step, -1, & -&1)
-      inc(agentmap, key, opts)
+      inc(agentmap, key, Keyword.update(opts, :step, -1, &(-&1)))
 
   See `inc/3` for details.
   """
