@@ -2,8 +2,6 @@ defmodule AgentMap do
   @enforce_keys [:link]
   defstruct @enforce_keys
 
-  @behaviour Access
-
   alias AgentMap.{Server, Req, IncError, Multi}
 
   @moduledoc """
@@ -28,7 +26,7 @@ defmodule AgentMap do
   Create and use it as an ordinary `Map`:
 
       iex> am = AgentMap.new(a: 42, b: 24)
-      iex> am.a
+      iex> AgentMap.get(am, :a)
       42
       iex> AgentMap.keys(am)
       [:a, :b]
@@ -49,8 +47,8 @@ defmodule AgentMap do
       ...> |> AgentMap.put(:a, 1)
       ...> |> AgentMap.get(:a)
       1
-      iex> am = AgentMap.new(pid)
-      iex> am.a
+      iex> AgentMap.new(pid)
+      ...> |> AgentMap.get(:a)
       1
 
   More complicated example involves memoization:
@@ -174,7 +172,7 @@ defmodule AgentMap do
         end
       end
 
-  ## `Enumerable` protocol and `Access` behaviour
+  ## `Enumerable` protocol
 
   `%AgentMap{}` is a special struct that holds the pid of an `agentmap` process.
   `Enumerable` protocol is implemented for `%AgentMap{}`, so `Enum` should work
@@ -184,14 +182,6 @@ defmodule AgentMap do
       ...> |> AgentMap.new()
       ...> |> Enum.empty?()
       false
-
-  Similary, `AgentMap` follows the `Access` behaviour:
-
-      iex> am = AgentMap.new(a: 42, b: 24)
-      iex> am.a
-      42
-
-  (!) currently `put_in` operator does not work properly.
 
   ## Options
 
@@ -203,10 +193,9 @@ defmodule AgentMap do
   By default, on each key, no more than fifth `get/4` calls can be executed
   simultaneously. If `update!/4`, `update/4`, `cast/4`, `get_and_update/4` or a
   `6`-th `get/4` call came, a special worker process will be spawned that became
-  the holder of the execution queue. It's the FIFO queue, but [selective
-  receive](http://learnyousomeerlang.com/more-on-multiprocessing) is used to
-  provide the possibility for some callbacks to be executed in the order of
-  preference (out of turn).
+  the holder of the execution queue. It's the FIFO queue, but priority (`!:
+  true`) option can be provided to instruct `AgentMap` to execute a callback in
+  the order of preference (out of turn).
 
   For example:
 
@@ -217,8 +206,7 @@ defmodule AgentMap do
       ...> |> cast(:state, fn _ -> sleep(50); :steady end)
       ...> |> cast(:state, fn _ -> sleep(50); :stop end)
       ...> |> cast(:state, fn _ -> sleep(50); :go! end, !: true)
-      :ok
-      iex> fetch(am, :state)
+      ...> |> fetch(:state)
       {:ok, :ready}
       # — current state.
       # Right now :steady is executed.
@@ -231,10 +219,9 @@ defmodule AgentMap do
       # [:go!]
       iex> [get(am, :state),
       ...>  get(am, :state, !: true),
-      ...>  get(am, :state, & &1, !: true),
-      ...>  am.state]
-      [:ready, :ready, :ready, :ready]
-      # As the fetch/2, returns current state immediatelly.
+      ...>  get(am, :state, & &1, !: true)]
+      [:ready, :ready, :ready]
+      # Like the fetch/2, returns current state immediatelly.
       #
       iex> get(am, :state, !: false)
       :steady
@@ -246,11 +233,6 @@ defmodule AgentMap do
       # Now executes: :stop, queue: [].
       iex> get(am, :state, !: false)
       :stop
-
-  Keep in mind that selective receive can lead to performance issues if the
-  message queue becomes too fat. So it was decided to disable selective receive
-  each time message queue of the worker process has more that `100` items. It
-  will be turned on again when message queue became empty.
 
   ### Timeout
 
@@ -437,16 +419,16 @@ defmodule AgentMap do
   ## Examples
 
       iex> am = AgentMap.new(a: 42, b: 24)
-      iex> am.a
+      iex> AgentMap.get(am, :a)
       42
       iex> AgentMap.keys(am)
       [:a, :b]
 
       iex> {:ok, pid} = AgentMap.start_link()
-      iex> am = pid
+      iex> pid
       ...> |> AgentMap.new()
       ...> |> AgentMap.put(:a, 1)
-      iex> am.a
+      ...> |> AgentMap.get(:a)
       1
   """
   @spec new(Enumerable.t() | am) :: am
@@ -475,8 +457,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> am = AgentMap.new([:a, :b], fn x -> {x, x} end)
-      iex> AgentMap.take(am, [:a, :b])
+      iex> AgentMap.new([:a, :b], fn x -> {x, x} end)
+      ...> |> AgentMap.take([:a, :b])
       %{a: :a, b: :b}
   """
   @spec new(Enumerable.t(), (term -> {key, value})) :: am
@@ -692,7 +674,7 @@ defmodule AgentMap do
       iex> get(am, :Alice, & &1+1)
       43
 
-   "Priority" calls:
+  "Priority" calls:
 
       iex> import :timer
       iex> import AgentMap
@@ -700,9 +682,9 @@ defmodule AgentMap do
       iex> cast(am, :key, fn _ -> sleep(100); 43 end)
       iex> get(am, :key, & &1, !: true)
       42
-      iex> am.key # the same
+      iex> get(am, :key) # the same
       42
-      iex> get(am, :key, & &1)
+      iex> get(am, :key, & &1) # !: false
       43
       iex> get(am, :key, & &1, !: true)
       43
@@ -743,8 +725,6 @@ defmodule AgentMap do
   end
 
   # 3
-  def get(agentmap, key, default)
-
   def get(agentmap, fun, keys) when is_function(fun, 1) and is_list(keys) do
     Multi.get(agentmap, keys, fun)
   end
@@ -754,17 +734,25 @@ defmodule AgentMap do
     _call(agentmap, req, [])
   end
 
-  #
+  # 2
 
-  @spec get(am, key, d) :: value | d when d: var
+  @doc """
+  Immediately gets the value for the given `key` in `AgentMap`.
+
+      iex> am = AgentMap.new(Alice: 42)
+      iex> AgentMap.get(am, :Alice)
+      42
+      iex> AgentMap.get(am, :Bob)
+      nil
+  """
   @spec get(am, key) :: value | nil
-
-  def get(agentmap, key, default)
-
-  def get(agentmap, key, default) do
+  def get(agentmap, key) do
     case fetch(agentmap, key) do
-      {:ok, value} -> value
-      :error -> default
+      {:ok, value} ->
+        value
+
+      :error ->
+        nil
     end
   end
 
@@ -792,32 +780,12 @@ defmodule AgentMap do
   @spec get_lazy(am, key, (() -> a)) :: value | a when a: var
   def get_lazy(agentmap, key, fun) do
     cb = fn value ->
-      if Process.get(:"$value") do
-        value
-      else
-        fun.()
-      end
+      b = Process.get(:"$value")
+      if b, do: value, else: fun.()
     end
 
     get(agentmap, key, cb)
   end
-
-  @doc """
-  Immediately returns the value for a specific `key` in `agentmap`.
-
-  This function supports `default` argument:
-
-      iex> am = AgentMap.new(a: 42)
-      iex> AgentMap.get(am, :a)
-      42
-      iex> AgentMap.get(am, :b)
-      nil
-      iex> AgentMap.get(am, :b, :error)
-      :error
-
-  See `Access.get/3`.
-  """
-  def get(agentmap, key), do: get(agentmap, key, nil)
 
   ##
   ## GET_AND_UPDATE
@@ -1231,7 +1199,7 @@ defmodule AgentMap do
       {:ok, 42}
   """
   @spec fetch(agentmap, key, !: boolean, timeout: timeout) :: {:ok, value} | :error
-  def fetch(agentmap, key, opts) do
+  def fetch(agentmap, key, opts \\ [!: true, timeout: 5000]) do
     if Keyword.get(opts, :!, true) do
       req = %Req{action: :fetch, data: key}
       _call(agentmap, req, opts)
@@ -1243,9 +1211,6 @@ defmodule AgentMap do
       end)
     end
   end
-
-  @impl Access
-  def fetch(agentmap, key), do: fetch(agentmap, key, [])
 
   @doc """
   Fetches the value for a specific `key` from `agentmap`, erroring out if
