@@ -35,7 +35,7 @@ defmodule AgentMap.Multi.Req do
 
       if act == :get_and_update do
         Worker.accept_value()
-      end
+      end || {:_get}
     end
 
     broadcast(pids, %{action: :get_and_update, fun: f, !: req.!})
