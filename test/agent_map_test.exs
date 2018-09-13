@@ -1,14 +1,14 @@
 defmodule AgentMapTest do
   import AgentMap
-  import :timer
+  # import :timer
 
   use ExUnit.Case
-  # doctest AgentMap
+  doctest AgentMap
 
   test "main" do
-    Process.flag(:trap_exit, true)
+    # Process.flag(:trap_exit, true)
 
-    am = AgentMap.new(key: 42)
+    # am = AgentMap.new(key: 42)
 
     # am
     # |> cast(:key, fn v -> sleep(50); v - 9 end)
