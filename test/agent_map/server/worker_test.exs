@@ -251,51 +251,5 @@ defmodule AgentMapWorkerTest do
     assert_receive {:_ref, {43, 44}}
     assert_receive {:_ref, 43}
     assert_receive {:_ref, {44, 45}}
-
-    sleep(5)
-    assert(Worker.dict(wa)[:"$processes"] == 1)
-
-    for _ <- 1..102 do
-      send(
-        wa,
-        Req.compress(%{
-          r_get
-          | fun: fn v ->
-              sleep(1)
-              v
-            end
-        })
-      )
-    end
-
-    send(wa, Req.compress(%{r | !: true, fun: &{:ok, &1 + 1}}))
-
-    assert_receive {:_ref, 44}
-    assert_receive {:_ref, :ok}
-    assert_receive {:_ref, 45}
-
-    sleep(100)
-    assert(Worker.dict(wa)[:"$processes"] == 1)
-
-    assert capture_log(fn ->
-             for _ <- 1..104 do
-               send(
-                 wa,
-                 Req.compress(%{
-                   r_get
-                   | fun: fn v ->
-                       sleep(1)
-                       v
-                     end
-                 })
-               )
-             end
-
-             send(wa, Req.compress(%{r | !: true, fun: &{:ok, &1 + 1}}))
-
-             assert_receive {:_ref, 45}
-             assert_receive {:_ref, :ok}, 1000
-             refute_receive {:_ref, 46}
-           end) =~ "Selective receive is turned off"
   end
 end

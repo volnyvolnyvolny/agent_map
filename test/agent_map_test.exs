@@ -10,7 +10,6 @@ defmodule AgentMapTest do
 
     am = AgentMap.new(key: 42)
 
-    IO.inspect(am.key)
     # am
     # |> cast(:key, fn v -> sleep(50); v - 9 end)
     # |> put(:key, 24, timeout: 10)

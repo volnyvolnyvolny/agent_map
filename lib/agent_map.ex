@@ -817,8 +817,8 @@ defmodule AgentMap do
 
     * `!: true` — (`boolean`, `false`) to make [priority
       calls](#module-priority-calls-true). `key` could have an associated queue
-      of callbacks, awaiting of execution. If such queue exists, asks worker via
-      "selective receive" to process `fun` in prioriry order;
+      of callbacks, awaiting of execution. If such queue exists, asks worker to
+      process `fun` in prioriry order;
 
     * `timeout: {:drop, pos_integer}` — to throw out `fun` from queue upon the
       occurence of a timeout. See [timeout section](#module-timeout);

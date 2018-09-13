@@ -1,7 +1,7 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Common, CallbackError, Server.State, Req}
+  alias AgentMap.{Common, CallbackError, Server.State}
 
   import Process, only: [get: 1, put: 2, delete: 1, info: 1]
   import Common, only: [run: 4, reply: 2, now: 0, left: 2]
@@ -13,6 +13,8 @@ defmodule AgentMap.Worker do
 
   # ms
   @wait 10
+
+  defp rand(n) when n < 100, do: rem(now(), n)
 
   ##
   ## CALLBACKS
@@ -38,13 +40,6 @@ defmodule AgentMap.Worker do
   end
 
   ##
-  ## HELPERS
-  ##
-
-  # Great for generating numbers < 100.
-  defp rand(to) when to < 100, do: rem(now(), to)
-
-  ##
   ## DICTIONARY
   ##
 
@@ -59,21 +54,63 @@ defmodule AgentMap.Worker do
   defp timeout(%{timeout: {_, t}, inserted_at: i}), do: left(t, since: i)
   defp timeout(%{}), do: :infinity
 
+  defp run(req, box) do
+    break? = match?({:break, _}, req[:timeout])
+    t_left = timeout(req)
+
+    arg = un(box)
+    result = run(req.fun, [arg], t_left, break?)
+    interpret(req, arg, result)
+  end
+
+  defp interpret(%{action: :get} = req, _arg, {:ok, get}) do
+    reply(req[:from], get)
+  end
+
+  defp interpret(req, _arg, {:ok, {get}}) do
+    reply(req[:from], get)
+  end
+
+  defp interpret(req, _arg, {:ok, {get, v}}) do
+    put(:"$value", box(v))
+    reply(req[:from], get)
+  end
+
+  defp interpret(req, arg, {:ok, :id}) do
+    reply(req[:from], arg)
+  end
+
+  defp interpret(req, arg, {:ok, :pop}) do
+    delete(:"$value")
+    reply(req[:from], arg)
+  end
+
+  defp interpret(_req, _arg, {:ok, reply}) do
+    raise CallbackError, got: reply
+  end
+
+  defp interpret(req, arg, {:error, :expired}) do
+    Logger.error("""
+    Key #{inspect(get(:"$key"))} call is expired and will not be executed.
+    Request: #{inspect(req)}.
+    Value: #{inspect(arg)}.
+    """)
+  end
+
+  defp interpret(req, arg, {:error, :toolong}) do
+    Logger.error("""
+    Key #{inspect(get(:"$key"))} call takes too long and will be terminated.
+    Request: #{inspect(req)}.
+    Value: #{inspect(arg)}.
+    """)
+  end
+
   def spawn_get_task(req, {key, box}, opts \\ [server: self()]) do
     Task.start_link(fn ->
       Process.put(:"$key", key)
       Process.put(:"$value", box)
 
-      break? = match?({:break, _}, req[:timeout])
-      t_left = timeout(req)
-
-      case run(req.fun, [un(box)], t_left, break?) do
-        {:ok, get} ->
-          reply(req[:from], get)
-
-        e ->
-          handle_error(e, req)
-      end
+      run(req, box)
 
       done = %{info: :done, key: key}
       w = opts[:worker]
@@ -92,59 +129,25 @@ defmodule AgentMap.Worker do
   ##
 
   defp handle(%{action: :get} = req) do
-    p = get(:"$processes")
     box = get(:"$value")
+
+    p = get(:"$processes")
     max_p = get(:"$max_processes")
 
     if p < max_p do
-      k = get(:"$key")
-      s = get(:"$server")
+      key = get(:"$key")
+      s = get(:"$gen_server")
 
-      spawn_get_task(req, {k, box}, server: s, worker: self())
+      spawn_get_task(req, {key, box}, server: s, worker: self())
 
       put(:"$processes", p + 1)
     else
-      break? = match?({:break, _}, req[:timeout])
-      t_left = timeout(req)
-
-      case run(req.fun, [un(box)], t_left, break?) do
-        {:ok, get} ->
-          reply(req[:from], get)
-
-        e ->
-          handle_error(e, req)
-      end
+      run(req, box)
     end
   end
 
   defp handle(%{action: :get_and_update} = req) do
-    box = get(:"$value")
-    arg = un(box)
-
-    break? = match?({:break, _}, req[:timeout])
-    t_left = timeout(req)
-
-    case run(req.fun, [arg], t_left, break?) do
-      {:ok, {get}} ->
-        reply(req[:from], get)
-
-      {:ok, {get, v}} ->
-        put(:"$value", box(v))
-        reply(req[:from], get)
-
-      {:ok, :id} ->
-        reply(req[:from], arg)
-
-      {:ok, :pop} ->
-        delete(:"$value")
-        reply(req[:from], arg)
-
-      {:ok, reply} ->
-        raise CallbackError, got: reply
-
-      e ->
-        handle_error(e, req)
-    end
+    run(req, get(:"$value"))
   end
 
   defp handle(%{action: :max_processes} = req) do
@@ -170,26 +173,11 @@ defmodule AgentMap.Worker do
     """)
   end
 
-  defp handle_error({:error, :expired}, req) do
-    Logger.error("""
-    Key #{inspect(get(:"$key"))} call is expired and will not be executed.
-    Details: #{inspect(req)}.
-    """)
-  end
-
-  defp handle_error({:error, :toolong}, req) do
-    Logger.error("""
-    Key #{inspect(get(:"$key"))} call takes too long and will be terminated.
-    Details: #{inspect(req)}.
-    """)
-  end
-
   ##
   ## MAIN
   ##
 
-  # →
-  # value = {:value, any} | nil
+  # box = {:value, any} | nil
   def loop({ref, server}, key, {box, {p, max_p}}) do
     put(:"$value", box)
     send(server, {ref, :ok})
@@ -202,60 +190,19 @@ defmodule AgentMap.Worker do
     put(:"$max_processes", max_p)
 
     put(:"$wait", @wait + rand(25))
-    put(:"$selective_receive", true)
 
     # →
-    loop()
+    state = {[], []}
+    loop(state)
   end
 
-  # →→
-  def loop() do
-    if get(:"$selective_receive") do
-      if queue_len() > 100 do
-        # Turn off selective receive.
-        put(:"$selective_receive", false)
-
-        Logger.warn(
-          """
-          Selective receive is turned off for worker with
-          key #{inspect(get(:"$key"))} as it's message queue became too long
-          (#{queue_len()} messages). This prevents worker from executing the out
-          of turn calls. Selective receive will be turned on again as the queue
-          became empty (this will not be shown in logs).
-          """
-          |> String.replace("\n", " ")
-        )
-
-        loop()
-      else
-        # Selective receive.
-        receive do
-          %{info: _} = msg ->
-            handle(msg)
-            loop()
-
-          %{!: true} = req ->
-            handle(req)
-            loop()
-        after
-          0 ->
-            # Process other reqs.
-            _loop()
-        end
-      end
-    else
-      _loop()
-    end
-  end
-
-  # →→→
-  defp _loop() do
+  # →
+  defp loop({[], []} = state) do
     wait = get(:"$wait")
 
     receive do
       req ->
-        handle(req)
-        loop()
+        place(state, req) |> loop()
     after
       wait ->
         send(get(:"$gen_server"), {self(), :die?})
@@ -265,15 +212,92 @@ defmodule AgentMap.Worker do
             :bye
 
           req ->
-            handle(req)
-
-            # 1. Next time wait a few ms longer:
+            # Next time wait a few ms more.
             put(:"$wait", wait + rand(5))
 
-            # 2. Use selective receive again:
-            put(:"$selective_receive", true)
-            loop()
+            place(state, req) |> loop()
         end
+    end
+  end
+
+  defp loop({_, [%{action: :get} = req | _]} = state) do
+    state = {p_queue, queue} = flush(state)
+
+    if get(:"$processes") < get(:"$max_processes") do
+      [_req | tail] = queue
+      handle(req)
+      loop({p_queue, tail})
+    else
+      run(state) |> loop()
+    end
+  end
+
+  defp loop({p_queue, queue} = state) when p_queue != [] and queue != [] do
+    run(state) |> loop()
+  end
+
+  defp loop(state), do: rec_next(state)
+
+  #
+
+  #  Receive msg and loop or run.
+  defp rec_next(state) do
+    receive do
+      req ->
+        place(state, req) |> loop()
+    after
+      0 ->
+        # Mailbox is empty. Run:
+        run(state) |> loop()
+    end
+  end
+
+  #
+
+  defp run({[], [req | tail]}) do
+    handle(req)
+    {[], tail}
+  end
+
+  defp run({p_queue, [%{action: :get_and_update} | _] = queue}) do
+    for req <- p_queue do
+      handle(req)
+    end
+    {[], queue}
+  end
+
+  defp run({[req | tail], queue}) do
+    handle(req)
+    {tail, queue}
+  end
+
+  #
+
+  # Mailbox → queues.
+  defp flush(state) do
+    receive do
+      req ->
+        place(state, req) |> flush()
+    after
+      0 ->
+        state
+    end
+  end
+
+  #
+
+  # Req → queues.
+  defp place({p_queue, queue} = state, req) do
+    case req do
+      %{info: _} = msg ->
+        handle(msg)
+        state
+
+      %{!: true} = req ->
+        {[req | p_queue], queue}
+
+      _ ->
+        {p_queue, queue ++ [req]}
     end
   end
 end
