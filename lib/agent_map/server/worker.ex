@@ -108,8 +108,8 @@ defmodule AgentMap.Worker do
 
   def spawn_get_task(req, {key, box}, opts \\ [server: self()]) do
     Task.start_link(fn ->
-      Process.put(:"$key", key)
-      Process.put(:"$value", box)
+      put(:"$key", key)
+      put(:"$value", box)
 
       run(req, box)
 

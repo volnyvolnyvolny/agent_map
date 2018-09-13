@@ -792,8 +792,11 @@ defmodule AgentMap do
   @spec get_lazy(am, key, (() -> a)) :: value | a when a: var
   def get_lazy(agentmap, key, fun) do
     cb = fn value ->
-      b = Process.get(:"$value")
-      if b, do: value, else: fun.()
+      if Process.get(:"$value") do
+        value
+      else
+        fun.()
+      end
     end
 
     get(agentmap, key, cb)
@@ -1460,7 +1463,7 @@ defmodule AgentMap do
   @spec delete(agentmap, key, keyword) :: agentmap
   def delete(agentmap, key, opts \\ [!: false, cast: true]) do
     fun = fn _ -> :pop end
-    req = %Req{action: :get_and_update, key: key, data: fun}
+    req = %Req{action: :get_and_update, key: key, fun: fun}
     _call_or_cast(agentmap, req, opts)
   end
 

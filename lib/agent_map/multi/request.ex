@@ -38,7 +38,7 @@ defmodule AgentMap.Multi.Req do
       end
     end
 
-    broadcast(pids, %{action: req.action, fun: f, !: req.!})
+    broadcast(pids, %{action: :get_and_update, fun: f, !: req.!})
   end
 
   # on server

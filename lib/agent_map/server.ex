@@ -92,7 +92,7 @@ defmodule AgentMap.Server do
         {:noreply, state}
 
       noreply ->
-        {:noreply, noreply}
+        noreply
     end
   end
 
@@ -120,23 +120,23 @@ defmodule AgentMap.Server do
   def handle_info({pid, :die?}, state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
-    state =
-      if Worker.queue_len(pid) == 0 do
-        #!
-        dict = Worker.dict(pid)
-        send(pid, :die!)
+    if Worker.queue_len(pid) == 0 do
+      #!
+      dict = Worker.dict(pid)
+      send(pid, :die!)
 
-        #!
-        m = dict[:"$max_processes"]
-        p = dict[:"$processes"]
-        b = dict[:"$value"]
-        k = dict[:"$key"]
+      #!
+      m = dict[:"$max_processes"]
+      p = dict[:"$processes"]
+      b = dict[:"$value"]
+      k = dict[:"$key"]
 
-        pack = {b, {p - 1, m}}
-        put(state, k, pack)
-      end || state
+      pack = {b, {p - 1, m}}
 
-    {:noreply, state}
+      {:noreply, put(state, k, pack)}
+    else
+      {:noreply, state}
+    end
   end
 
   ##
