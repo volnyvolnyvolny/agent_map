@@ -55,5 +55,6 @@ defmodule AgentMap.Common do
   end
 
   def reply(nil, _msg), do: :nothing
-  def reply(from, msg), do: GenServer.reply(from, msg)
+  def reply({_p, _ref} = from, msg), do: GenServer.reply(from, msg)
+  def reply(from, msg), do: send(from, msg)
 end

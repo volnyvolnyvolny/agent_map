@@ -9,26 +9,11 @@ defmodule AgentMap.Server do
 
   use GenServer
 
-  def safe_apply(fun, args) do
-    {:ok, apply(fun, args)}
-  rescue
-    BadFunctionError ->
-      {:error, :badfun}
-
-    BadArityError ->
-      {:error, :badarity}
-
-    exception ->
-      {:error, exception}
-  catch
-    :exit, reason ->
-      {:error, {:exit, reason}}
-  end
-
   ##
   ## GenServer callbacks
   ##
 
+  @impl true
   def init(args) do
     keys = Keyword.keys(args[:funs])
 
@@ -36,7 +21,7 @@ defmodule AgentMap.Server do
       args[:funs]
       |> Enum.map(fn {_key, fun} ->
         Task.async(fn ->
-          safe_apply(fun, [])
+          AgentMap.safe_apply(fun, [])
         end)
       end)
       |> Task.yield_many(args[:timeout])
@@ -76,14 +61,17 @@ defmodule AgentMap.Server do
   ## CALL
   ##
 
+  @impl true
   def handle_call(%_{from: nil} = req, from, state) do
     handle_call(%{req | from: from}, :_from, state)
   end
 
+  @impl true
   def handle_call(%_{timeout: {_, _t}, inserted_at: nil} = req, from, state) do
     handle_call(%{req | inserted_at: now()}, from, state)
   end
 
+  @impl true
   def handle_call(%r{} = req, _from, state) do
     r.handle(req, state)
   end
@@ -92,11 +80,13 @@ defmodule AgentMap.Server do
   ## CAST
   ##
 
+  @impl true
   def handle_cast(%_{timeout: {_, _t}, inserted_at: nil} = req, state) do
     handle_cast(%{req | inserted_at: now()}, state)
   end
 
-  def handle_cast(%r{} = req, _from, state) do
+  @impl true
+  def handle_cast(%r{} = req, state) do
     case r.handle(req, state) do
       {:reply, _, state} ->
         {:noreply, state}
@@ -110,6 +100,7 @@ defmodule AgentMap.Server do
   ## INFO
   ##
 
+  @impl true
   def handle_info(%{info: :done, key: key} = msg, state) do
     state =
       case get(state, key) do
@@ -125,6 +116,7 @@ defmodule AgentMap.Server do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({pid, :die?}, state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
@@ -140,16 +132,18 @@ defmodule AgentMap.Server do
         b = dict[:"$value"]
         k = dict[:"$key"]
 
-        put(state, k, {b, {p - 1, m}})
+        pack = {b, {p - 1, m}}
+        put(state, k, pack)
       end || state
 
     {:noreply, state}
   end
 
   ##
-  ##
+  ## CODE CHANGE
   ##
 
+  @impl true
   def code_change(_old, {map, _max_p} = state, fun) do
     state =
       Enum.reduce(Map.keys(map), state, fn key, state ->

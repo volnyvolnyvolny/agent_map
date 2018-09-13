@@ -20,10 +20,11 @@ defmodule AgentMap.Worker do
   ## CALLBACKS
   ##
 
-  def share_value(to: t) do
+  def share_value(to: me) do
     key = Process.get(:"$key")
     box = Process.get(:"$value")
-    send(t, {key, box})
+    delete(:"$dontdie?")
+    reply(me, {key, box})
   end
 
   def accept_value() do
@@ -57,8 +58,8 @@ defmodule AgentMap.Worker do
   defp run(req, box) do
     break? = match?({:break, _}, req[:timeout])
     t_left = timeout(req)
-
     arg = un(box)
+
     result = run(req.fun, [arg], t_left, break?)
     interpret(req, arg, result)
   end
@@ -165,6 +166,10 @@ defmodule AgentMap.Worker do
     put(:"$processes", p + 1)
   end
 
+  defp handle(:dontdie!) do
+    put(:"$dontdie?", true)
+  end
+
   defp handle(msg) do
     k = inspect(get(:"$key"))
 
@@ -205,17 +210,22 @@ defmodule AgentMap.Worker do
         place(state, req) |> loop()
     after
       wait ->
-        send(get(:"$gen_server"), {self(), :die?})
+        if get(:"$dontdie?") do
+          loop(state)
+        else
+          send(get(:"$gen_server"), {self(), :die?})
 
-        receive do
-          :die! ->
-            :bye
+          receive do
+            :die! ->
+              :bye
 
-          req ->
-            # Next time wait a few ms more.
-            put(:"$wait", wait + rand(5))
+            req ->
+              # Next time wait a few ms more.
+              put(:"$wait", wait + rand(5))
 
-            place(state, req) |> loop()
+              place(state, req)
+              |> loop()
+          end
         end
     end
   end
@@ -263,6 +273,7 @@ defmodule AgentMap.Worker do
     for req <- p_queue do
       handle(req)
     end
+
     {[], queue}
   end
 

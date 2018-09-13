@@ -2,9 +2,10 @@ defmodule AgentMap.CallbackError do
   defexception [:got, :len, transaction?: false]
 
   def message(%{transaction?: false, got: g}) do
-    "callback may return {get, value} | {get} | :id | :pop | {:chain,
-    {key, fun} | {fun, keys}, value}, got: #{inspect(g)}"
-    |> String.replace("\n", " ")
+    """
+    callback may return {get, value} | {get} | :id | :pop | {fun, keys}, value}.
+    got: #{inspect(g)}
+    """
   end
 
   def message(%{transaction?: true, len: n}) do
@@ -12,10 +13,11 @@ defmodule AgentMap.CallbackError do
   end
 
   def message(%{transaction?: true, got: g}) do
-    "callback may return {get, [value] | :id | :drop} | {get} | :id | :pop |
-    [{get, value} | {get} | :id | :pop] |
-    {:chain, {key, fun} | {fun, keys}, [value] | :id | :drop}, got: #{inspect(g)}"
-    |> String.replace("\n", " ")
+    """
+    callback may return {get, [value] | :id | :drop} | {get} | :id | :pop |
+    [{get, value} | {get} | :id | :pop].
+    got: #{inspect(g)}
+    """
   end
 end
 

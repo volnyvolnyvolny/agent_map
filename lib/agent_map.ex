@@ -392,7 +392,19 @@ defmodule AgentMap do
       1
   """
   def safe_apply(fun, args) do
-    Server.safe_apply(fun, args)
+    {:ok, apply(fun, args)}
+  rescue
+    BadFunctionError ->
+      {:error, :badfun}
+
+    BadArityError ->
+      {:error, :badarity}
+
+    exception ->
+      {:error, {exception, __STACKTRACE__}}
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
   end
 
   ## ##
