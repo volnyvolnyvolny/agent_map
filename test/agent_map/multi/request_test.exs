@@ -35,15 +35,65 @@ defmodule AgentMapMultiRequestTest do
     Req.handle(r, state)
 
     assert_receive {:_ref, [42, 1, 4, nil]}
+  end
 
-    #
+  test "handle(%{action: :get, !: false})" do
+    state =
+      {%{}, 3}
+      |> put(:a, box(42))
+      |> put(:b, {box(1), 4})
+      |> put(:c, {box(4), {1, 6}})
+      |> put(:d, {nil, 5})
+      |> spawn_worker(:a)
+      |> spawn_worker(:b)
+      |> spawn_worker(:c)
+      |> spawn_worker(:d)
 
-    r = %Req{action: :get, !: false, fun: & &1, keys: [:a, :b, :c, :d], from: {self(), :_ref}}
+    {:pid, wa} = get(state, :a)
+    {:pid, wb} = get(state, :b)
+
+    r = %{
+      action: :get_and_update,
+      fun: fn _ ->
+        sleep(50)
+        {:_get, 24}
+      end
+    }
+
+    send(wa, r)
+    send(wb, r)
+
+    r = %Req{action: :get, fun: & IO.inspect(&1), keys: [:a, :b, :c, :d], from: {self(), :_ref}}
     Req.handle(r, state)
 
     assert_receive {:_ref, [24, 24, 4, nil]}
+  end
 
-    #
+  test "handle(%{action: :get_and_update})" do
+    state =
+      {%{}, 3}
+      |> put(:a, box(42))
+      |> put(:b, {box(1), 4})
+      |> put(:c, {box(4), {1, 6}})
+      |> put(:d, {nil, 5})
+      |> spawn_worker(:a)
+      |> spawn_worker(:b)
+      |> spawn_worker(:c)
+      |> spawn_worker(:d)
+
+    {:pid, wa} = get(state, :a)
+    {:pid, wb} = get(state, :b)
+
+    r = %{
+      action: :get_and_update,
+      fun: fn _ ->
+        sleep(50)
+        {:_get, 24}
+      end
+    }
+
+    send(wa, r)
+    send(wb, r)
 
     r = %Req{
       action: :get_and_update,

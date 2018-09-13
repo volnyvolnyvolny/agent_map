@@ -223,8 +223,7 @@ defmodule AgentMap.Worker do
               # Next time wait a few ms more.
               put(:"$wait", wait + rand(5))
 
-              place(state, req)
-              |> loop()
+              place(state, req) |> loop()
           end
         end
     end
@@ -246,12 +245,7 @@ defmodule AgentMap.Worker do
     run(state) |> loop()
   end
 
-  defp loop(state), do: rec_next(state)
-
-  #
-
-  #  Receive msg and loop or run.
-  defp rec_next(state) do
+  defp loop(state) do
     receive do
       req ->
         place(state, req) |> loop()

@@ -1165,9 +1165,9 @@ defmodule AgentMap do
       ...> |> cast(:k, fn _ -> sleep(100) end)
       ...> |> max_processes(:k, 42, !: true)
       :infinity
-      iex> max_processes(:k, 1, !: true)
+      iex> max_processes(am, :k, 1, !: true)
       :infinity
-      iex> max_processes(:k, :infinity)
+      iex> max_processes(am, :k, :infinity)
       1
   """
   @spec max_processes(agentmap, key, pos_integer | :infinity, !: boolean) ::

@@ -67,12 +67,12 @@ defmodule AgentMap.Server do
   end
 
   @impl true
-  def handle_call(%_{timeout: {_, _t}, inserted_at: nil} = req, from, state) do
-    handle_call(%{req | inserted_at: now()}, from, state)
+  def handle_call(%_{timeout: {_, _t}, inserted_at: nil} = req, :_from, state) do
+    handle_call(%{req | inserted_at: now()}, :_from, state)
   end
 
   @impl true
-  def handle_call(%r{} = req, _from, state) do
+  def handle_call(%r{} = req, :_from, state) do
     r.handle(req, state)
   end
 

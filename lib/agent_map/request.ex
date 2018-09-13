@@ -97,10 +97,10 @@ defmodule AgentMap.Req do
       {:pid, w} ->
         if req.! do
           max_p = Worker.dict(w)[:"$max_processes"]
-          send(w, compress(%{req | from: nil}))
+          send(w, IO.inspect(compress(%{req | from: nil})))
           {:reply, max_p, state}
         else
-          send(w, compress(%{req | !: true}))
+          send(w, IO.inspect(compress(%{req | !: true})))
           {:noreply, state}
         end
 
