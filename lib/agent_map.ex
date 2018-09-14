@@ -38,7 +38,7 @@ defmodule AgentMap do
 
   The special struct `%AgentMap{}` can be created via the `new/1` function. This
   [allows](#module-enumerable-protocol-and-access-behaviour) to use the
-  `Enumerable` protocol and to take benefit from the `Access` behaviour.
+  `Enumerable` protocol.
 
   Also, `AgentMap` can be started in an `Agent` manner:
 

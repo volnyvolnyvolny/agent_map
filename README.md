@@ -3,23 +3,33 @@
 The `AgentMap` can be seen as a stateful `Map` that parallelize operations
 made on different keys. 
 
-For example:
+For example this call:
 
-    import :timer
-    map = Map.new(a: 1, b: 1)
-    fun = fn v -> sleep(10); {:_get, v + 1} end
-    {:_get, map} = Map.get_and_update(map, :a, fun)
-    {:_get, map} = Map.get_and_update(map, :b, fun)
+    iex> import :timer
+    iex> map = Map.new(a: 1, b: 1)
+    iex> fun = fn v -> sleep(10); {:_get, v + 1} end
+    iex> {:_get, map} = Map.get_and_update(map, :a, fun)
+    iex> {:_get, map} = Map.get_and_update(map, :b, fun)
+    iex> Map.get(map, :a)
+    2
+    iex> Map.get(map, :b)
+    2
 
-this call will be executed in `20` ms, while this:
+will be executed in `20` ms, while this
 
-    import :timer
-    map = AgentMap.new(a: 1, b: 1)
-    fun = fn v -> sleep(10); {:_get, v + 1} end
-    :_get = Map.get_and_update(map, :a, fun)
-    :_get = Map.get_and_update(map, :b, fun)
+    iex> import :timer
+    iex> am = AgentMap.new(a: 1, b: 1)
+    iex> fun = fn v -> sleep(10); {:_get, v + 1} end
+    iex> AgentMap.get_and_update(am, :a, fun)
+    :_get_
+    iex> AgentMap.get_and_update(am, :b, fun)
+    :_get_
+    iex> AgentMap.get(am, :a)
+    2
+    iex> AgentMap.get(am, :b)
+    2
 
-in around of `10`.
+in around of `10` ms because of parallelization.
 
 Underneath it's a `GenServer` that holds a `Map`. When an `update/4`,
 `update!/4`, `get_and_update/4` or `cast/4` is first called for a key, a special
@@ -55,7 +65,7 @@ See documentation for `AgentMap`.
 
   The special struct `%AgentMap{}` can be created via the `new/1` function. This
   [allows](#module-enumerable-protocol-and-access-behaviour) to use the
-  `Enumerable` protocol and to take benefit from the `Access` behaviour.
+  `Enumerable` protocol.
 
   Also, `AgentMap` can be started in an `Agent` manner:
 
@@ -191,8 +201,8 @@ See documentation for `AgentMap`.
 
 ## Installation
 
-AgentMap requires Elixir v1.8. Add :agent_map to your list of dependencies in
-mix.exs:
+AgentMap requires Elixir `v1.8` Add `:agent_map`to your list of dependencies in
+`mix.exs`:
 
     def deps do
       [{:agent_map, "~> 1.0"}]
