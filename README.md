@@ -17,16 +17,16 @@ iex> Map.get(map, :b)
 2
 ```
 
-will be executed in `20` ms, while this
+will be executed in `20` ms, while this:
 
 ```elixir
 iex> import :timer
 iex> am = AgentMap.new(a: 1, b: 1)
 iex> fun = fn v -> sleep(10); {:_get, v + 1} end
 iex> AgentMap.get_and_update(am, :a, fun)
-:_get_
+:_get
 iex> AgentMap.get_and_update(am, :b, fun)
-:_get_
+:_get
 iex> AgentMap.get(am, :a)
 2
 iex> AgentMap.get(am, :b)
@@ -44,13 +44,13 @@ order of incoming new calls, executing them in a sequence, except for the
 degree of parallelization can be tweaked using the `max_processes/3` function.
 The worker will die after about `10` ms of inactivity.
 
-Basically, it can be used as a cache, memoization, computational framework and,
-sometimes, as a `GenServer` replacement.
-
 `AgentMap` supports multi-key calls — operations on a group of keys. See
 `AgentMap.Multi`.
 
-See documentation for `AgentMap`.
+Basically, `AgentMap` can be used as a cache, memoization, computational
+framework and, sometimes, as a `GenServer` replacement.
+
+See documentation for [AgentMap](https://hexdocs.pm/agent_map).
 
 ## Examples
 
@@ -90,31 +90,32 @@ More complicated example involves memoization:
 
 ```elixir
 defmodule Calc do
-    def fib(0), do: 0
-    def fib(1), do: 1
-    def fib(n) when n >= 0 do
-      unless GenServer.whereis(__MODULE__) do
-        AgentMap.start_link(name: __MODULE__)
-        fib(n)
-      else
-        AgentMap.get_and_update(__MODULE__, n, fn
-          nil ->
-            # This calculation will be made in a separate
-            # worker process.
-            res = fib(n - 1) + fib(n - 2)
-            # Return `res` and set it as a new value.
-            {res, res}
+  def fib(0), do: 0
+  def fib(1), do: 1
+  def fib(n) when n >= 0 do
+    unless GenServer.whereis(__MODULE__) do
+      AgentMap.start_link(name: __MODULE__)
+      fib(n)
+    else
+      AgentMap.get_and_update(__MODULE__, n, fn
+        nil ->
+          # This calculation will be made in a separate
+          # worker process.
+          res = fib(n - 1) + fib(n - 2)
+          # Return `res` and set it as a new value.
+          {res, res}
 
-          _value ->
-            # Change nothing, return current value.
-            :id
-        end)
-      end
+        _value ->
+          # Change nothing, return current value.
+          :id
+      end)
     end
   end
+end
 ```
 
-Also, take a look at the `test/memo.ex`.
+Also, take a look at the
+[test/memo.ex](https://github.com/zergera/agent_map/blob/master/test/memo.ex).
 
 `AgentMap` provides possibility to make multi-key calls (operations on multiple
 keys). Let's see an accounting demo:
