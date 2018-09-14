@@ -3,9 +3,23 @@ defmodule AgentMapTest do
   # import :timer
 
   use ExUnit.Case
-#  doctest AgentMap
+  #  doctest AgentMap
 
   test "main" do
+    am = AgentMap.new(a: 1, b: 2)
+
+    assert am
+           |> AgentMap.delete(:a)
+           |> AgentMap.take([:a, :b]) == %{b: 2}
+
+    # assert am
+    #        |> AgentMap.delete(:b)
+    #        |> AgentMap.take([:a, :b]) == %{b: 2}
+
+    # #
+    # assert am
+    #        |> AgentMap.take(am, [:a, :b], !: false) == %{}
+
     # import AgentMap
     # am = AgentMap.new()
     # assert max_processes(am, :k, 42) == 5

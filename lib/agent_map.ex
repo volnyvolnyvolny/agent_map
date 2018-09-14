@@ -1,5 +1,5 @@
 defmodule AgentMap do
-  @enforce_keys [:link]
+  @enforce_keys [:pid]
   defstruct @enforce_keys
 
   alias AgentMap.{Server, Req, IncError, Multi}
@@ -210,13 +210,7 @@ defmodule AgentMap do
       {:ok, :ready}
       # — current state.
       # Right now :steady is executed.
-      #
-      iex> queue_len(am, :state)
-      2
-      # [:go!, :stop]
-      iex> queue_len(am, :state, !: true)
-      1
-      # [:go!]
+      # In queue: [:go!, :stop]
       iex> [get(am, :state),
       ...>  get(am, :state, !: true),
       ...>  get(am, :state, & &1, !: true)]
@@ -370,10 +364,10 @@ defmodule AgentMap do
   ## HELPERS ##
 
   @doc """
-  Process id of an `AgentMap` server.
+  PID of an `AgentMap` server.
   """
-  def pid(%__MODULE__{link: am}), do: am
-  def pid(am), do: am
+  def pid(%__MODULE__{pid: p}), do: p
+  def pid(p), do: p
 
   @doc """
   Wraps the `fun` in the `try…catch` before applying `args`.
@@ -447,7 +441,7 @@ defmodule AgentMap do
   def new(enumerable)
 
   def new(%__MODULE__{} = am), do: am
-  def new(%_{} = struct), do: new(Map.new(struct))
+  def new(%_{} = s), do: new(Map.from_struct(s))
   def new(keyword) when is_list(keyword), do: new(Map.new(keyword))
 
   def new(%{} = m) when is_map(m) do
@@ -456,11 +450,11 @@ defmodule AgentMap do
         {key, fn -> value end}
       end
 
-    {:ok, am} = start_link(funs)
-    new(am)
+    {:ok, pid} = start_link(funs)
+    new(pid)
   end
 
-  def new(am), do: %__MODULE__{link: GenServer.whereis(am)}
+  def new(p) when is_pid(p), do: %__MODULE__{pid: GenServer.whereis(p)}
 
   @doc """
   Creates agentmap from an `enumerable` via the given transformation function.
@@ -617,15 +611,6 @@ defmodule AgentMap do
   defp _cast(agentmap, %Req{} = req, opts) do
     GenServer.cast(pid(agentmap), struct(req, opts))
     agentmap
-  end
-
-  defp _call_or_cast(agentmap, %Req{} = req, opts) do
-    if Keyword.get(opts, :cast, true) do
-      # by default:
-      _cast(agentmap, req, opts)
-    else
-      _call(agentmap, req, opts)
-    end
   end
 
   ##
@@ -1216,14 +1201,18 @@ defmodule AgentMap do
   @spec fetch(agentmap, key, !: boolean, timeout: timeout) :: {:ok, value} | :error
   def fetch(agentmap, key, opts \\ [!: true, timeout: 5000]) do
     if Keyword.get(opts, :!, true) do
-      req = %Req{action: :fetch, data: key}
+      req = %Req{action: :fetch, key: key}
       _call(agentmap, req, opts)
     else
-      get(agentmap, key, fn value ->
+      fun = fn value ->
         if Process.get(:"$value") do
           {:ok, value}
-        end || :error
-      end)
+        else
+          :error
+        end
+      end
+
+      get(agentmap, key, fun, opts)
     end
   end
 
@@ -1259,7 +1248,7 @@ defmodule AgentMap do
       ...>      sleep(50); 42
       ...>    end)
       ...> |> AgentMap.fetch!(:b, !: false)
-      {:ok, 42}
+      42
 
       iex> am = AgentMap.new(a: 1)
       iex> AgentMap.fetch!(am, :a)
@@ -1381,10 +1370,16 @@ defmodule AgentMap do
   @spec put(am, key, value, keyword) :: am
   def put(agentmap, key, value, opts \\ [!: true, cast: true]) do
     opts = Keyword.put_new(opts, :!, true)
-    req = %Req{action: :put, key: key, data: value}
-    _call_or_cast(agentmap, req, opts)
 
-    agentmap
+    req = %Req{action: :put, key: key, data: value}
+
+    if Keyword.get(opts, :cast, true) do
+      # by default:
+      _cast(agentmap, req, opts)
+    else
+      _call(agentmap, req, opts)
+      agentmap
+    end
   end
 
   @doc """
@@ -1419,7 +1414,7 @@ defmodule AgentMap do
       # But:
       #
       iex> AgentMap.new(a: 1)
-      ...> |> AgentMap.cast(fn _ -> sleep(100); 42 end)
+      ...> |> AgentMap.cast(:a, fn _ -> sleep(100); 42 end)
       ...> |> AgentMap.take([:a], !: false)
       %{a: 42}
   """
@@ -1427,7 +1422,7 @@ defmodule AgentMap do
   def take(agentmap, keys, opts \\ [!: true]) do
     opts = Keyword.put_new(opts, :!, true)
     fun = fn _ -> Process.get(:"$map") end
-    get(agentmap, fun, keys, opts)
+    Multi.get(agentmap, keys, fun, opts)
   end
 
   @doc """
@@ -1437,10 +1432,10 @@ defmodule AgentMap do
 
   ## Options
 
+    * `cast: false` — (`boolean`, `true`) to wait until actual drop happend;
+
     * `!: true` — (`boolean`, `false`) to make
     [priority](#module-priority-calls-true) delete calls;
-
-    * `cast: false` — (`boolean`, `true`) to wait until actual drop happend;
 
     * `timeout: {:drop, pos_integer}` — drops this call from queue when
       [timeout](#module-timeout) happen;
@@ -1451,20 +1446,31 @@ defmodule AgentMap do
 
       iex> am = AgentMap.new(a: 1, b: 2)
       iex> am
-      ...> |> AgentMap.delete(:a)
+      ...> |> AgentMap.delete(:a, cast: false)
       ...> |> AgentMap.take([:a, :b])
       %{b: 2}
       #
       iex> am
-      ...> |> AgentMap.delete(:a)
+      ...> |> AgentMap.delete(:b)
       ...> |> AgentMap.take([:a, :b])
       %{b: 2}
+      #
+      iex> am
+      ...> |> AgentMap.take([:a, :b], !: false)
+      %{}
   """
   @spec delete(agentmap, key, keyword) :: agentmap
-  def delete(agentmap, key, opts \\ [!: false, cast: true]) do
+  def delete(agentmap, key, opts \\ [cast: true, !: false]) do
     fun = fn _ -> :pop end
     req = %Req{action: :get_and_update, key: key, fun: fun}
-    _call_or_cast(agentmap, req, opts)
+
+    if Keyword.get(opts, :cast, true) do
+      # by default:
+      _cast(agentmap, req, opts)
+    else
+      _call(agentmap, req, opts)
+      agentmap
+    end
   end
 
   @doc """
@@ -1559,40 +1565,6 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns the size of the execution queue for the given `key`.
-
-  ### Options
-
-    * `!: (false) true` — (`boolean`) to count only (not) [priority
-      callbacks](#module-priority-calls-true) in the `key` queue.
-
-  ### Examples
-
-      iex> import :timer
-      iex> am = AgentMap.new(a: 1, b: 2)
-      iex> AgentMap.queue_len(am, :a)
-      0
-      iex> am
-      ...> |> AgentMap.cast(:a, fn _ -> sleep(100) end)
-      ...> |> AgentMap.cast(:a, fn _ -> sleep(100) end)
-      ...> |> AgentMap.cast(:a, fn _ -> sleep(100) end, !: true)
-      iex> :timer.sleep(10)
-      iex> AgentMap.queue_len(am, :a)
-      2
-      iex> AgentMap.queue_len(am, :a, !: true)
-      1
-      iex> AgentMap.queue_len(am, :a, !: false)
-      1
-      iex> AgentMap.queue_len(am, :b)
-      0
-  """
-  @spec queue_len(agentmap, key, [!: boolean] | []) :: non_neg_integer
-  def queue_len(agentmap, key, opts \\ []) do
-    opts = Keyword.take(opts, [:!])
-    _call(agentmap, %Req{action: :queue_len, key: key, data: opts}, [])
-  end
-
-  @doc """
   Increments value with given `key`.
 
   By default, returns immediately, without waiting for the actual increment
@@ -1651,8 +1623,14 @@ defmodule AgentMap do
     end
 
     req = %Req{action: :get_and_update, key: key, fun: fun}
-    _call_or_cast(agentmap, req, opts)
-    agentmap
+
+    if Keyword.get(opts, :cast, true) do
+      # by default:
+      _cast(agentmap, req, opts)
+    else
+      _call(agentmap, req, opts)
+      agentmap
+    end
   end
 
   @doc """

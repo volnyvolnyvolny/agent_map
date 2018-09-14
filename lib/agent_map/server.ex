@@ -120,7 +120,7 @@ defmodule AgentMap.Server do
   def handle_info({pid, :die?}, state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
-    if Worker.queue_len(pid) == 0 do
+    unless Worker.busy?(pid) do
       #!
       dict = Worker.dict(pid)
       send(pid, :die!)

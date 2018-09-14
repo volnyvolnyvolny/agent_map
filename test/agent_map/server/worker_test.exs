@@ -1,4 +1,4 @@
-defmodule AgentMapWorkerTest do
+defmodule AgenxtMapWorkerTest do
   alias AgentMap.{Req, Worker, Server.State, Common}
   import State
   import Common
@@ -140,8 +140,8 @@ defmodule AgentMapWorkerTest do
     assert_receive {:_ref, 3}
     t3 = to_ms(now() - past)
 
-    assert(t1 <~> t2)
-    assert(t2 <~> t3)
+    assert t1 <~> t2
+    assert t2 <~> t3
 
     sleep(1)
     past = now()
@@ -202,7 +202,7 @@ defmodule AgentMapWorkerTest do
     r = %{r_get | action: :get_and_update}
 
     sleep(5)
-    assert(Worker.dict(wa)[:"$processes"] == 1)
+    assert Worker.dict(wa)[:"$processes"] == 1
     past = now()
     send(wa, Req.compress(r_get))
     send(wa, Req.compress(r_get))
@@ -228,15 +228,15 @@ defmodule AgentMapWorkerTest do
     assert_receive {:_ref, {43, 44}}
     t6 = to_ms(now() - past)
 
-    assert(t1 <~> t2)
-    assert(t2 <~> t3)
+    assert t1 <~> t2
+    assert t2 <~> t3
 
-    assert(t3 < t4)
-    assert(t4 < t5)
-    assert(t5 <~> t6)
+    assert t3 < t4
+    assert t4 < t5
+    assert t5 <~> t6
 
     sleep(5)
-    assert(Worker.dict(wa)[:"$processes"] == 1)
+    assert Worker.dict(wa)[:"$processes"] == 1
 
     send(wa, Req.compress(r_get))
     send(wa, Req.compress(r_get))
@@ -250,6 +250,6 @@ defmodule AgentMapWorkerTest do
     assert_receive {:_ref, {43, 44}}
     assert_receive {:_ref, {43, 44}}
     assert_receive {:_ref, 43}
-    assert_receive {:_ref, {44, 45}}
+    assert_receive {:_ref, {44, 45}}, 200
   end
 end

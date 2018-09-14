@@ -63,7 +63,7 @@ defmodule AgentMapMultiRequestTest do
     send(wa, r)
     send(wb, r)
 
-    r = %Req{action: :get, fun: & IO.inspect(&1), keys: [:a, :b, :c, :d], from: {self(), :_ref}}
+    r = %Req{action: :get, fun: & &1, keys: [:a, :b, :c, :d], from: {self(), :_ref}}
     Req.handle(r, state)
 
     assert_receive {:_ref, [24, 24, 4, nil]}

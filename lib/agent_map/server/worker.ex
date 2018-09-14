@@ -3,18 +3,32 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Common, CallbackError, Server.State}
 
-  import Process, only: [get: 1, put: 2, delete: 1, info: 1]
+  import Process, only: [get: 1, put: 2, delete: 1, info: 1, info: 2]
   import Common, only: [run: 4, reply: 2, now: 0, left: 2]
   import State, only: [un: 1, box: 1]
 
   @moduledoc false
 
-  @compile {:inline, rand: 1, dict: 1, queue: 1, queue_len: 1}
+  @compile {:inline, rand: 1, dict: 1, busy?: 1}
 
   # ms
   @wait 10
 
   defp rand(n) when n < 100, do: rem(now(), n)
+
+  def dict(worker \\ self()), do: info(worker)[:dictionary]
+
+  def busy?(worker), do: info(worker)[:message_queue_len] > 0
+
+  def processes(worker) do
+    ps =
+      worker
+      |> info(:messages)
+      |> elem(1)
+      |> Enum.count(&match?(%{info: :get!}, &1))
+
+    get(:"$processes") + ps
+  end
 
   ##
   ## CALLBACKS
@@ -41,14 +55,6 @@ defmodule AgentMap.Worker do
   end
 
   ##
-  ## DICTIONARY
-  ##
-
-  def dict(worker \\ self()), do: info(worker)[:dictionary]
-  def queue(worker), do: info(worker)[:messages]
-  def queue_len(worker \\ self()), do: info(worker)[:message_queue_len]
-
-  ##
   ## REQUEST
   ##
 
@@ -56,7 +62,8 @@ defmodule AgentMap.Worker do
   defp timeout(%{}), do: :infinity
 
   defp run(req, box) do
-    break? = match?({:break, _}, req[:timeout])
+    timeout = Map.get(req, :timeout)
+    break? = match?({:break, _}, timeout)
     t_left = timeout(req)
     arg = un(box)
 
@@ -65,25 +72,25 @@ defmodule AgentMap.Worker do
   end
 
   defp interpret(%{action: :get} = req, _arg, {:ok, get}) do
-    reply(req[:from], get)
+    Map.get(req, :from) |> reply(get)
   end
 
   defp interpret(req, _arg, {:ok, {get}}) do
-    reply(req[:from], get)
+    Map.get(req, :from) |> reply(get)
   end
 
   defp interpret(req, _arg, {:ok, {get, v}}) do
     put(:"$value", box(v))
-    reply(req[:from], get)
+    Map.get(req, :from) |> reply(get)
   end
 
   defp interpret(req, arg, {:ok, :id}) do
-    reply(req[:from], arg)
+    Map.get(req, :from) |> reply(arg)
   end
 
   defp interpret(req, arg, {:ok, :pop}) do
     delete(:"$value")
-    reply(req[:from], arg)
+    Map.get(req, :from) |> reply(arg)
   end
 
   defp interpret(_req, _arg, {:ok, reply}) do
@@ -152,7 +159,7 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{action: :max_processes} = req) do
-    reply(req.from, get(:"$max_processes"))
+    reply(req[:from], get(:"$max_processes"))
     put(:"$max_processes", req.data)
   end
 
@@ -201,6 +208,23 @@ defmodule AgentMap.Worker do
     loop(state)
   end
 
+  defp maybe_die(state) do
+    send(get(:"$gen_server"), {self(), :die?})
+
+    receive do
+      :die! ->
+        :bye
+
+      :continue ->
+        # Next time wait a few ms more.
+        wait = get(:"$wait")
+        put(:"$wait", wait + rand(5))
+    after
+      0 ->
+        maybe_die(state)
+    end
+  end
+
   # →
   defp loop({[], []} = state) do
     wait = get(:"$wait")
@@ -213,18 +237,7 @@ defmodule AgentMap.Worker do
         if get(:"$dontdie?") do
           loop(state)
         else
-          send(get(:"$gen_server"), {self(), :die?})
-
-          receive do
-            :die! ->
-              :bye
-
-            req ->
-              # Next time wait a few ms more.
-              put(:"$wait", wait + rand(5))
-
-              place(state, req) |> loop()
-          end
+          maybe_die(state)
         end
     end
   end

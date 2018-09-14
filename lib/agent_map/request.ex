@@ -6,7 +6,7 @@ defmodule AgentMap.Req do
   alias AgentMap.{Worker, Req, Server, Common}
 
   import Worker, only: [spawn_get_task: 2]
-  import Enum, only: [count: 2, filter: 2]
+  import Enum, only: [filter: 2]
   import Server.State
   import Common
 
@@ -61,26 +61,6 @@ defmodule AgentMap.Req do
   ## HANDLERS
   ##
 
-  # XNOR
-  defp _filter(%{info: _}, _), do: false
-  defp _filter(msg, !: true), do: msg[:!]
-  defp _filter(msg, !: false), do: not msg[:!]
-  defp _filter(_, []), do: true
-
-  def handle(%Req{action: :queue_len} = req, state) do
-    num =
-      case get(state, req.key) do
-        {:pid, w} ->
-          opts = req.data
-          count(Worker.queue(w), &_filter(&1, opts))
-
-        _ ->
-          0
-      end
-
-    {:reply, num, state}
-  end
-
   def handle(%Req{action: :keys}, {map, _} = state) do
     has_value? = &match?({:ok, _}, fetch(state, &1))
     ks = filter(Map.keys(map), has_value?)
@@ -97,43 +77,46 @@ defmodule AgentMap.Req do
       {:pid, w} ->
         if req.! do
           max_p = Worker.dict(w)[:"$max_processes"]
-          send(w, IO.inspect(compress(%{req | from: nil})))
+          req = compress(%{req | from: nil})
+          send(w, req)
           {:reply, max_p, state}
         else
-          send(w, IO.inspect(compress(%{req | !: true})))
+          req = compress(%{req | !: true})
+          send(w, req)
           {:noreply, state}
         end
 
       {box, {p, old_max_p}} ->
         max_p = req.data
-        state = put(state, req.key, {box, {p, max_p}})
+        pack = {box, {p, max_p}}
+        state = put(state, req.key, pack)
         {:reply, old_max_p, state}
     end
   end
 
   def handle(%Req{action: :fetch} = req, state) do
-    {:reply, fetch(state, req.key), state}
+    value = fetch(state, req.key)
+    {:reply, value, state}
   end
 
+  #
+
   def handle(%Req{action: :get, !: true} = req, state) do
-    state =
-      case get(state, req.key) do
-        {:pid, w} ->
-          b = Worker.dict(w)[:"$value"]
+    case get(state, req.key) do
+      {:pid, w} ->
+        b = Worker.dict(w)[:"$value"]
+        spawn_get_task(req, {req.key, b})
 
-          req
-          |> compress()
-          |> spawn_get_task({req.key, b})
+        send(w, %{info: :get!})
+        {:noreply, state}
 
-          send(w, %{info: :get!})
-          state
+      {b, {p, max_p}} ->
+        spawn_get_task(req, {req.key, b})
 
-        {b, {p, max_p}} ->
-          spawn_get_task({req.key, b}, compress(req))
-          put(state, req.key, {b, {p + 1, max_p}})
-      end
-
-    {:noreply, state}
+        pack = {b, {p + 1, max_p}}
+        state = put(state, req.key, pack)
+        {:noreply, state}
+    end
   end
 
   def handle(%Req{action: :get, !: false} = req, state) do
@@ -144,14 +127,19 @@ defmodule AgentMap.Req do
 
       # Cannot spawn more Task's.
       {_, {p, max_p}} when p >= max_p ->
-        handle(req, spawn_worker(state, req.key))
+        state = spawn_worker(state, req.key)
+        handle(req, state)
 
       # Can spawn.
       {b, {p, max_p}} ->
-        spawn_get_task(req, b)
-        {:noreply, put(state, req.key, {b, {p + 1, max_p}})}
+        spawn_get_task(req, {req.key, b})
+        pack = {b, {p + 1, max_p}}
+        state = put(state, req.key, pack)
+        {:noreply, state}
     end
   end
+
+  #
 
   def handle(%Req{action: :get_and_update} = req, state) do
     case get(state, req.key) do
@@ -160,9 +148,12 @@ defmodule AgentMap.Req do
         {:noreply, state}
 
       _ ->
-        handle(req, spawn_worker(state, req.key))
+        state = spawn_worker(state, req.key)
+        handle(req, state)
     end
   end
+
+  #
 
   def handle(%Req{action: :put} = req, state) do
     case get(state, req.key) do
