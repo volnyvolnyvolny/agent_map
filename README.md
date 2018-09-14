@@ -70,8 +70,7 @@ iex> am
 ```
 
 The special struct `%AgentMap{}` can be created via the `new/1` function. This
-[allows](#module-enumerable-protocol-and-access-behaviour) to use the
-`Enumerable` protocol.
+allows to use the `Enumerable` protocol.
 
 Also, `AgentMap` can be started in an `Agent` manner:
 
@@ -214,8 +213,8 @@ end
 
 ## Installation
 
-AgentMap requires Elixir `v1.8` Add `:agent_map`to your list of dependencies in
-`mix.exs`:
+`AgentMap` requires Elixir `v1.8` Add `:agent_map`to your list of dependencies
+in `mix.exs`:
 
 ```elixir
 def deps do
