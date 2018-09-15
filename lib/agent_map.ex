@@ -203,9 +203,9 @@ defmodule AgentMap do
       iex> import :timer
       iex> am = AgentMap.new(state: :ready)
       iex> am
-      ...> |> cast(:state, fn _ -> sleep(50); :steady end)
-      ...> |> cast(:state, fn _ -> sleep(50); :stop end)
-      ...> |> cast(:state, fn _ -> sleep(50); :go! end, !: true)
+      ...> |> cast(:state, fn _ -> sleep(10); :steady end)
+      ...> |> cast(:state, fn _ -> sleep(10); :stop end)
+      ...> |> cast(:state, fn _ -> sleep(10); :go! end, !: true)
       ...> |> fetch(:state)
       {:ok, :ready}
       # — current state.
@@ -1402,19 +1402,19 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.take([:a, :c, :e])
-      %{a: 1, c: 3}
+      ...> |> AgentMap.take([:a, :b])
+      %{a: 1}
 
       iex> import :timer
       iex> AgentMap.new(a: 1)
-      ...> |> AgentMap.cast(:a, fn _ -> sleep(100); 42 end)
+      ...> |> AgentMap.cast(:a, fn _ -> sleep(10); 42 end)
       ...> |> AgentMap.take([:a])
       %{a: 1}
       #
       # But:
       #
       iex> AgentMap.new(a: 1)
-      ...> |> AgentMap.cast(:a, fn _ -> sleep(100); 42 end)
+      ...> |> AgentMap.cast(:a, fn _ -> sleep(10); 42 end)
       ...> |> AgentMap.take([:a], !: false)
       %{a: 42}
   """
@@ -1428,41 +1428,54 @@ defmodule AgentMap do
   @doc """
   Deletes the entry in the `agentmap` for a specific `key`.
 
-  By default, returns *immediately*, without waiting for actual delete happen.
+  By default, returns *immediately*, without waiting for actual delete happens.
 
   ## Options
 
-    * `cast: false` — (`boolean`, `true`) to wait until actual drop happend;
+    * `cast: false` — (`boolean`, `true`) to wait for actual removal before
+      return;
 
     * `!: true` — (`boolean`, `false`) to make
     [priority](#module-priority-calls-true) delete calls;
 
     * `timeout: {:drop, pos_integer}` — drops this call from queue when
-      [timeout](#module-timeout) happen;
+      [timeout](#module-timeout) happens;
 
     * `:timeout` — (`timeout`, `5000`) ignored if `cast: true` is used.
 
   ## Examples
 
+      iex> import AgentMap
       iex> am = AgentMap.new(a: 1, b: 2)
       iex> am
-      ...> |> AgentMap.delete(:a, cast: false)
-      ...> |> AgentMap.take([:a, :b])
+      ...> |> delete(:a)           # cast: true
+      ...> |> take([:a, :b])
       %{b: 2}
       #
+      iex> import :timer
       iex> am
-      ...> |> AgentMap.delete(:b)
-      ...> |> AgentMap.take([:a, :b])
-      %{b: 2}
-      #
+      ...> |> cast(:b, fn 2   -> sleep(10); 42 end)
+      ...> |> cast(:b, fn nil -> sleep(10); 24 end)
+      iex> sleep(1)
       iex> am
-      ...> |> AgentMap.take([:a, :b], !: false)
-      %{}
+      ...> |> delete(:b, !: true)  # cast: true
+      ...> |> fetch(:b)
+      {:ok, 2}
+      iex> am
+      ...> |> delete(:b, !: true, cast: false)
+      ...> |> fetch(:b)            # 10 ms later
+      :error
+      iex> fetch(am, :b, !: false) # 10 ms later
+      42
+      iex> am
+      ...> |> cast(:b, fn 42 -> sleep(10); 2 end)
+      ...> |> delete(:b, cast: false)
+      ...> |> fetch(:b)            # 10 ms later
+      :error
   """
   @spec delete(agentmap, key, keyword) :: agentmap
   def delete(agentmap, key, opts \\ [cast: true, !: false]) do
-    fun = fn _ -> :pop end
-    req = %Req{action: :get_and_update, key: key, fun: fun}
+    req = %Req{action: :delete, key: key}
 
     if Keyword.get(opts, :cast, true) do
       # by default:

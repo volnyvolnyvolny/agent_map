@@ -6,33 +6,49 @@ defmodule AgentMapTest do
   #  doctest AgentMap
 
   test "main" do
+    import AgentMap
     am = AgentMap.new(a: 1, b: 2)
 
     assert am
-           |> AgentMap.delete(:a)
-           |> AgentMap.take([:a, :b]) == %{b: 2}
+           |> delete(:a)
+           |> take([:a, :b]) == %{b: 2}
+
+    #
+    import :timer
+
+           am
+           |> cast(:b, fn 2 ->
+             IO.inspect(:xui)
+             sleep(10)
+             IO.inspect(:xiu)
+             42
+           end)
+           |> cast(:b, fn nil ->
+             IO.inspect(:zho)
+             sleep(10)
+             24
+           end)
+
+    sleep(3)
+
+    am
+    |> delete(:b, cast: false)
+
+    sleep(3)
+    assert am |> fetch(:b) == {:ok, 2}
 
     # assert am
-    #        |> AgentMap.delete(:b)
-    #        |> AgentMap.take([:a, :b]) == %{b: 2}
+    #        |> delete(:b, !: true, cast: false)
+    #        |> fetch(:b) == :error
 
-    # #
+    # assert fetch(am, :b, !: false) == 42
+
     # assert am
-    #        |> AgentMap.take(am, [:a, :b], !: false) == %{}
-
-    # import AgentMap
-    # am = AgentMap.new()
-    # assert max_processes(am, :k, 42) == 5
-    # assert max_processes(am, :k, :infinity) == 42
-
-    # #
-
-    # import :timer
-    # assert am
-    # |> cast(:k, fn _ -> sleep(100) end)
-    # |> max_processes(:k, 42, !: true) == :infinity
-
-    # assert max_processes(am, :k, 1, !: true) == :infinity
-    # assert max_processes(am, :k, :infinity) == 1
+    #        |> cast(:b, fn 42 ->
+    #          sleep(10)
+    #          2
+    #        end)
+    #        |> delete(:b, cast: false)
+    #        |> fetch(:b) == :error
   end
 end

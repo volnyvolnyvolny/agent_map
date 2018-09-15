@@ -1,8 +1,7 @@
 defmodule AgentMapMultiTest do
-  alias AgentMap.{Multi, Server}
+  alias AgentMap.Multi
 
   import :timer
-  import Server.State
   import AgentMap
 
   use ExUnit.Case
@@ -32,7 +31,7 @@ defmodule AgentMapMultiTest do
       |> cast(:a, fun)
       |> cast(:b, fun)
 
-    assert Multi.get(am, [:a, :b, :c, :d], & &1) == [42, 1, 4, nil]
+    assert Multi.get(am, [:a, :b, :c, :d], & &1) == [24, 24, 4, nil]
   end
 
   test "Multi.get_and_update" do
@@ -48,10 +47,14 @@ defmodule AgentMapMultiTest do
       |> cast(:b, fun.(24))
       |> cast(:a, fun.(33))
       |> cast(:b, fun.(33))
+      |> cast(:a, fun.(42))
+      |> cast(:b, fun.(42))
+      |> cast(:a, fun.(51))
+      |> cast(:b, fun.(51))
 
-    assert Multi.get(am, [:a, :b, :c, :d], & &1) == [42, 1, 4, nil]
+    assert Multi.get(am, [:a, :b, :c, :d], & &1, !: true) == [42, 1, 4, nil]
     assert Multi.get_and_update(am, [:a, :b, :c, :d], &{&1}, !: true) == [24, 24, 4, nil]
-    assert Multi.get_and_update(am, [:a, :b, :c, :d], &{&1}, !: true) == [24, 24, 4, nil]
-    assert Multi.get_and_update(am, [:a, :b, :c, :d], &{&1}) == [33, 33, 4, nil]
+    assert Multi.get_and_update(am, [:a, :b, :c, :d], &{&1}, !: true) == [33, 33, 4, nil]
+    assert Multi.get_and_update(am, [:a, :b, :c, :d], &{&1}) == [51, 51, 4, nil]
   end
 end

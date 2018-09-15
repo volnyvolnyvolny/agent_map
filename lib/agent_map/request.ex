@@ -61,11 +61,17 @@ defmodule AgentMap.Req do
   ## HANDLERS
   ##
 
-  def handle(%Req{action: :keys}, {map, _} = state) do
-    has_value? = &match?({:ok, _}, fetch(state, &1))
-    ks = filter(Map.keys(map), has_value?)
+  def handle(%Req{action: :processes} = req, state) do
+    p =
+      case get(state, req.key) do
+        {:pid, w} ->
+          Worker.processes(w)
 
-    {:reply, ks, state}
+        {_box, {p, _max_p}} ->
+          p
+      end
+
+    {:reply, p, state}
   end
 
   def handle(%Req{action: :max_processes, key: nil} = req, {map, max_p}) do
@@ -94,9 +100,13 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :fetch} = req, state) do
-    value = fetch(state, req.key)
-    {:reply, value, state}
+  #
+
+  def handle(%Req{action: :keys}, {map, _} = state) do
+    has_value? = &match?({:ok, _}, fetch(state, &1))
+    ks = filter(Map.keys(map), has_value?)
+
+    {:reply, ks, state}
   end
 
   #
@@ -167,6 +177,24 @@ defmodule AgentMap.Req do
       {_, p_info} ->
         pack = {box(req.data), p_info}
         {:reply, :ok, put(state, req.key, pack)}
+    end
+  end
+
+  def handle(%Req{action: :fetch} = req, state) do
+    value = fetch(state, req.key)
+    {:reply, value, state}
+  end
+
+  def handle(%Req{action: :delete} = req, state) do
+    case get(state, req.key) do
+      {_box, p_info} ->
+        pack = {nil, p_info}
+        state = put(state, req.key, pack)
+        {:reply, :done, state}
+
+      _ ->
+        req = %{req | action: :get_and_update, fun: fn _ -> IO.inspect(:pop) end}
+        handle(req, state)
     end
   end
 end
