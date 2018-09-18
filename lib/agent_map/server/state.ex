@@ -29,7 +29,7 @@ defmodule AgentMap.Server.State do
 
   @type key :: term
 
-  @type pack :: {:pid, worker} | {box, {p, max_p}} | compressed_pack
+  @type pack :: worker | {box, {p, max_p}} | compressed_pack
 
   @typedoc """
   Compressed pack is:
@@ -66,8 +66,8 @@ defmodule AgentMap.Server.State do
 
   def get({map, max_p} = _state, key) do
     case map[key] do
-      {:pid, _} = pack ->
-        pack
+      w when is_pid(w) ->
+        w
 
       pack ->
         decompress(pack, max_p)
@@ -77,11 +77,11 @@ defmodule AgentMap.Server.State do
   def fetch(state, key) do
     box =
       case get(state, key) do
-        {:pid, w} ->
-          Worker.dict(w)[:"$value"]
-
         {box, {_, _}} ->
           box
+
+        w ->
+          Worker.dict(w)[:"$value"]
       end
 
     case box do
@@ -95,10 +95,7 @@ defmodule AgentMap.Server.State do
 
   def spawn_worker({map, max_p} = state, key) do
     case get(state, key) do
-      {:pid, _} ->
-        state
-
-      {_, {_, _}} = pack ->
+      {_box, _p_info} = pack ->
         ref = make_ref()
         server = self()
 
@@ -112,8 +109,10 @@ defmodule AgentMap.Server.State do
             :continue
         end
 
-        pack = {:pid, worker}
-        {Map.put(map, key, pack), max_p}
+        {Map.put(map, key, worker), max_p}
+
+      _worker ->
+        state
     end
   end
 
@@ -128,14 +127,14 @@ defmodule AgentMap.Server.State do
   def separate(state, keys) do
     Enum.reduce(keys, {%{}, %{}}, fn key, {map, workers} ->
       case get(state, key) do
-        {:pid, w} ->
-          {map, Map.put(workers, key, w)}
-
         {{:value, v}, _} ->
           {Map.put(map, key, v), workers}
 
         {nil, _} ->
           {map, workers}
+
+        w ->
+          {map, Map.put(workers, key, w)}
       end
     end)
   end

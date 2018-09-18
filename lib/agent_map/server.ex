@@ -4,6 +4,7 @@ defmodule AgentMap.Server do
 
   alias AgentMap.{Req, Worker, Server.State, Common}
 
+  import Worker, only: [busy?: 1, dict: 1]
   import State, only: [put: 3, get: 2]
   import Common, only: [now: 0]
 
@@ -104,32 +105,32 @@ defmodule AgentMap.Server do
   def handle_info(%{info: :done, key: key} = msg, state) do
     state =
       case get(state, key) do
-        {:pid, worker} ->
-          send(worker, msg)
-          state
-
         {b, {p, max_p}} ->
           pack = {b, {p - 1, max_p}}
           put(state, key, pack)
+
+        worker ->
+          send(worker, msg)
+          state
       end
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_info({pid, :die?}, state) do
+  def handle_info({worker, :die?}, state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
-    unless Worker.busy?(pid) do
+    unless busy?(worker) do
       #!
-      dict = Worker.dict(pid)
-      send(pid, :die!)
+      dict = dict(worker)
+      send(worker, :die!)
 
       #!
-      m = dict[:"$max_processes"]
-      p = dict[:"$processes"]
-      b = dict[:"$value"]
-      k = dict[:"$key"]
+      m = dict[:max_processes]
+      p = dict[:processes]
+      b = dict[:value]
+      k = dict[:key]
 
       pack = {b, {p - 1, m}}
 

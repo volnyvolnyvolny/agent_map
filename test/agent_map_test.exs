@@ -3,52 +3,60 @@ defmodule AgentMapTest do
   # import :timer
 
   use ExUnit.Case
-  #  doctest AgentMap
+  doctest AgentMap
 
   test "main" do
+    import :timer
     import AgentMap
+
     am = AgentMap.new(a: 1, b: 2)
 
     assert am
            |> delete(:a)
            |> take([:a, :b]) == %{b: 2}
 
-    #
-    import :timer
+    f =
+      &fn hist ->
+        sleep(10)
+        (hist && hist ++ [&1]) || [&1]
+      end
 
-           am
-           |> cast(:b, fn 2 ->
-             IO.inspect(:xui)
-             sleep(10)
-             IO.inspect(:xiu)
-             42
-           end)
-           |> cast(:b, fn nil ->
-             IO.inspect(:zho)
-             sleep(10)
-             24
-           end)
+    assert am
+           |> cast(:a, f.(1))
+           |> cast(:a, f.(2))
+           |> cast(:a, f.(3))
+           |> fetch(:a, !: false) == {:ok, [1, 2, 3]}
 
-    sleep(3)
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, f.(2))
+           |> cast(:a, f.(3))
+           |> delete(:a)
+           |> fetch(:a, !: false) == :error
 
-    am
-    |> delete(:b, cast: false)
+    for _ <- 1..1000 do
+      assert am
+             |> put(:a, [1])
+             |> cast(:a, f.(2))
+             |> cast(:a, f.(3))
+             |> delete(:a, !: true)
+             |> fetch(:a, !: false) == {:ok, [2, 3]}
+    end
 
-    sleep(3)
-    assert am |> fetch(:b) == {:ok, 2}
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, f.(2))
+           |> cast(:a, f.(3))
+           |> delete(:a, cast: false)
+           |> fetch(:a) == :error
 
-    # assert am
-    #        |> delete(:b, !: true, cast: false)
-    #        |> fetch(:b) == :error
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, f.(2))
+           |> cast(:a, f.(3))
+           |> delete(:a, !: true, cast: false)
+           |> fetch(:a) == :error
 
-    # assert fetch(am, :b, !: false) == 42
-
-    # assert am
-    #        |> cast(:b, fn 42 ->
-    #          sleep(10)
-    #          2
-    #        end)
-    #        |> delete(:b, cast: false)
-    #        |> fetch(:b) == :error
+    assert fetch(am, :a, !: false) == {:ok, [2, 3]}
   end
 end

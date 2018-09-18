@@ -27,7 +27,7 @@ defmodule AgentMap.Worker do
       |> elem(1)
       |> Enum.count(&match?(%{info: :get!}, &1))
 
-    get(:"$processes") + ps
+    get(:processes) + ps
   end
 
   ##
@@ -35,9 +35,9 @@ defmodule AgentMap.Worker do
   ##
 
   def share_value(to: me) do
-    key = Process.get(:"$key")
-    box = Process.get(:"$value")
-    delete(:"$dontdie?")
+    key = Process.get(:key)
+    box = Process.get(:value)
+    delete(:dontdie?)
     reply(me, {key, box})
   end
 
@@ -49,8 +49,8 @@ defmodule AgentMap.Worker do
       :id ->
         :id
 
-      box ->
-        {:_get, un(box)}
+      {:value, v} ->
+        {:_get, v}
     end
   end
 
@@ -80,7 +80,7 @@ defmodule AgentMap.Worker do
   end
 
   defp interpret(req, _arg, {:ok, {get, v}}) do
-    put(:"$value", box(v))
+    put(:value, box(v))
     Map.get(req, :from) |> reply(get)
   end
 
@@ -89,7 +89,7 @@ defmodule AgentMap.Worker do
   end
 
   defp interpret(req, arg, {:ok, :pop}) do
-    delete(:"$value")
+    delete(:value)
     Map.get(req, :from) |> reply(arg)
   end
 
@@ -99,7 +99,7 @@ defmodule AgentMap.Worker do
 
   defp interpret(req, arg, {:error, :expired}) do
     Logger.error("""
-    Key #{inspect(get(:"$key"))} call is expired and will not be executed.
+    Key #{inspect(get(:key))} call is expired and will not be executed.
     Request: #{inspect(req)}.
     Value: #{inspect(arg)}.
     """)
@@ -107,7 +107,7 @@ defmodule AgentMap.Worker do
 
   defp interpret(req, arg, {:error, :toolong}) do
     Logger.error("""
-    Key #{inspect(get(:"$key"))} call takes too long and will be terminated.
+    Key #{inspect(get(:key))} call takes too long and will be terminated.
     Request: #{inspect(req)}.
     Value: #{inspect(arg)}.
     """)
@@ -115,8 +115,8 @@ defmodule AgentMap.Worker do
 
   def spawn_get_task(req, {key, box}, opts \\ [server: self()]) do
     Task.start_link(fn ->
-      put(:"$key", key)
-      put(:"$value", box)
+      put(:key, key)
+      put(:value, box)
 
       run(req, box)
 
@@ -137,48 +137,48 @@ defmodule AgentMap.Worker do
   ##
 
   defp handle(%{action: :get} = req) do
-    box = get(:"$value")
+    box = get(:value)
 
-    p = get(:"$processes")
-    max_p = get(:"$max_processes")
+    p = get(:processes)
+    max_p = get(:max_processes)
 
     if p < max_p do
-      key = get(:"$key")
-      s = get(:"$gen_server")
+      key = get(:key)
+      s = get(:gen_server)
 
       spawn_get_task(req, {key, box}, server: s, worker: self())
 
-      put(:"$processes", p + 1)
+      put(:processes, p + 1)
     else
       run(req, box)
     end
   end
 
   defp handle(%{action: :get_and_update} = req) do
-    run(req, get(:"$value"))
+    run(req, get(:value))
   end
 
   defp handle(%{action: :max_processes} = req) do
-    reply(req[:from], get(:"$max_processes"))
-    put(:"$max_processes", req.data)
+    reply(req[:from], get(:max_processes))
+    put(:max_processes, req.data)
   end
 
   defp handle(%{info: :done}) do
-    p = get(:"$processes")
-    put(:"$processes", p - 1)
+    p = get(:processes)
+    put(:processes, p - 1)
   end
 
   defp handle(%{info: :get!}) do
-    p = get(:"$processes")
-    put(:"$processes", p + 1)
+    p = get(:processes)
+    put(:processes, p + 1)
   end
 
   defp handle(:dontdie!) do
-    put(:"$dontdie?", true)
+    put(:dontdie?, true)
   end
 
   defp handle(msg) do
-    k = inspect(get(:"$key"))
+    k = inspect(get(:key))
 
     Logger.warn("""
     Worker (key: #{k}) got unexpected message #{inspect(msg)}
@@ -191,25 +191,26 @@ defmodule AgentMap.Worker do
 
   # box = {:value, any} | nil
   def loop({ref, server}, key, {box, {p, max_p}}) do
-    put(:"$value", box)
-    send(server, {ref, :ok})
-
-    put(:"$key", key)
-    put(:"$gen_server", server)
+    put(:value, box)
 
     # One (1) process is for loop.
-    put(:"$processes", p + 1)
-    put(:"$max_processes", max_p)
+    put(:processes, p + 1)
+    put(:max_processes, max_p)
 
-    put(:"$wait", @wait + rand(25))
+    send(server, {ref, :ok})
+
+    put(:key, key)
+    put(:gen_server, server)
+
+    put(:wait, @wait + rand(25))
 
     # →
     state = {[], []}
     loop(state)
   end
 
-  defp maybe_die(state) do
-    send(get(:"$gen_server"), {self(), :die?})
+  defp die_if_allowed(state) do
+    send(get(:gen_server), {self(), :die?})
 
     receive do
       :die! ->
@@ -217,27 +218,27 @@ defmodule AgentMap.Worker do
 
       :continue ->
         # Next time wait a few ms more.
-        wait = get(:"$wait")
-        put(:"$wait", wait + rand(5))
+        wait = get(:wait)
+        put(:wait, wait + rand(5))
     after
       0 ->
-        maybe_die(state)
+        die_if_allowed(state)
     end
   end
 
   # →
   defp loop({[], []} = state) do
-    wait = get(:"$wait")
+    wait = get(:wait)
 
     receive do
       req ->
         place(state, req) |> loop()
     after
       wait ->
-        if get(:"$dontdie?") do
+        if get(:dontdie?) do
           loop(state)
         else
-          maybe_die(state)
+          die_if_allowed(state)
         end
     end
   end
@@ -245,7 +246,7 @@ defmodule AgentMap.Worker do
   defp loop({_, [%{action: :get} = req | _]} = state) do
     state = {p_queue, queue} = flush(state)
 
-    if get(:"$processes") < get(:"$max_processes") do
+    if get(:processes) < get(:max_processes) do
       [_req | tail] = queue
       handle(req)
       loop({p_queue, tail})

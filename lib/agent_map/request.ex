@@ -5,7 +5,7 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Worker, Req, Server, Common}
 
-  import Worker, only: [spawn_get_task: 2]
+  import Worker, only: [spawn_get_task: 2, dict: 1, processes: 1]
   import Enum, only: [filter: 2]
   import Server.State
   import Common
@@ -64,11 +64,11 @@ defmodule AgentMap.Req do
   def handle(%Req{action: :processes} = req, state) do
     p =
       case get(state, req.key) do
-        {:pid, w} ->
-          Worker.processes(w)
-
         {_box, {p, _max_p}} ->
           p
+
+        worker ->
+          processes(worker)
       end
 
     {:reply, p, state}
@@ -80,23 +80,23 @@ defmodule AgentMap.Req do
 
   def handle(%Req{action: :max_processes} = req, state) do
     case get(state, req.key) do
-      {:pid, w} ->
-        if req.! do
-          max_p = Worker.dict(w)[:"$max_processes"]
-          req = compress(%{req | from: nil})
-          send(w, req)
-          {:reply, max_p, state}
-        else
-          req = compress(%{req | !: true})
-          send(w, req)
-          {:noreply, state}
-        end
-
       {box, {p, old_max_p}} ->
         max_p = req.data
         pack = {box, {p, max_p}}
         state = put(state, req.key, pack)
         {:reply, old_max_p, state}
+
+      worker ->
+        if req.! do
+          max_p = dict(worker)[:max_processes]
+          req = compress(%{req | from: nil})
+          send(worker, req)
+          {:reply, max_p, state}
+        else
+          req = compress(%{req | !: true})
+          send(worker, req)
+          {:noreply, state}
+        end
     end
   end
 
@@ -113,28 +113,24 @@ defmodule AgentMap.Req do
 
   def handle(%Req{action: :get, !: true} = req, state) do
     case get(state, req.key) do
-      {:pid, w} ->
-        b = Worker.dict(w)[:"$value"]
-        spawn_get_task(req, {req.key, b})
-
-        send(w, %{info: :get!})
-        {:noreply, state}
-
       {b, {p, max_p}} ->
         spawn_get_task(req, {req.key, b})
 
         pack = {b, {p + 1, max_p}}
         state = put(state, req.key, pack)
         {:noreply, state}
+
+      worker ->
+        b = dict(worker)[:value]
+        spawn_get_task(req, {req.key, b})
+
+        send(worker, %{info: :get!})
+        {:noreply, state}
     end
   end
 
   def handle(%Req{action: :get, !: false} = req, state) do
     case get(state, req.key) do
-      {:pid, worker} ->
-        send(worker, compress(req))
-        {:noreply, state}
-
       # Cannot spawn more Task's.
       {_, {p, max_p}} when p >= max_p ->
         state = spawn_worker(state, req.key)
@@ -146,6 +142,10 @@ defmodule AgentMap.Req do
         pack = {b, {p + 1, max_p}}
         state = put(state, req.key, pack)
         {:noreply, state}
+
+      worker ->
+        send(worker, compress(req))
+        {:noreply, state}
     end
   end
 
@@ -153,13 +153,13 @@ defmodule AgentMap.Req do
 
   def handle(%Req{action: :get_and_update} = req, state) do
     case get(state, req.key) do
-      {:pid, w} ->
-        send(w, compress(req))
-        {:noreply, state}
-
-      _ ->
+      {_box, _p_info} ->
         state = spawn_worker(state, req.key)
         handle(req, state)
+
+      worker ->
+        send(worker, compress(req))
+        {:noreply, state}
     end
   end
 
@@ -167,16 +167,16 @@ defmodule AgentMap.Req do
 
   def handle(%Req{action: :put} = req, state) do
     case get(state, req.key) do
-      {:pid, worker} ->
+      {_box, p_info} ->
+        pack = {box(req.data), p_info}
+        {:reply, :ok, put(state, req.key, pack)}
+
+      worker ->
         fun = fn _ -> {:ok, req.data} end
         req = %{req | action: :get_and_update, fun: fun}
 
         send(worker, compress(req))
         {:noreply, state}
-
-      {_, p_info} ->
-        pack = {box(req.data), p_info}
-        {:reply, :ok, put(state, req.key, pack)}
     end
   end
 
@@ -192,9 +192,9 @@ defmodule AgentMap.Req do
         state = put(state, req.key, pack)
         {:reply, :done, state}
 
-      _ ->
-        req = %{req | action: :get_and_update, fun: fn _ -> IO.inspect(:pop) end}
-        handle(req, state)
+      _worker ->
+        %{req | action: :get_and_update, fun: fn _ -> :pop end}
+        |> handle(state)
     end
   end
 end

@@ -165,8 +165,8 @@ defmodule AgentMap.Multi.Req do
     Task.start_link(fn ->
       with prepair(req, pids),
            {:ok, map} <- collect(map, Map.keys(workers), timeout(req)),
-           Process.put(:"$map", map),
-           Process.put(:"$keys", req.keys),
+           Process.put(:map, map),
+           Process.put(:keys, req.keys),
            values = Enum.map(req.keys, &map[&1]),
            break? = match?({:break, _}, req.timeout),
            {:ok, result} <- run(req.fun, [values], timeout(req), break?),

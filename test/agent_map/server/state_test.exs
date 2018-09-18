@@ -93,9 +93,9 @@ defmodule AgentMapServerStateTest do
       |> spawn_worker(:d)
       |> spawn_worker(:e)
 
-    {:pid, wc} = get(state, :c)
-    {:pid, wd} = get(state, :d)
-    {:pid, we} = get(state, :e)
+    wc = get(state, :c)
+    wd = get(state, :d)
+    we = get(state, :e)
 
     assert {%{a: 42, b: 1}, %{c: wc, d: wd, e: we}} == separate(state, [:a, :b, :c, :d, :e])
   end

@@ -376,14 +376,18 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> AgentMap.safe_apply(fn -> 1 end, [:extra_arg])
-      {:error, :badarity}
-      iex> AgentMap.safe_apply(:notfun, [])
+      iex> import AgentMap
+      iex> safe_apply(:notfun, [])
       {:error, :badfun}
-      iex> AgentMap.safe_apply(raise KeyError, [])
-      {:error, %KeyError{}}
-      iex> AgentMap.safe_apply(fn -> 1 end, [])
-      1
+      iex> safe_apply(fn -> 1 end, [:extra_arg])
+      {:error, :badarity}
+      iex> safe_apply(fn -> 1 end, [])
+      {:ok, 1}
+      #
+      iex> {:error, {e, _stacktrace}} =
+      ...>   safe_apply(fn -> raise KeyError end, [])
+      iex> e
+      %KeyError{}
   """
   def safe_apply(fun, args) do
     {:ok, apply(fun, args)}
@@ -595,7 +599,7 @@ defmodule AgentMap do
   end
 
   @doc false
-  def _call(agentmap, req, opts) do
+  def _call(agentmap, req, opts \\ []) do
     am = pid(agentmap)
     req = struct(req, opts)
 
@@ -608,7 +612,7 @@ defmodule AgentMap do
     end
   end
 
-  defp _cast(agentmap, %Req{} = req, opts) do
+  defp _cast(agentmap, %Req{} = req, opts \\ []) do
     GenServer.cast(pid(agentmap), struct(req, opts))
     agentmap
   end
@@ -688,20 +692,20 @@ defmodule AgentMap do
 
   ## Special process dictionary keys
 
-  One can use `:"$key"` and `:"$value"` dictionary keys:
+  One can use `:key` and `:value` dictionary keys:
 
       iex> import AgentMap
       iex> am = AgentMap.new(a: nil)
       iex> get(am, :a, fn _ ->
-      ...>   Process.get(:"$key")
+      ...>   Process.get(:key)
       ...> end)
       :a
       iex> get(am, :a, fn nil ->
-      ...>   Process.get(:"$value")
+      ...>   Process.get(:value)
       ...> end)
       {:value, nil}
       iex> get(am, :b, fn nil ->
-      ...>   Process.get(:"$value")
+      ...>   Process.get(:value)
       ...> end)
       nil
   """
@@ -777,7 +781,7 @@ defmodule AgentMap do
   @spec get_lazy(am, key, (() -> a)) :: value | a when a: var
   def get_lazy(agentmap, key, fun) do
     cb = fn value ->
-      if Process.get(:"$value") do
+      if Process.get(:value) do
         value
       else
         fun.()
@@ -953,7 +957,7 @@ defmodule AgentMap do
   @spec update(am, key, any, (value -> value), [{:!, boolean} | {:timeout, timeout}]) :: am
   def update(agentmap, key, initial, fun, opts) when is_function(fun, 1) do
     cb = fn value ->
-      if Process.get(:"$value") do
+      if Process.get(:value) do
         apply(fun, [value])
       else
         initial
@@ -997,7 +1001,7 @@ defmodule AgentMap do
   def update!(agentmap, key, fun, opts \\ [!: false, timeout: 5000])
       when is_function(fun, 1) do
     cb = fn value ->
-      if Process.get(:"$value") do
+      if Process.get(:value) do
         {:ok, fun.(value)}
       else
         {:error}
@@ -1087,14 +1091,23 @@ defmodule AgentMap do
   end
 
   @doc """
-  Sets the default `:max_processes` value. Returns the old one.
+  Sets the default `:$max_processes` value. Returns the old one.
 
   See `max_processes/3`.
+
+  ## Examples
+
+      iex> import AgentMap
+      iex> am = AgentMap.new()
+      iex> max_processes(am, 42)
+      5
+      iex> max_processes(am, :infinity)
+      42
   """
   @spec max_processes(agentmap, pos_integer | :infinity) :: pos_integer | :infinity
   def max_processes(agentmap, value)
-      when (is_integer(value) or value == :infinity) and value > 0 do
-    req = %Req{action: :max_processes, data: value, !: true}
+      when (is_integer(value) and value > 0) or value == :infinity do
+    req = %Req{action: :max_processes, data: value}
     _call(agentmap, req, [])
   end
 
@@ -1108,59 +1121,137 @@ defmodule AgentMap do
   Default value is `5`, but it can be changed via `max_processes/2`.
 
       iex> import :timer
-      iex> am = AgentMap.new(key: 42)
+      iex> import AgentMap
+      iex> am = AgentMap.new(k: 42)
       iex> task = fn ->
-      ...>   AgentMap.get(am, :key, fn _ -> sleep(100) end)
+      ...>   get(am, :k, fn _ -> sleep(10) end)
       ...> end
       iex> for _ <- 1..4, do: spawn(task)
       iex> task.()
       :ok
 
-  will be executed in around of `100` ms, not `500`. This sequence:
+  will be executed in around of `10` ms, not `50`. This sequence:
 
-      import :timer
-      import AgentMap
-      %{key: 42}
-      |> AgentMap.new()
-      |> get(:key, fn _ -> sleep(100) end)
-      |> cast(:key, fn _ -> sleep(100) end)
-      |> cast(:key, fn _ -> sleep(100) end)
+      AgentMap.new(k: 42)
+      |> get(:k, fn _ -> sleep(10) end)
+      |> cast(:k, fn _ -> sleep(10) end)
+      |> cast(:k, fn _ -> sleep(10) end)
 
-  will run for `200` ms as `agentmap` can parallelize any sequence of `get/3`
+  will run for `20` ms as `agentmap` can parallelize any sequence of `get/3`
   calls ending with `get_and_update/3`, `update/3` or `cast/3`.
 
   Use `max_processes: 1` to execute `get` calls in sequence.
 
-  ## Options
+  ## Examples
 
-    * `!: true` — (`boolean`, `false`) to return immediately the current
-      `:max_processes` value.
+      iex> import :timer
+      iex> import AgentMap
+      iex> AgentMap.info(am, :k, :max_processes)
+      {:max_processes, 5}
+      #
+      iex> for _ <- 1..100 do
+      ...>   Task.async(fn ->
+      ...>     get(am, :k, fn _ -> sleep(10) end)
+      ...>   end)
+      ...> end
+      iex> #
+      ...> for _ <- 1..100 do
+      ...>   sleep(2)
+      ...>   info(am, :k)[:max_processes]
+      ...> end
+      ...> |> Enum.max()
+      5
+      iex> fetch(am, :k, !: false)
+      :error
+      iex> :TODO
+      :TODO
+  """
+  @spec max_processes(agentmap, key, pos_integer | :infinity, !: boolean) :: agentmap
+  def max_processes(agentmap, key, value)
+      when (is_integer(value) and value > 0) or value == :infinity do
+    req = %Req{action: :max_processes, key: key, data: value, timeout: :infinity}
+    _cast(agentmap, req, [])
+  end
+
+  @doc """
+  Returns information about the `key` — number of processes and maximum
+  processes allowed.
+
+  Use this only for debugging information.
+
+  See `info/2`.
+  """
+  @spec info(agentmap, key, :max_processes | :processes) ::
+          {:processes, pos_integer} | {:max_processes, pos_integer | :infinity}
+  def info(agentmap, key, :processes) do
+    _call(agentmap, %Req{action: :processes, key: key})
+  end
+
+  def info(agentmap, key, :max_processes) do
+    _call(agentmap, %Req{action: :max_processes, key: key})
+  end
+
+  @doc """``
+  Returns information about the `key` — number of processes and maximum
+  processes allowed.
+
+  Use this only for debugging information.
 
   ## Examples
 
       iex> import AgentMap
       iex> am = AgentMap.new()
-      iex> max_processes(am, :k, 42)
-      5
-      iex> max_processes(am, :k, :infinity)
-      42
+      iex> #
+      ...> info(am, :k)
+      [processes: 0, max_processes: 5]
       #
-      iex> import :timer
+      iex> max_processes(am, 3)
+      5
+      iex> info(am, :k)
+      [processes: 0, max_processes: 3]
+      #
       iex> am
-      ...> |> cast(:k, fn _ -> sleep(100) end)
-      ...> |> max_processes(:k, 42, !: true)
-      :infinity
-      iex> max_processes(am, :k, 1, !: true)
-      :infinity
-      iex> max_processes(am, :k, :infinity)
+      ...> |> cast(:k, fn _ -> :timer.sleep(10) end)
+      ...> |> info(:k)
+      [processes: 1, max_processes: 3]
+      #
+      iex> max_processes(am, 5)
+      3
+      iex> info(am, :k)[:max_processes]
+      5
+      #
+      iex> for _ <- 1..100 do
+      ...>   Task.async(fn ->
+      ...>     get(am, :k, fn _ -> sleep(5) end)
+      ...>   end)
+      ...> end
+      iex> :timer.sleep(5)
+      iex> info(am, :k)[:processes]
+      5
+      iex> :timer.sleep(50)
+      iex> info(am, :k)[:processes]
       1
+
+  But keep in mind, that:
+
+      iex> for _ <- 1..100 do
+      ...>   Task.async(fn ->
+      ...>     get(am, :k, fn _ -> sleep(50) end, !: true)
+      ...>   end)
+      ...> end
+      iex> :timer.sleep(10)
+      iex> info(am, :k)[:processes]
+      100
   """
-  @spec max_processes(agentmap, key, pos_integer | :infinity, !: boolean) ::
-          pos_integer | :infinity
-  def max_processes(agentmap, key, value, opts \\ [!: false])
-      when (is_integer(value) or value == :infinity) and value > 0 do
-    req = %Req{action: :max_processes, key: key, data: value, timeout: :infinity}
-    _call(agentmap, req, opts)
+  @spec info(agentmap, key, :max_processes | :processes) :: [
+          processes: pos_integer,
+          max_processes: pos_integer | :infinity
+        ]
+  def info(agentmap, key) do
+    [
+      info(agentmap, key, :processes),
+      info(agentmap, key, :max_processes)
+    ]
   end
 
   @doc """
@@ -1205,7 +1296,7 @@ defmodule AgentMap do
       _call(agentmap, req, opts)
     else
       fun = fn value ->
-        if Process.get(:"$value") do
+        if Process.get(:value) do
           {:ok, value}
         else
           :error
@@ -1294,7 +1385,7 @@ defmodule AgentMap do
   just a syntax sugar for:
 
       get_and_update(agentmap, key, fn _ ->
-        if Process.get(:"$value") do
+        if Process.get(:value) do
           :pop
         end || {default}
       end, opts)
@@ -1330,7 +1421,7 @@ defmodule AgentMap do
     opts = Keyword.put_new(opts, :!, true)
 
     fun = fn _ ->
-      if Process.get(:"$value") do
+      if Process.get(:value) do
         :pop
       end || {default}
     end
@@ -1387,7 +1478,7 @@ defmodule AgentMap do
 
   Keys that are not in `agentmap` are ignored.
 
-  It is a syntax sugar for the `get(agentmap, fn _ -> Process.get(:"$map") end,
+  It is a syntax sugar for the `get(agentmap, fn _ -> Process.get(:map) end,
   keys)`.
 
   ## Options
@@ -1400,10 +1491,9 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{a: 1, b: 2, c: 3}
-      ...> |> AgentMap.new()
-      ...> |> AgentMap.take([:a, :b])
-      %{a: 1}
+      iex> AgentMap.new(a: 1, b: 2, c: 3)
+      ...> |> AgentMap.take([:a, :b, :d])
+      %{a: 1, b: 2}
 
       iex> import :timer
       iex> AgentMap.new(a: 1)
@@ -1421,7 +1511,7 @@ defmodule AgentMap do
   @spec take(agentmap, Enumerable.t(), keyword) :: map
   def take(agentmap, keys, opts \\ [!: true]) do
     opts = Keyword.put_new(opts, :!, true)
-    fun = fn _ -> Process.get(:"$map") end
+    fun = fn _ -> Process.get(:map) end
     Multi.get(agentmap, keys, fun, opts)
   end
 
@@ -1446,32 +1536,69 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
+      iex> import :timer
+      ...> #
       iex> am = AgentMap.new(a: 1, b: 2)
       iex> am
-      ...> |> delete(:a)           # cast: true
+      ...> |> delete(:a)
       ...> |> take([:a, :b])
       %{b: 2}
       #
-      iex> import :timer
+      iex> f =
+      ...>   &fn hist ->
+      ...>     sleep(10)
+      ...>     (hist && hist ++ [&1]) || [&1]
+      ...>   end
+      ...> #
       iex> am
-      ...> |> cast(:b, fn 2   -> sleep(10); 42 end)
-      ...> |> cast(:b, fn nil -> sleep(10); 24 end)
-      iex> sleep(1)
+      ...> |> put(:a, [1])
+      ...> |> cast(:a, f.(2))
+      ...> |> cast(:a, f.(3))
+      ...> |> fetch(:a, !: false)
+      {:ok, [1, 2, 3]}
+      # 1 → (sleep → 2) → (sleep → 3) → fetch
+      #
       iex> am
-      ...> |> delete(:b, !: true)  # cast: true
-      ...> |> fetch(:b)
-      {:ok, 2}
-      iex> am
-      ...> |> delete(:b, !: true, cast: false)
-      ...> |> fetch(:b)            # 10 ms later
+      ...> |> put(:a, [1])
+      iex> |> cast(:a, f.(2))
+      iex> |> cast(:a, f.(3))
+      iex> |> delete(:a)
+      iex> |> fetch(:a, !: false)
       :error
-      iex> fetch(am, :b, !: false) # 10 ms later
-      42
+      # 1 → (sleep → 2) → (sleep → 3) → delete → fetch
+      #
       iex> am
-      ...> |> cast(:b, fn 42 -> sleep(10); 2 end)
-      ...> |> delete(:b, cast: false)
-      ...> |> fetch(:b)            # 10 ms later
+      ...> |> put(:a, [1])
+      iex> |> cast(:a, f.(2))
+      iex> |> cast(:a, f.(3))
+      iex> |> get(:pause, fn _ -> sleep(1) end)
+      iex> |> delete(:a, !: true)
+      iex> |> fetch(:a, !: false)
+      {:ok, [2, 3]}
+      # 1 → delete → (sleep → 2) → (sleep → 3) → fetch
+      #
+      iex> am
+      ...> |> put(:a, [1])
+      iex> |> cast(:a, f.(2))
+      iex> |> cast(:a, f.(3))
+      iex> |> delete(:a, cast: false)
+      iex> |> fetch(:a)
       :error
+      # 1 → (sleep → 2) → (sleep → 3) → delete → fetch
+      #
+      iex> am
+      ...> |> put(:a, [1])
+      iex> |> cast(:a, f.(2))
+      iex> |> cast(:a, f.(3))
+      iex> |> get(:pause, fn _ -> sleep(1) end)
+      iex> |> delete(:a, !: true, cast: false)
+      iex> |> fetch(:a)
+      :error
+      # 1 → delete → fetch → (sleep → 2) → (sleep → 3) …
+      #
+      iex> fetch(am, :a, !: false)
+      {:ok, [2, 3]}
+      # … → fetch
   """
   @spec delete(agentmap, key, keyword) :: agentmap
   def delete(agentmap, key, opts \\ [cast: true, !: false]) do
@@ -1569,7 +1696,7 @@ defmodule AgentMap do
   @spec values(agentmap, !: boolean, timeout: timeout) :: [value]
   def values(agentmap, opts \\ [!: true]) do
     fun = fn _ ->
-      Map.values(Process.get(:"$map"))
+      Map.values(Process.get(:map))
     end
 
     opts = Keyword.put_new(opts, :!, true)
@@ -1607,12 +1734,14 @@ defmodule AgentMap do
   ### Examples
 
       iex> am = AgentMap.new(a: 1, b: 2)
-      iex> AgentMap.inc(am, :a)
-      iex> AgentMap.get(am, :a)
-      2
-      iex> AgentMap.dec(am, :b)
-      iex> AgentMap.get(am, :b)
-      1
+      iex> am
+      iex> |> inc(:a)
+      iex> |> fetch(:a, !: false)
+      {:ok, 2}
+      iex> am
+      iex> |> dec(:b)
+      iex> |> fetch(:b, !: false)
+      {:ok, 1}
   """
   @spec inc(agentmap, key, keyword) :: agentmap
   def inc(agentmap, key, opts \\ [step: 1, cast: true, !: false, initial: 0]) do
@@ -1624,7 +1753,7 @@ defmodule AgentMap do
         {:ok, v + step}
 
       v ->
-        if Process.get(:"$value") do
+        if Process.get(:value) do
           raise IncError, key: key, value: v, step: step
         else
           if initial do
