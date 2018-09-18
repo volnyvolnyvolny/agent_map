@@ -1091,9 +1091,9 @@ defmodule AgentMap do
   end
 
   @doc """
-  Sets the default `:$max_processes` value. Returns the old one.
+  Sets the default `:max_processes` value. Returns the old one.
 
-  See `max_processes/3`.
+  See `max_processes/3` for details.
 
   ## Examples
 
@@ -1114,11 +1114,12 @@ defmodule AgentMap do
   @doc """
   Sets the `:max_processes` value for the given `key`. Returns the old value.
 
-  `agentmap` can execute `get/4` calls on the same key concurrently.
-  `max_processes` option specifies number of processes allowed per key (`-1` for
-  the worker process).
+  `Agentmap` can execute `get/4` calls on the same key concurrently.
+  `max_processes` option specifies number of processes allowed per key, `-1` for
+  the worker process if it is spawned.
 
-  Default value is `5`, but it can be changed via `max_processes/2`.
+  By default, `5` get-processes per key allowed, but this can be changed via
+  `max_processes/2`.
 
       iex> import :timer
       iex> import AgentMap
@@ -1137,10 +1138,10 @@ defmodule AgentMap do
       |> cast(:k, fn _ -> sleep(10) end)
       |> cast(:k, fn _ -> sleep(10) end)
 
-  will run for `20` ms as `agentmap` can parallelize any sequence of `get/3`
+  will run for `20` ms as `AgentMap` can parallelize any sequence of `get/3`
   calls ending with `get_and_update/3`, `update/3` or `cast/3`.
 
-  Use `max_processes: 1` to execute `get` calls in sequence.
+  Use `max_processes: 1` to execute `get` calls in a sequence.
 
   ## Examples
 
@@ -1166,7 +1167,7 @@ defmodule AgentMap do
       iex> :TODO
       :TODO
   """
-  @spec max_processes(agentmap, key, pos_integer | :infinity, !: boolean) :: agentmap
+  @spec max_processes(agentmap, key, pos_integer | :infinity) :: agentmap
   def max_processes(agentmap, key, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     req = %Req{action: :max_processes, key: key, data: value, timeout: :infinity}
@@ -1191,7 +1192,7 @@ defmodule AgentMap do
     _call(agentmap, %Req{action: :max_processes, key: key})
   end
 
-  @doc """``
+  @doc """
   Returns information about the `key` — number of processes and maximum
   processes allowed.
 
