@@ -330,7 +330,7 @@ defmodule AgentMap.Multi do
   """
 
   @typedoc """
-  Callback that is used for a multi-key call.
+  Callback for multi-key call.
   """
   @type cb_m(get) ::
           ([value] ->
@@ -339,6 +339,7 @@ defmodule AgentMap.Multi do
              | [{any} | {any, value} | :pop | :id]
              | :pop
              | :id)
+
   @spec get_and_update(am, [key], cb_m(get), keyword) :: get | [value]
         when get: var
   def get_and_update(agentmap, keys, fun, opts \\ [!: false, timeout: 5000])
@@ -362,14 +363,17 @@ defmodule AgentMap.Multi do
   After the `fun` is executed, returns the `agentmap` argument unchanged to
   support piping.
 
-  This call is no more than a syntax sugar for `get_and_update(am, keys, &{am,
-  fun.(&1)}, opts)`.
-
-  Multial `fun` can return:
+  Callback (`fun`) can return:
 
     * a list of new values;
     * `:id` — instructs to leave values as they are;
     * `:drop`.
+
+  Syntactic sugar for
+
+      get_and_update(am, keys, &{am, fun.(&1)}, opts)
+
+  See `get_and_update/4`.
 
   ## Options
 
@@ -410,7 +414,9 @@ defmodule AgentMap.Multi do
   @doc """
   Performs "fire and forget" `update/4` call, using `GenServer.cast/2`.
 
-  Immediately returns the `agentmap` argument unchanged to support piping.
+  Returns *immediately* the same `agentmap` to support piping.
+
+  See `update/4`.
 
   ## Special process dictionary keys
 

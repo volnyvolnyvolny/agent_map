@@ -74,30 +74,26 @@ defmodule AgentMap.Req do
     {:reply, p, state}
   end
 
-  def handle(%Req{action: :max_processes, key: nil} = req, {map, max_p}) do
-    {:reply, max_p, {map, req.data}}
+  # per server:
+  def handle(%Req{action: :g_max_processes} = req, state) do
+    Process.put(:max_processes, req.data)
+    {:noreply, state}
   end
 
+  # per key:
   def handle(%Req{action: :max_processes} = req, state) do
-    case get(state, req.key) do
-      {box, {p, old_max_p}} ->
-        max_p = req.data
-        pack = {box, {p, max_p}}
-        state = put(state, req.key, pack)
-        {:reply, old_max_p, state}
+    state =
+      case get(state, req.key) do
+        {box, {p, _max_p}} ->
+          pack = {box, {p, req.data}}
+          put(state, req.key, pack)
 
-      worker ->
-        if req.! do
-          max_p = dict(worker)[:max_processes]
-          req = compress(%{req | from: nil})
+        worker ->
+          req = compress(%{req | !: true, from: nil})
           send(worker, req)
-          {:reply, max_p, state}
-        else
-          req = compress(%{req | !: true})
-          send(worker, req)
-          {:noreply, state}
-        end
-    end
+      end
+
+    {:noreply, state}
   end
 
   #
@@ -130,8 +126,14 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :get, !: false} = req, state) do
+    g_max_p = Process.get(:max_processes)
+
     case get(state, req.key) do
       # Cannot spawn more Task's.
+      {_, {p, nil}} when p >= g_max_p ->
+        state = spawn_worker(state, req.key)
+        handle(req, state)
+
       {_, {p, max_p}} when p >= max_p ->
         state = spawn_worker(state, req.key)
         handle(req, state)
@@ -193,8 +195,8 @@ defmodule AgentMap.Req do
         {:reply, :done, state}
 
       _worker ->
-        %{req | action: :get_and_update, fun: fn _ -> :pop end}
-        |> handle(state)
+        req = %{req | action: :get_and_update, fun: fn _ -> :pop end}
+        handle(req, state)
     end
   end
 end

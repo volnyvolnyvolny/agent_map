@@ -30,7 +30,7 @@ defmodule AgentMap.Common do
   def run(fun, args, _timeout, false), do: {:ok, apply(fun, args)}
 
   def run(fun, args, timeout, true) do
-    dict = Process.info(self())[:dictionary]
+    {_, dict} = Process.info(self(), :dictionary)
 
     past = now()
 

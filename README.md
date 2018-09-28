@@ -3,12 +3,16 @@
 The `AgentMap` can be seen as a stateful `Map` that parallelize operations
 made on different keys. 
 
-For example this call:
+For instance, this call:
 
 ```elixir
-iex> import :timer
+iex> fun =
+...>   fn v ->
+...>     :timer.sleep(10)
+...>     {:_get, v + 1}
+...>   end
+...> #
 iex> map = Map.new(a: 1, b: 1)
-iex> fun = fn v -> sleep(10); {:_get, v + 1} end
 iex> {:_get, map} = Map.get_and_update(map, :a, fun)
 iex> {:_get, map} = Map.get_and_update(map, :b, fun)
 iex> Map.get(map, :a)
@@ -20,9 +24,13 @@ iex> Map.get(map, :b)
 will be executed in `20` ms, while this:
 
 ```elixir
-iex> import :timer
+iex> fun =
+...>   fn v ->
+...>     :timer.sleep(10)
+...>     {:_get, v + 1}
+...>   end
+...> #
 iex> am = AgentMap.new(a: 1, b: 1)
-iex> fun = fn v -> sleep(10); {:_get, v + 1} end
 iex> AgentMap.get_and_update(am, :a, fun)
 :_get
 iex> AgentMap.get_and_update(am, :b, fun)
@@ -33,7 +41,7 @@ iex> AgentMap.get(am, :b)
 2
 ```
 
-in around of `10` ms because of parallelization.
+in around of `10` ms, because of parallelization.
 
 Underneath it's a `GenServer` that holds a `Map`. When an `update/4`,
 `update!/4`, `get_and_update/4` or `cast/4` is first called for a key, a special
@@ -44,8 +52,8 @@ order of incoming new calls, executing them in a sequence, except for the
 degree of parallelization can be tweaked using the `max_processes/3` function.
 The worker will die after about `10` ms of inactivity.
 
-`AgentMap` supports multi-key calls — operations on a group of keys. See
-`AgentMap.Multi`.
+The `AgentMap` supports multi-key calls — operations made on a group of keys.
+See `AgentMap.Multi`.
 
 Basically, `AgentMap` can be used as a cache, memoization, computational
 framework and, sometimes, as a `GenServer` replacement.
@@ -80,9 +88,10 @@ iex> pid
 ...> |> AgentMap.put(:a, 1)
 ...> |> AgentMap.get(:a)
 1
-iex> AgentMap.new(pid)
-...> |> AgentMap.get(:a)
-1
+iex> am = 
+...>   AgentMap.new(pid)
+iex> Enum.empty?(am)
+false
 ```
 
 More complicated example involves memoization:
@@ -113,11 +122,11 @@ defmodule Calc do
 end
 ```
 
-Also, take a look at the
+Take a look at the
 [test/memo.ex](https://github.com/zergera/agent_map/blob/master/test/memo.ex).
 
-`AgentMap` provides possibility to make multi-key calls (operations on multiple
-keys). Let's see an accounting demo:
+The `AgentMap` provides possibility to make multi-key calls (operations on
+multiple keys). Let's see an accounting demo:
 
 ```elixir
 defmodule Account do

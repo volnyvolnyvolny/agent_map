@@ -10,8 +10,6 @@ defmodule AgentMap.Server.State do
   @typedoc "Value or no value."
   @type box :: {:value, term} | nil
 
-  defguard is_box(b) when is_nil(b) or (is_tuple(b) and elem(b, 0) == :value)
-
   def box(v), do: {:value, v}
 
   def unbox(nil), do: nil
@@ -39,38 +37,35 @@ defmodule AgentMap.Server.State do
   """
   @type compressed_pack :: {box, p} | {:value, term}
 
-  @typedoc "Map with values and default max_processes value."
-  @type state :: {%{required(key) => pack}, max_p}
+  @typedoc "Map with values."
+  @type state :: %{required(key) => pack}
 
-  defp compress({b, {0, max_p}}, max_p) when is_box(b), do: b
-  defp compress({b, {p, max_p}}, max_p) when is_box(b), do: {b, p}
-  defp compress(pack, _), do: pack
+  def put(state, key, {_b, {_p, _mp}} = pack) do
+    case pack do
+      {nil, {0, nil}} ->
+        Map.delete(state, key)
 
-  defp decompress({b, {_, _}} = pack, _) when is_box(b), do: pack
-  defp decompress({b, p}, max_p) when is_box(b), do: {b, {p, max_p}}
-  defp decompress(b, max_p) when is_box(b), do: {b, {0, max_p}}
+      {b, {p, nil}} ->
+        Map.put(state, key, {b, p})
 
-  def put({map, max_p} = _state, key, pack) do
-    map =
-      case decompress(pack, max_p) do
-        {nil, {0, ^max_p}} ->
-          Map.delete(map, key)
-
-        pack ->
-          pack = compress(pack, max_p)
-          Map.put(map, key, pack)
-      end
-
-    {map, max_p}
+      _ ->
+        Map.put(state, key, pack)
+    end
   end
 
-  def get({map, max_p} = _state, key) do
-    case map[key] do
-      w when is_pid(w) ->
-        w
+  def get(state, key) do
+    case state[key] do
+      nil ->
+        {nil, {0, nil}}
 
-      pack ->
-        decompress(pack, max_p)
+      {_b, {_p, _max_p}} = pack ->
+        pack
+
+      {b, p} ->
+        {b, {p, nil}}
+
+      worker ->
+        worker
     end
   end
 
@@ -81,7 +76,7 @@ defmodule AgentMap.Server.State do
           box
 
         w ->
-          Worker.dict(w)[:"$value"]
+          Worker.dict(w)[:value]
       end
 
     case box do
@@ -93,7 +88,7 @@ defmodule AgentMap.Server.State do
     end
   end
 
-  def spawn_worker({map, max_p} = state, key) do
+  def spawn_worker(state, key) do
     case get(state, key) do
       {_box, _p_info} = pack ->
         ref = make_ref()
@@ -109,7 +104,7 @@ defmodule AgentMap.Server.State do
             :continue
         end
 
-        {Map.put(map, key, worker), max_p}
+        Map.put(state, key, worker)
 
       _worker ->
         state

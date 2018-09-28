@@ -3,7 +3,7 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Common, CallbackError, Server.State}
 
-  import Process, only: [get: 1, put: 2, delete: 1, info: 1, info: 2]
+  import Process, only: [get: 1, put: 2, delete: 1]
   import Common, only: [run: 4, reply: 2, now: 0, left: 2]
   import State, only: [un: 1, box: 1]
 
@@ -16,16 +16,30 @@ defmodule AgentMap.Worker do
 
   defp rand(n) when n < 100, do: rem(now(), n)
 
-  def dict(worker \\ self()), do: info(worker)[:dictionary]
+  defp info(worker, key) do
+    Process.info(worker, key) |> elem(1)
+  end
 
-  def busy?(worker), do: info(worker)[:message_queue_len] > 0
+  defp max_processes() do
+    unless max_p = get(:max_processes) do
+      dict(get(:gen_server))[:max_processes]
+    else
+      max_p
+    end
+  end
+
+  def dict(worker \\ self()), do: info(worker, :dictionary)
+
+  def busy?(worker) do
+    info(worker, :message_queue_len) > 0
+  end
 
   def processes(worker) do
     ps =
-      worker
-      |> info(:messages)
-      |> elem(1)
-      |> Enum.count(&match?(%{info: :get!}, &1))
+      Enum.count(
+        info(worker, :messages),
+        &match?(%{info: :get!}, &1)
+      )
 
     get(:processes) + ps
   end
@@ -121,13 +135,12 @@ defmodule AgentMap.Worker do
       run(req, box)
 
       done = %{info: :done, key: key}
-      w = opts[:worker]
-      s = opts[:server]
+      worker = opts[:worker]
 
-      if w && Process.alive?(w) do
-        send(w, done)
+      if worker && Process.alive?(worker) do
+        send(worker, done)
       else
-        send(s, done)
+        send(opts[:server], done)
       end
     end)
   end
@@ -140,9 +153,8 @@ defmodule AgentMap.Worker do
     box = get(:value)
 
     p = get(:processes)
-    max_p = get(:max_processes)
 
-    if p < max_p do
+    if p < max_processes() do
       key = get(:key)
       s = get(:gen_server)
 
@@ -159,7 +171,6 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{action: :max_processes} = req) do
-    reply(req[:from], get(:max_processes))
     put(:max_processes, req.data)
   end
 

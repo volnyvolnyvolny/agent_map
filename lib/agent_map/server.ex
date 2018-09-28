@@ -16,16 +16,19 @@ defmodule AgentMap.Server do
 
   @impl true
   def init(args) do
-    keys = Keyword.keys(args[:funs])
+    timeout = args[:timeout]
+
+    funs = args[:funs]
+    keys = Keyword.keys(funs)
 
     results =
-      args[:funs]
+      funs
       |> Enum.map(fn {_key, fun} ->
         Task.async(fn ->
           AgentMap.safe_apply(fun, [])
         end)
       end)
-      |> Task.yield_many(args[:timeout])
+      |> Task.yield_many(timeout)
       |> Enum.map(fn {task, res} ->
         res || Task.shutdown(task, :brutal_kill)
       end)
@@ -52,7 +55,11 @@ defmodule AgentMap.Server do
           {key, {:value, v}}
         end
 
-      {:ok, {map, args[:max_processes]}}
+      max_p = args[:max_processes]
+
+      Process.put(:max_processes, max_p)
+
+      {:ok, map}
     else
       {:stop, errors}
     end
@@ -145,9 +152,9 @@ defmodule AgentMap.Server do
   ##
 
   @impl true
-  def code_change(_old, {map, _max_p} = state, fun) do
+  def code_change(_old, state, fun) do
     state =
-      Enum.reduce(Map.keys(map), state, fn key, state ->
+      Enum.reduce(Map.keys(state), state, fn key, state ->
         req = %Req{action: :cast, key: key, fun: fun}
 
         case Req.handle(req, state) do

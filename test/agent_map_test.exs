@@ -5,6 +5,72 @@ defmodule AgentMapTest do
   use ExUnit.Case
   doctest AgentMap
 
+  test "delete" do
+    next = fn
+      nil ->
+        sleep(10)
+        [1]
+
+      [v | _] = hist ->
+        sleep(10)
+        [v + 1 | hist]
+    end
+
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, next)
+           |> cast(:a, next)
+           |> fetch(:a, !: false) == {:ok, [3, 2, 1]}
+
+    # 1 → (sleep → 2) → (sleep → 3) → fetch
+    #
+
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, next)
+           |> cast(:a, next)
+           |> delete(:a)
+           |> fetch(:a, !: false) == :error
+
+    # 1 → (sleep → 2) → (sleep → 3) → delete → fetch
+    #
+
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, next)
+           |> cast(:a, next)
+           |> get(:pause, fn _ -> sleep(1) end)
+           |> delete(:a, !: true)
+           |> fetch(:a, !: false) == {:ok, [3, 2]}
+
+    # 1 → delete → (sleep → 2) → (sleep → 3) → fetch
+    #
+
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, next)
+           |> cast(:a, next)
+           |> delete(:a, cast: false)
+           |> fetch(:a) == :error
+
+    # 1 → (sleep → 2) → (sleep → 3) → delete → fetch
+    #
+
+    assert am
+           |> put(:a, [1])
+           |> cast(:a, next)
+           |> cast(:a, next)
+           |> get(:pause, fn _ -> sleep(1) end)
+           |> delete(:a, !: true, cast: false)
+           |> fetch(:a) == :error
+
+    # 1 → delete → fetch → (sleep → 2) → (sleep → 3) …
+    #
+
+    assert fetch(am, :a, !: false) == {:ok, [3, 2]}
+    # … → fetch
+  end
+
   test "main" do
     import :timer
     import AgentMap
