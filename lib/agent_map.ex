@@ -49,9 +49,9 @@ defmodule AgentMap do
       ...> |> AgentMap.put(:a, 1)
       ...> |> AgentMap.get(:a)
       1
-      iex> am =
-      ...>   AgentMap.new(pid)
-      ...> Enum.empty?(am)
+      iex> pid
+      ...> |> AgentMap.new()
+      ...> |> Enum.empty?()
       false
 
   More complicated example involves memoization:
@@ -59,6 +59,7 @@ defmodule AgentMap do
       defmodule Calc do
         def fib(0), do: 0
         def fib(1), do: 1
+
         def fib(n) when n >= 0 do
           unless GenServer.whereis(__MODULE__) do
             AgentMap.start_link(name: __MODULE__)
@@ -139,8 +140,7 @@ defmodule AgentMap do
         Trasfers money. Returns `:ok` or `:error`.
         \"""
         def transfer(from, to, amount) do
-          # Multi call.
-          AgentMap.get_and_update(__MODULE__, fn
+          AgentMap.Multi.get_and_update(__MODULE__, [from, to], fn
             [nil, _] -> {:error}
 
             [_, nil] -> {:error}
@@ -149,7 +149,7 @@ defmodule AgentMap do
               {:ok, [b1 - amount, b2 + amount]}
 
             _ -> {:error}
-          end, [from, to])
+          end)
         end
 
         @doc \"""
@@ -196,9 +196,12 @@ defmodule AgentMap do
       iex> AgentMap.new(state: :ready)
       ...> |> cast(:state, fn :ready  -> sleep(10); :steady end)
       ...> |> cast(:state, fn :go!    -> sleep(10); :stop end)
-      ...> |> cast(:state, fn :steady -> sleep(10); :go! end, !: true)
+      ...> |> cast(:state, fn :steady -> sleep(10); :go! end, !: true) # priority call
       ...> |> fetch(:state)
       {:ok, :ready}
+
+  — the third one `cast/4` is a priority call, and so takes the `steady` value
+  as an argument (not `stop`).
 
   ### Timeout
 
@@ -403,8 +406,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> am = AgentMap.new([:a, :b], &{&1, :a})
-      iex> AgentMap.take(am, [:a, :b])
+      iex> AgentMap.new([:a, :b], &{&1, :a})
+      ...> |> AgentMap.take([:a, :b])
       %{a: :a, b: :a}
   """
   @spec new(Enumerable.t(), (term -> {key, value})) :: am
@@ -563,24 +566,23 @@ defmodule AgentMap do
   `get`-calls can and will be executed as a parallel `Task`s (see
   `max_processes/3`).
 
-  If there are callbacks awaiting invocation, this `fun` be added to the end of
-  the corresponding queue. If `!: true` option is given, `fun` will be executed
-  *immediately*, passing current value as an argument. Thus, any number of
-  `get(…, …, …, !: true)` calls will be executed concurently, no matter of what
-  `max_processes` value is provided for the `key`.
+  If there are callbacks awaiting invocation, this `fun` will be added to the
+  end of the corresponding queue. If `!: true` option is given, `fun` will be
+  executed *immediately*, passing current value as an argument. Thus, any number
+  of `get(…, …, …, !: true)` calls will be executed concurently, no matter of
+  what `max_processes` value is provided for the `key`.
 
   ## Options
 
     * `!: true` — (`boolean`, `false`) to make [priority
-      calls](#module-priority-calls-true). `key` could have an associated queue
-      of callbacks awaiting of execution, "priority" version allows to execute
-      given `fun` immediately in a separate `Task`, providing the current value
-      as an argument.
+      calls](#module-priority-calls-true). The `key` could have an associated
+      queue of callbacks awaiting of execution, "priority" version allows to
+      execute given `fun` immediately in a separate `Task`, providing the
+      current value as an argument.
 
       This calls are not counted in a number of processes allowed to run in
       parallel (see `max_processes/3`):
 
-          iex> import :timer
           iex> import AgentMap
           iex> #
           ...> am = AgentMap.new()
@@ -589,7 +591,7 @@ defmodule AgentMap do
           #
           iex> for _ <- 1..100 do
           ...>   Task.async(fn ->
-          ...>     get(am, :k, &(sleep(40) && &1), !: true)
+          ...>     get(am, :k, &(:timer.sleep(40) && &1), !: true)
           ...>   end)
           ...> end
           iex> sleep(10)
@@ -618,11 +620,10 @@ defmodule AgentMap do
 
   "Priority" calls:
 
-      iex> import :timer
       iex> import AgentMap
       iex> am = AgentMap.new(Alice: 42)
       iex> am
-      ...> |> cast(:Alice, &(sleep(40) && &1 + 1))
+      ...> |> cast(:Alice, &(:timer.sleep(40) && &1 + 1))
       ...> |> get(:Alice, & &1, !: true)
       42
       iex> get(am, :Alice) # the same
@@ -641,7 +642,7 @@ defmodule AgentMap do
       iex> get(am, :Alice, fn _ ->
       ...>   Process.get(:key)
       ...> end)
-      :a
+      :Alice
       iex> get(am, :Alice, fn nil ->
       ...>   Process.get(:value)
       ...> end)
@@ -660,7 +661,7 @@ defmodule AgentMap do
   # 2
 
   @doc """
-  *Immediately* gets the value for the given `key` in `AgentMap`.
+  *Immediately* returns the current value for the given `key` in `AgentMap`.
 
   ## Examples
 
@@ -723,7 +724,7 @@ defmodule AgentMap do
   Gets the value for `key` in `agentmap` and updates it, all in one pass.
 
   The function `fun` is sent to the `agentmap` which invokes it, passing the
-  value associated with `key` (or `nil`). The result of the invocation is
+  value associated with `key` (or `nil`). The result of an invocation is
   returned from this function.
 
   A `fun` can return:
@@ -735,15 +736,15 @@ defmodule AgentMap do
     * `:id` to return a current value, while not changing it.
 
   For example, `get_and_update(account, :Alice, & {&1, &1 + 1_000_000})` returns
-  the balance and makes the deposit, while `get_and_update(account, :Alice, &
-  {&1})` just returns the balance.
+  the balance of `:Alice` and makes the deposit, while `get_and_update(account,
+  :Alice, & {&1})` just returns the balance.
 
   ## Options
 
     * `!: true` — (`boolean`, `false`) to make [priority
-      calls](#module-priority-calls-true). `key` could have an associated queue
-      of callbacks, awaiting of execution. If such queue exists, asks worker to
-      process `fun` in prioriry order;
+      calls](#module-priority-calls-true). The `key` could have an associated
+      queue of callbacks, awaiting of execution. If such queue exists, asks a
+      worker to process the `fun` in the prioriry order;
 
     * `timeout: {:drop, pos_integer}` — to throw out `fun` from queue upon the
       occurence of a timeout. See [timeout section](#module-timeout);
@@ -806,7 +807,8 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
-      iex> %{Alice: 24}
+      iex> #
+      ...> %{Alice: 24}
       ...> |> AgentMap.new()
       ...> |> update(:Alice, & &1 + 1_000)
       ...> |> update(:Bob, fn nil -> 42 end)
@@ -839,7 +841,9 @@ defmodule AgentMap do
   ## Example
 
       iex> import AgentMap
-      iex> AgentMap.new(a: 42)
+      iex> #
+      ...> %{a: 42}
+      ...> |> AgentMap.new()
       ...> |> update(:a, :initial, & &1 + 1)
       ...> |> update(:b, :initial, & &1 + 1)
       ...> |> take([:a, :b])
@@ -873,18 +877,15 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import :timer
       iex> import AgentMap
       iex> #
       ...> am = AgentMap.new(Alice: 1)
       iex> am
-      ...> |> cast(:Alice, fn 1 -> sleep(20); 2 end)
+      ...> |> cast(:Alice, fn 1 -> :timer.sleep(20); 2 end)
       ...> |> cast(:Alice, fn 3 -> 4 end)
       ...> |> update!(:Alice, fn 4 -> 5 end)
       ...> |> update!(:Alice, fn 2 -> 3 end, !: true)
-      ...> |> get(:Alice)
-      1
-      iex> fetch(am, :Alice, !: false)
+      ...> |> fetch(:Alice, !: false)
       {:ok, 5}
       #
       iex> update!(am, :Bob, & &1)
@@ -939,12 +940,14 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
-      iex> am = AgentMap.new(a: 1, b: 2)
+      iex> #
+      ...> am = AgentMap.new(a: 1, b: 2)
       iex> am
       ...> |> replace!(:a, 3)
       ...> |> values()
       [3, 2]
-      iex> replace!(am, :c, 2)
+      iex> am
+      ...> |> replace!(:c, 2)
       ** (KeyError) key :c not found
   """
   @spec replace!(agentmap, key, value, keyword | timeout) :: agentmap
@@ -1008,16 +1011,16 @@ defmodule AgentMap do
       ...> am = AgentMap.new()
       iex> max_processes(am)
       5
-      iex> am
-      ...> |> max_processes(:infinity)
-      ...> |> max_processes()
+      iex> max_processes(am, :infinity)
+      iex> :timer.sleep(10)
+      iex> max_processes(am)
       :infinity
       #
-      iex> info(am, key)[:max_processes]
+      iex> info(am, :key)[:max_processes]
       :infinity
       #
-      iex> max_processes(am, key, 3)
-      iex> info(am, key)[:max_processes]
+      iex> max_processes(am, :key, 3)
+      iex> info(am, :key)[:max_processes]
       3
   """
   @spec max_processes(agentmap) :: pos_integer | :infinity
@@ -1038,9 +1041,9 @@ defmodule AgentMap do
       ...> am = AgentMap.new()
       iex> max_processes(am)
       5
-      iex> am
-      ...> |> max_processes(:infinity)
-      ...> |> max_processes()
+      iex> max_processes(am, :infinity)
+      iex> :timer.sleep(10)
+      iex> max_processes(am)
       :infinity
   """
   @spec max_processes(am, pos_integer | :infinity) :: am
@@ -1061,11 +1064,11 @@ defmodule AgentMap do
   By default, `5` get-processes per key allowed, but this can be changed via
   `max_processes/2`.
 
-      iex> import :timer
       iex> import AgentMap
-      iex> am = AgentMap.new(k: 42)
+      iex> #
+      ...> am = AgentMap.new(k: 42)
       iex> task = fn ->
-      ...>   get(am, :k, fn _ -> sleep(10) end)
+      ...>   get(am, :k, fn _ -> :timer.sleep(10) end)
       ...> end
       iex> for _ <- 1..4, do: spawn(task)
       iex> task.()
@@ -1087,7 +1090,8 @@ defmodule AgentMap do
 
       iex> import :timer
       iex> import AgentMap
-      iex> am = AgentMap.new()
+      iex> #
+      ...> am = AgentMap.new()
       iex> max_processes(am, :key, 42)
       #
       iex> for _ <- 1..1000 do
@@ -1136,48 +1140,54 @@ defmodule AgentMap do
 
   ## Examples
 
+      iex> import :timer
       iex> import AgentMap
-      iex> am = AgentMap.new()
       iex> #
-      ...> info(am, :k)
+      ...> am = AgentMap.new()
+      iex> #
+      ...> info(am, :key)
       [processes: 0, max_processes: 5]
       #
       iex> max_processes(am, 3)
       5
-      iex> info(am, :k)
+      iex> info(am, :key)
       [processes: 0, max_processes: 3]
       #
       iex> am
-      ...> |> cast(:k, fn _ -> :timer.sleep(10) end)
-      ...> |> info(:k)
+      ...> |> cast(:key, fn _ -> sleep(10) end)
+      ...> |> info(:key)
       [processes: 1, max_processes: 3]
       #
       iex> max_processes(am, 5)
       3
-      iex> info(am, :k)[:max_processes]
+      iex> info(am, :key)[:max_processes]
       5
       #
       iex> for _ <- 1..100 do
       ...>   Task.async(fn ->
-      ...>     get(am, :k, fn _ -> sleep(5) end)
+      ...>     get(am, :key, fn _ -> sleep(5) end)
       ...>   end)
       ...> end
-      iex> :timer.sleep(5)
-      iex> info(am, :k)[:processes]
+      iex> sleep(5)
+      iex> info(am, :key)[:processes]
       5
-      iex> :timer.sleep(50)
-      iex> info(am, :k)[:processes]
+      iex> sleep(50)
+      iex> info(am, :key)[:processes]
       1
 
   But keep in mind, that:
 
+      iex> import :timer
+      iex> import AgentMap
+      iex> #
+      iex> am = AgentMap.new()
       iex> for _ <- 1..100 do
       ...>   Task.async(fn ->
-      ...>     get(am, :k, fn _ -> sleep(50) end, !: true)
+      ...>     get(am, :key, fn _ -> sleep(50) end, !: true)
       ...>   end)
       ...> end
-      iex> :timer.sleep(10)
-      iex> info(am, :k)[:processes]
+      iex> sleep(10)
+      iex> info(am, :key)[:processes]
       100
   """
   @spec info(agentmap, key) :: [
@@ -1369,8 +1379,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> am = AgentMap.new(a: 1)
-      iex> am
+      iex> %{a: 1}
+      ...> |> AgentMap.new()
       ...> |> AgentMap.put(:b, 2)
       ...> |> AgentMap.take([:a, :b])
       %{a: 1, b: 2}
@@ -1416,7 +1426,8 @@ defmodule AgentMap do
       iex> am = AgentMap.new(a: 1, b: 2, c: 3)
       iex> AgentMap.take(am, [:a, :b, :d])
       %{a: 1, b: 2}
-      iex> am
+      iex> #
+      ...> am
       iex> |> AgentMap.cast(:a, &(sleep(10) && &1 + 1))
       iex> |> AgentMap.cast(:d, fn _ -> sleep(20); 42 end)
       ...> |> AgentMap.take([:a, :b, :d])
@@ -1453,7 +1464,6 @@ defmodule AgentMap do
 
     * `!: true` — (`boolean`, `false`) to make
       [priority](#module-priority-calls-true) delete calls;
-
     * `timeout: {:drop, pos_integer}` — to drop this call from queue when
       [timeout](#module-timeout) happens;
 
@@ -1461,8 +1471,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> am = AgentMap.new(a: 1, b: 2)
-      iex> am
+      iex> %{a: 1, b: 2}
+      ...> |> AgentMap.new()
       ...> |> AgentMap.delete(:a)
       ...> |> AgentMap.take([:a, :b])
       %{b: 2}
@@ -1514,9 +1524,9 @@ defmodule AgentMap do
 
   ## Examples
 
-      ...> %{a: 1, b: 2, c: 3}
+      iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.drop([:b, :d])
+      ...> |> AgentMap.drop([:b, :d], cast: false)
       ...> |> AgentMap.keys()
       [:a, :c]
   """
@@ -1529,9 +1539,9 @@ defmodule AgentMap do
     fun = fn _ -> :drop end
 
     if Keyword.get(opts, :cast, true) do
-      cast(agentmap, fun, keys, !: opts[:!])
+      Multi.cast(agentmap, keys, fun, !: opts[:!])
     else
-      update(agentmap, fun, keys, !: opts[:!])
+      Multi.update(agentmap, keys, fun, !: opts[:!])
     end
   end
 

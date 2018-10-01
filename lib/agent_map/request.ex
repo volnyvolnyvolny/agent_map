@@ -98,9 +98,9 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%Req{action: :keys}, {map, _} = state) do
+  def handle(%Req{action: :keys}, state) do
     has_value? = &match?({:ok, _}, fetch(state, &1))
-    ks = filter(Map.keys(map), has_value?)
+    ks = filter(Map.keys(state), has_value?)
 
     {:reply, ks, state}
   end

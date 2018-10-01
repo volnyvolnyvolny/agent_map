@@ -216,25 +216,7 @@ defmodule AgentMap.Worker do
     put(:wait, @wait + rand(25))
 
     # →
-    state = {[], []}
-    loop(state)
-  end
-
-  defp die_if_allowed(state) do
-    send(get(:gen_server), {self(), :die?})
-
-    receive do
-      :die! ->
-        :bye
-
-      :continue ->
-        # Next time wait a few ms more.
-        wait = get(:wait)
-        put(:wait, wait + rand(5))
-    after
-      0 ->
-        die_if_allowed(state)
-    end
+    loop({[], []})
   end
 
   # →
@@ -249,7 +231,18 @@ defmodule AgentMap.Worker do
         if get(:dontdie?) do
           loop(state)
         else
-          die_if_allowed(state)
+          send(get(:gen_server), {self(), :die?})
+
+          receive do
+            :die! ->
+              :bye
+
+            :continue ->
+              # Next time wait a few ms more.
+              wait = get(:wait)
+              put(:wait, wait + rand(5))
+              loop(state)
+          end
         end
     end
   end

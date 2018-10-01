@@ -46,9 +46,9 @@ defmodule Account do
   Trasfer money. Returns `:ok` or `:error`.
   """
   def transfer(from, to, amount) do
-    # transaction call
-    AgentMap.get_and_update(
+    AgentMap.Multi.get_and_update(
       __MODULE__,
+      [from, to],
       fn
         [nil, _] ->
           {:error}
@@ -61,8 +61,7 @@ defmodule Account do
 
         _ ->
           {:error}
-      end,
-      [from, to]
+      end
     )
   end
 

@@ -10,6 +10,8 @@ defmodule AgentMap.Server.State do
   @typedoc "Value or no value."
   @type box :: {:value, term} | nil
 
+  defguard is_box(b) when is_nil(b) or (is_tuple(b) and elem(b, 0) == :value)
+
   def box(v), do: {:value, v}
 
   def unbox(nil), do: nil
@@ -45,6 +47,9 @@ defmodule AgentMap.Server.State do
       {nil, {0, nil}} ->
         Map.delete(state, key)
 
+      {b, {0, nil}} ->
+        Map.put(state, key, b)
+
       {b, {p, nil}} ->
         Map.put(state, key, {b, p})
 
@@ -55,14 +60,14 @@ defmodule AgentMap.Server.State do
 
   def get(state, key) do
     case state[key] do
-      nil ->
-        {nil, {0, nil}}
-
-      {_b, {_p, _max_p}} = pack ->
+      {b, {_p, _max_p}} = pack when is_box(b) ->
         pack
 
-      {b, p} ->
+      {b, p} when is_box(b) ->
         {b, {p, nil}}
+
+      b when is_box(b) ->
+        {b, {0, nil}}
 
       worker ->
         worker

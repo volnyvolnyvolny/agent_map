@@ -54,6 +54,7 @@ defmodule AgentMapServerTest do
       max_processes: 10
     ]
 
-    assert Server.init(args) == {:ok, {%{a: {:value, 42}, b: {:value, 42}}, 10}}
+    assert Server.init(args) == {:ok, %{a: {:value, 42}, b: {:value, 42}}}
+    assert Process.get(:max_processes) == 10
   end
 end

@@ -1,11 +1,13 @@
 defmodule AgentMapTest do
   import AgentMap
-  # import :timer
+  import :timer
 
   use ExUnit.Case
   doctest AgentMap
 
   test "delete" do
+    am = AgentMap.new()
+
     next = fn
       nil ->
         sleep(10)
