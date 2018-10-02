@@ -617,8 +617,8 @@ defmodule AgentMap do
           ...>   end)
           ...> end
           iex> sleep(10)
-          iex> info(am, :k)[:processes] > 5
-          true
+          iex> info(am, :k)[:processes]
+          100
 
     * `timeout: {:drop, pos_integer}` — to throw out `fun` from queue upon the
       occurence of a timeout. See [timeout section](#module-timeout);
@@ -775,7 +775,8 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
-      iex> am = AgentMap.new(a: 42)
+      iex> #
+      ...> am = AgentMap.new(a: 42)
       iex> get_and_update(am, :a, & {&1, &1 + 1})
       42
       iex> get(am, :a)
@@ -965,10 +966,11 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
+      iex> import :timer
       iex> #
       ...> am = AgentMap.new(Alice: 1)
       iex> am
-      ...> |> cast(:Alice, fn 1 -> :timer.sleep(20); 2 end)
+      ...> |> cast(:Alice, fn 1 -> sleep(20); 2 end)
       ...> |> cast(:Alice, fn 3 -> 4 end)
       ...> |> update!(:Alice, fn 4 -> 5 end)
       ...> |> update!(:Alice, fn 2 -> 3 end, !: true)
@@ -1123,19 +1125,20 @@ defmodule AgentMap do
   ## Examples
 
       iex> import AgentMap
+      iex> import :timer
       iex> #
       ...> am = AgentMap.new()
       iex> max_processes(am)
       5
       iex> max_processes(am, :infinity)
-      iex> :timer.sleep(10)
+      iex> sleep(10)
       iex> max_processes(am)
       :infinity
   """
   @spec max_processes(am, pos_integer | :infinity) :: am
   def max_processes(am, value)
       when (is_integer(value) and value > 0) or value == :infinity do
-    _cast(am, %Req{action: :g_max_processes, data: value})
+    _cast(am, %Req{action: :max_processes, data: value})
   end
 
   @doc """
@@ -1172,13 +1175,13 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import :timer
       iex> import AgentMap
+      iex> import :timer
       iex> #
       ...> am = AgentMap.new()
       iex> max_processes(am, :key, 42)
-      #
-      iex> for _ <- 1..1000 do
+      iex> #
+      ...> for _ <- 1..1000 do
       ...>   Task.async(fn ->
       ...>     get(am, :key, fn _ -> sleep(10) end)
       ...>   end)
@@ -1196,7 +1199,7 @@ defmodule AgentMap do
   @spec max_processes(am, key, pos_integer | :infinity) :: am
   def max_processes(am, key, value)
       when (is_integer(value) and value > 0) or value == :infinity do
-    req = %Req{action: :max_processes, key: key, data: value, timeout: :infinity}
+    req = %Req{action: :max_processes, key: {key}, data: value}
     _cast(am, req, [])
   end
 
@@ -1214,7 +1217,7 @@ defmodule AgentMap do
   end
 
   def info(am, key, :max_processes) do
-    max_p = _call(am, %Req{action: :max_processes, key: key})
+    max_p = _call(am, %Req{action: :max_processes, key: {key}})
     {:max_processes, max_p}
   end
 
@@ -1224,17 +1227,17 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import :timer
       iex> import AgentMap
+      iex> import :timer
       iex> #
       ...> am = AgentMap.new()
       iex> #
       ...> info(am, :key)
       [processes: 0, max_processes: 5]
       #
-      iex> max_processes(am, 3)
-      5
-      iex> info(am, :key)
+      iex> am
+      ...> |> max_processes(3)
+      ...> |> info(:key)
       [processes: 0, max_processes: 3]
       #
       iex> am
@@ -1242,10 +1245,10 @@ defmodule AgentMap do
       ...> |> info(:key)
       [processes: 1, max_processes: 3]
       #
-      iex> max_processes(am, 5)
-      3
-      iex> info(am, :key)[:max_processes]
-      5
+      iex> am
+      ...> |> max_processes(5)
+      ...> |> info(:key)
+      [processes: 1, max_processes: 5]
       #
       iex> for _ <- 1..100 do
       ...>   Task.async(fn ->

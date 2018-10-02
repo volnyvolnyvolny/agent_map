@@ -74,19 +74,26 @@ defmodule AgentMap.Req do
     {:reply, p, state}
   end
 
-  # per server:
-  def handle(%Req{action: :g_max_processes} = req, state) do
-    Process.put(:max_processes, req.data)
-    {:noreply, state}
+  # per key:
+  def handle(%Req{action: :max_processes, key: {key}, data: nil}, state) do
+    max_p =
+      case get(state, key) do
+        {_box, {_p, max_p}} ->
+          max_p
+
+        worker ->
+          dict(worker)[:max_processes]
+      end || Process.get(:max_processes)
+
+    {:reply, max_p, state}
   end
 
-  # per key:
-  def handle(%Req{action: :max_processes} = req, state) do
+  def handle(%Req{action: :max_processes, key: {key}} = req, state) do
     state =
-      case get(state, req.key) do
+      case get(state, key) do
         {box, {p, _max_p}} ->
           pack = {box, {p, req.data}}
-          put(state, req.key, pack)
+          put(state, key, pack)
 
         worker ->
           req = compress(%{req | !: true, from: nil})
@@ -94,6 +101,12 @@ defmodule AgentMap.Req do
       end
 
     {:noreply, state}
+  end
+
+  # per server:
+  def handle(%Req{action: :max_processes} = req, state) do
+    max_p = Process.put(:max_processes, req.data)
+    {:reply, max_p, state}
   end
 
   #

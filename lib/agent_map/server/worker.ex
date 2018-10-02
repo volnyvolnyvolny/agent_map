@@ -41,7 +41,7 @@ defmodule AgentMap.Worker do
         &match?(%{info: :get!}, &1)
       )
 
-    get(:processes) + ps
+    IO.inspect(get(:processes)) + ps
   end
 
   ##
@@ -83,7 +83,7 @@ defmodule AgentMap.Worker do
       if box do
         un(box)
       else
-        Map.get(req, :initial)
+        Map.get(req, :data)
       end
 
     res = run(req.fun, [arg], t_left, break?)

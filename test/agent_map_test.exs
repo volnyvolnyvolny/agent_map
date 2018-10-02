@@ -127,4 +127,39 @@ defmodule AgentMapTest do
 
     assert fetch(am, :a, !: false) == {:ok, [2, 3]}
   end
+
+  test "info" do
+    import AgentMap
+    #
+    am = AgentMap.new()
+
+    assert info(am, :k)[:max_processes] == 5
+    #
+    for _ <- 1..100 do
+      Task.async(fn ->
+        get(am, :k, &(:timer.sleep(40) && &1), !: true)
+      end)
+    end
+
+    sleep(10)
+
+    assert IO.inspect(info(am, :k)[:processes]) > 5
+  end
+
+  test "update!" do
+    import AgentMap
+    import :timer
+    #
+    am = AgentMap.new(Alice: 1)
+    assert am
+    |> cast(:Alice, fn v -> IO.inspect({v, 2}); sleep(100); 2 end)
+    |> cast(:Alice, fn v -> IO.inspect({v, 4}); 4 end)
+    |> update!(:Alice, fn v -> IO.inspect({v, 5}); 5 end)
+    |> update!(:Alice, fn v -> IO.inspect({v, 3}); 3 end, !: true)
+    |> fetch(:Alice, !: false)
+    == {:ok, 5}
+    #
+    # assert update!(am, :Bob, & &1)
+    # ** (KeyError) key :Bob not found
+  end
 end
