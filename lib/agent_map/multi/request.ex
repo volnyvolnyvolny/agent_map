@@ -25,7 +25,7 @@ defmodule AgentMap.Multi.Req do
     for w <- workers, do: send(w, msg)
   end
 
-  # on transaction process
+  # on process
   defp prepair(req, pids) when is_list(pids) do
     act = req.action
     me = self()
@@ -182,7 +182,7 @@ defmodule AgentMap.Multi.Req do
         reply(req.from, get)
       else
         {:error, {:callback, result}} ->
-          raise CallbackError, got: result
+          raise CallbackError, got: result, multi_key?: true
 
         {:error, {:update, values}} ->
           raise CallbackError, len: length(values)
@@ -203,7 +203,7 @@ defmodule AgentMap.Multi.Req do
 
             {:error, :toolong} ->
               Logger.error(
-                "Keys #{ks} transaction call takes too long and will be terminated. Req: #{r}."
+                "Call (keys: #{ks}) takes too long to execute. It will be terminated. Req: #{r}."
               )
           end
       end

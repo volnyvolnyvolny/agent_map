@@ -182,9 +182,49 @@ defmodule AgentMap.Req do
     end
   end
 
+  def handle(%Req{action: :put_new} = req, state) do
+    case get(state, req.key) do
+      {nil, p_info} ->
+        pack = {box(req.data), p_info}
+        {:reply, :ok, put(state, req.key, pack)}
+
+      {_box, _p_info} ->
+        {:reply, :ok, state}
+
+      worker ->
+        fun = fn _ ->
+          unless Process.get(:value) do
+            if req.fun do
+              {:ok, req.fun.()}
+            else
+              {:ok, req.data}
+            end
+          end || {:ok}
+        end
+
+        req = %{req | action: :get_and_update, fun: fun}
+
+        send(worker, compress(req))
+        {:noreply, state}
+    end
+  end
+
   def handle(%Req{action: :fetch} = req, state) do
-    value = fetch(state, req.key)
-    {:reply, value, state}
+    if req.! do
+      value = fetch(state, req.key)
+      {:reply, value, state}
+    else
+      fun = fn value ->
+        if Process.get(:value) do
+          {:ok, value}
+        else
+          :error
+        end
+      end
+
+      req = %{req | action: :get, fun: fun}
+      handle(req, state)
+    end
   end
 
   def handle(%Req{action: :delete} = req, state) do

@@ -23,15 +23,14 @@ defmodule AgentMap.Multi do
   @type name :: atom | {:global, term} | {:via, module, term}
 
   @typedoc "`AgentMap` server (name, link, pid, …)"
-  @type agentmap :: pid | {atom, node} | name | %AgentMap{}
-  @type am :: agentmap
+  @type am :: pid | {atom, node} | name | %AgentMap{}
 
   @type key :: term
   @type value :: term
 
-  defp _cast(agentmap, req, opts) do
-    GenServer.cast(pid(agentmap), struct(req, opts))
-    agentmap
+  defp _cast(am, req, opts) do
+    GenServer.cast(pid(am), struct(req, opts))
+    am
   end
 
   ##
@@ -39,11 +38,11 @@ defmodule AgentMap.Multi do
   ##
 
   @doc """
-  Computes the `fun`, using `keys` values in the `agentmap` as an argument.
+  Computes the `fun`, using `keys` values as an argument.
 
-  The `fun` is sent to the `agentmap` which invokes it, passing the list of
-  values associated with the `keys` (`nil`s for missing keys). The result of the
-  invocation is returned.
+  The `fun` is sent to the `AgentMap` instance that invokes it, passing the list
+  of values associated with the `keys` (`nil`s for missing keys). The result of
+  the invocation is returned.
 
   For example, `get(account, [:Alice, :Bob], &Enum.sum/1)` call returns the sum
   of the account balances of Alice and Bob. Suppose that `:Alice` has a worker
@@ -63,7 +62,7 @@ defmodule AgentMap.Multi do
       To achieve the same on the client side use:
 
           for key <- keys do
-            case AgentMap.fetch(agentmap, key) do
+            case AgentMap.fetch(am, key) do
               {:ok, value} ->
                 value
 
@@ -83,22 +82,6 @@ defmodule AgentMap.Multi do
 
     * `:timeout` — (`pos_integer | :infinity`, `5000`).
 
-  ## Special process dictionary keys
-
-  One can use `:"$keys"` and `:"$map"` keys:
-
-      iex> alias AgentMap.Multi, as: M
-      iex> am = AgentMap.new(a: nil, b: 42)
-      iex> M.get(am, [:a, :b, :c], fn _ ->
-      ...>   Process.get(:"$keys")
-      ...> end)
-      [:a, :b, :c]
-      #
-      iex> M.get(am, [:a, :b, :c], fn [nil, 42, nil] ->
-      ...>   Process.get(:"$map")
-      ...> end)
-      %{a: nil, b: 42}
-
   ## Examples
 
       iex> alias AgentMap.Multi, as: M
@@ -116,32 +99,32 @@ defmodule AgentMap.Multi do
 
    "Priority" calls:
 
-      iex> alias AgentMap.Multi, as: M
+      iex> import AgentMap
       iex> import :timer
-      iex> am = AgentMap.new(key: 42)
-      iex> AgentMap.cast(am, :key, fn _ -> sleep(10); 43 end)
-      iex> M.get(am, [:key], & &1, !: true)
-      [42]
-      iex> am.key # the same
-      42
-      iex> M.get(am, [:key], & &1, !: false)
-      [43]
-      # — executed in 10 ms.
-      iex> am.key
-      43
+      iex> alias AgentMap.Multi, as: M
+      iex> #
+      ...> am = AgentMap.new(a: 1, b: 1)
+      iex> am
+      ...> |> cast(:a, fn 1 -> sleep(10); 2 end)
+      ...> |> M.cast([:a, :b], fn [2, 1] -> sleep(10); [3, 2] end)
+      ...> |> M.get([:a, :b], & &1, !: true)
+      [1, 1]
+      iex> am
+      ...> |> M.get([:a, :b], & &1, !: false)
+      [3, 2]
   """
-  @spec get(am, [key], ([value] -> get), keyword) :: get when get: var
-  def get(agentmap, keys, fun, opts \\ [!: false, timeout: 5000])
+  @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
+  def get(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
     req = %Req{action: :get, keys: keys, fun: fun}
-    _call(agentmap, req, opts)
+    _call(am, req, opts)
   end
 
   @doc """
   Updates `keys` values and returnes "get"-value, all in one pass.
 
-  The `fun` is sent to the `agentmap` which invokes it, passing the list of
-  values associated with `keys` (`nil`s for missing keys) as an argument. The
+  The `fun` is sent to the `AgentMap` instance that invokes it, passing the list
+  of values associated with `keys` (`nil`s for missing keys) as an argument. The
   `fun` must produce "get"-value and a new values list for `keys`. For example,
   `get_and_update(account, [:Alice, :Bob], fn [a,b] -> {:swapped, [b,a]} end)`
   produces `:swapped` "get"-value and swaped Alice's and Bob's balances as an
@@ -155,9 +138,11 @@ defmodule AgentMap.Multi do
       This returns a list of "get"-values. For ex.:
 
           iex> alias AgentMap.Multi, as: M
-          iex> am = AgentMap.new(a: 1, b: 2, c: 3)
+          iex> #
+          ...> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> M.get_and_update(am, keys, fn _ ->
+          iex> #
+          ...> M.get_and_update(am, keys, fn _ ->
           ...>   [{:get, :new_value}, {:get}, :pop, :id]
           ...> end)
           [:get, :get, 3, nil]
@@ -168,9 +153,11 @@ defmodule AgentMap.Multi do
       For ex.:
 
           iex> alias AgentMap.Multi, as: M
-          iex> am = AgentMap.new(a: 1, b: 2, c: 3)
+          iex> #
+          ...> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> M.get_and_update(am, keys, fn _ ->
+          iex> #
+          ...> M.get_and_update(am, keys, fn _ ->
           ...>   {:get, [4, 3, 2, 1]}
           ...> end)
           :get
@@ -194,10 +181,9 @@ defmodule AgentMap.Multi do
       value, :id}`.
       For ex.:
 
-          iex> alias AgentMap.Multi, as: T
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> M.get_and_update(am, keys, fn _ -> {:get} end)
+          iex> AgentMap.Multi.get_and_update(am, keys, fn _ -> {:get} end)
           :get
           iex> AgentMap.take(am, keys)
           %{a: 1, b: 2, c: 3}
@@ -206,10 +192,9 @@ defmodule AgentMap.Multi do
     * `:id` to return list of values while not changing them.
       For ex.:
 
-          iex> alias AgentMap.Multi, as: M
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> M.get_and_update(am, keys, fn _ -> :id end)
+          iex> AgentMap.Multi.get_and_update(am, keys, fn _ -> :id end)
           [1, 2, 3, nil]
           iex> AgentMap.take(am, keys)
           %{a: 1, b: 2, c: 3}
@@ -218,10 +203,9 @@ defmodule AgentMap.Multi do
     * `:pop` to return values while removing them from `agentmap`.
       For ex.:
 
-          iex> alias AgentMap.Multi, as: M
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           iex> keys = [:a, :b, :c, :d]
-          iex> M.get_and_update(am, keys, fn _ -> :pop end)
+          iex> AgentMap.Multi.get_and_update(am, keys, fn _ -> :pop end)
           [1, 2, 3, nil]
           iex> AgentMap.take(am, keys)
           %{}
@@ -229,19 +213,6 @@ defmodule AgentMap.Multi do
   Multis are *Isolated* and *Durabled* (by ACID model). *Atomicity* can be
   implemented inside callbacks and *Consistency* is out of question here as it
   is the application level concept.
-
-  ## Special process dictionary keys
-
-  One can use `:"$keys"` and `:"$map"` keys:
-
-      iex> alias AgentMap.Multi, as: M
-      iex> am = AgentMap.new(a: nil, b: 42)
-      iex> M.get_and_update(am, [:a, :b, :c], fn _ ->
-      ...>   keys = Process.get(:"$keys")
-      ...>   map = Process.get(:"$map")
-      ...>   {keys, map}
-      ...> end)
-      {[:a, :b, :c], %{a: nil, b: 42}}
 
   ## Options
 
@@ -263,10 +234,9 @@ defmodule AgentMap.Multi do
 
   ## Examples
 
-      iex> alias AgentMap.Multi, as: M
       iex> %{Alice: 42, Bob: 24}
       ...> |> AgentMap.new()
-      ...> |> M.get_and_update([:Alice, :Bob], fn [a, b] ->
+      ...> |> AgentMap.Multi.get_and_update([:Alice, :Bob], fn [a, b] ->
       ...>      if a > 10 do
       ...>        a = a - 10
       ...>        b = b + 10
@@ -288,14 +258,13 @@ defmodule AgentMap.Multi do
       iex> M.get(am, [:Alice, :Bob], & &1)
       [nil, 24]
 
-  (!) Value changing transactions (`get_and_update/4`, `update/4`, `cast/4`)
-  will block execution for all the involving `keys`. For ex.:
+  (!) Value changing calls (`get_and_update/4`, `update/4`, `cast/4`) will block
+  execution for all the involving `keys`. For ex.:
 
-      iex> import :timer
       iex> %{Alice: 42, Bob: 24, Chris: 0}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.get_and_update([:Alice, :Bob], fn _ >
-      ...>   sleep(10) && {"10 ms later"}
+      ...> |> AgentMap.Multi.get_and_update([:Alice, :Bob], fn _ >
+      ...>   :timer.sleep(10) && {"10 ms later"}
       ...> end)
       "10 ms later"
 
@@ -306,7 +275,8 @@ defmodule AgentMap.Multi do
 
       iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(a: 22, b: 24)
-      iex> M.get_and_update(am, [:a, :b], fn [u, d] ->
+      iex> #
+      ...> M.get_and_update(am, [:a, :b], fn [u, d] ->
       ...>   [{u, d}, {d, u}]
       ...> end)
       [22, 24]
@@ -340,28 +310,25 @@ defmodule AgentMap.Multi do
              | :pop
              | :id)
 
-  @spec get_and_update(am, [key], cb_m(get), keyword) :: get | [value]
+  @spec get_and_update(am, [key], cb_m(get), keyword | timeout) :: get | [value]
         when get: var
-  def get_and_update(agentmap, keys, fun, opts \\ [!: false, timeout: 5000])
+  def get_and_update(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
     unless keys == Enum.uniq(keys) do
       raise """
             expected uniq keys for `update`, `get_and_update` and
-            `cast` transactions. Got: #{inspect(keys)}. Please
+            `cast` multi-key calls. Got: #{inspect(keys)}. Please
             check #{inspect(keys -- Enum.uniq(keys))}.
             """
             |> String.replace("\n", " ")
     end
 
     req = %Req{action: :get_and_update, keys: keys, fun: fun}
-    _call(agentmap, req, opts)
+    _call(am, req, opts)
   end
 
   @doc """
-  Updates the `keys` of the `agentmap` with the given `fun` in one go.
-
-  After the `fun` is executed, returns the `agentmap` argument unchanged to
-  support piping.
+  Updates the `keys` with the given `fun` in one go.
 
   Callback (`fun`) can return:
 
@@ -405,16 +372,16 @@ defmodule AgentMap.Multi do
       ...> |> M.get([:c, :d], & &1)
       [nil, :drop]
   """
-  @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword) :: am
-  def update(agentmap, keys, fun, opts \\ [!: false, timeout: 5000])
+  @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword | timeout) :: am
+  def update(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
-    get_and_update(agentmap, keys, &{agentmap, fun.(&1)}, opts)
+    get_and_update(am, keys, &{am, fun.(&1)}, opts)
   end
 
   @doc """
   Performs "fire and forget" `update/4` call, using `GenServer.cast/2`.
 
-  Returns *immediately* the same `agentmap` to support piping.
+  Returns *immediately*, without waiting for the actual update occur.
 
   See `update/4`.
 
@@ -428,8 +395,9 @@ defmodule AgentMap.Multi do
   """
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
-  def cast(agentmap, keys, fun, opts \\ [!: false]) when is_function(fun, 1) and is_list(keys) do
+  def cast(am, keys, fun, opts \\ [])
+      when is_function(fun, 1) and is_list(keys) do
     req = %Req{action: :get_and_update, keys: keys, fun: &{:_get, fun.(&1)}}
-    _cast(agentmap, req, opts)
+    _cast(am, req, opts)
   end
 end

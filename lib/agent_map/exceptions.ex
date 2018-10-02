@@ -1,23 +1,23 @@
 defmodule AgentMap.CallbackError do
-  defexception [:got, :len, transaction?: false]
+  defexception [:got, :len, multi_key?: false]
 
-  def message(%{transaction?: false, got: g}) do
+  def message(%{multi_key?: false, got: g}) do
     """
     callback may return {get, value} | {get} | :id | :pop | {fun, keys}, value}.
     got: #{inspect(g)}
     """
   end
 
-  def message(%{transaction?: true, len: n}) do
-    "the number of returned values #{n} does not equal to the number of keys"
-  end
-
-  def message(%{transaction?: true, got: g}) do
+  def message(%{multi_key?: true, got: g}) do
     """
     callback may return {get, [value] | :id | :drop} | {get} | :id | :pop |
     [{get, value} | {get} | :id | :pop].
     got: #{inspect(g)}
     """
+  end
+
+  def message(%{len: n}) when is_integer(n) do
+    "the number of returned values #{n} does not equal to the number of keys"
   end
 end
 

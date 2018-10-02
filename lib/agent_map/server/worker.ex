@@ -76,52 +76,63 @@ defmodule AgentMap.Worker do
   defp timeout(%{}), do: :infinity
 
   defp run(req, box) do
-    timeout = Map.get(req, :timeout)
-    break? = match?({:break, _}, timeout)
+    break? = match?(%{timeout: {:break, _}}, req)
     t_left = timeout(req)
-    arg = un(box)
 
-    result = run(req.fun, [arg], t_left, break?)
-    interpret(req, arg, result)
+    arg =
+      if box do
+        un(box)
+      else
+        Map.get(req, :initial)
+      end
+
+    res = run(req.fun, [arg], t_left, break?)
+    interpret(req, arg, res)
   end
 
   defp interpret(%{action: :get} = req, _arg, {:ok, get}) do
     Map.get(req, :from) |> reply(get)
   end
 
-  defp interpret(req, _arg, {:ok, {get}}) do
-    Map.get(req, :from) |> reply(get)
-  end
+  # action: :get_and_update
+  defp interpret(req, arg, {:ok, ret}) do
+    from = Map.get(req, :from)
 
-  defp interpret(req, _arg, {:ok, {get, v}}) do
-    put(:value, box(v))
-    Map.get(req, :from) |> reply(get)
-  end
+    case ret do
+      {get} ->
+        reply(from, get)
 
-  defp interpret(req, arg, {:ok, :id}) do
-    Map.get(req, :from) |> reply(arg)
-  end
+      {get, v} ->
+        put(:value, box(v))
+        reply(from, get)
 
-  defp interpret(req, arg, {:ok, :pop}) do
-    delete(:value)
-    Map.get(req, :from) |> reply(arg)
-  end
+      :id ->
+        reply(from, arg)
 
-  defp interpret(_req, _arg, {:ok, reply}) do
-    raise CallbackError, got: reply
+      :pop ->
+        delete(:value)
+        reply(from, arg)
+
+      reply ->
+        raise CallbackError, got: reply
+    end
   end
 
   defp interpret(req, arg, {:error, :expired}) do
+    key = get(:key)
+
     Logger.error("""
-    Key #{inspect(get(:key))} call is expired and will not be executed.
+    Key #{inspect(key)} call is expired and will not be executed.
     Request: #{inspect(req)}.
     Value: #{inspect(arg)}.
     """)
   end
 
   defp interpret(req, arg, {:error, :toolong}) do
+    key = get(:key)
+
     Logger.error("""
-    Key #{inspect(get(:key))} call takes too long and will be terminated.
+    Key #{inspect(key)} call takes too long and will be terminated.
     Request: #{inspect(req)}.
     Value: #{inspect(arg)}.
     """)
