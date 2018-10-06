@@ -184,7 +184,7 @@ defmodule Account do
   """
   def transfer(from, to, amount) do
     # Multi call.
-    AgentMap.get_and_update(__MODULE__, fn
+    AgentMap.Multi.get_and_update(__MODULE__, [from, to], fn
       [nil, _] -> {:error}
 
       [_, nil] -> {:error}
@@ -193,7 +193,7 @@ defmodule Account do
         {:ok, [b1 - amount, b2 + amount]}
 
       _ -> {:error}
-    end, [from, to])
+    end)
   end
 
   @doc """

@@ -197,7 +197,7 @@ defmodule AgentMap do
       iex> AgentMap.new(state: :ready)
       ...> |> cast(:state, fn :ready  -> sleep(10); :steady end)
       ...> |> cast(:state, fn :go!    -> sleep(10); :stop end)
-      ...> |> cast(:state, fn :steady -> sleep(10); :go! end, priority: :high) # ↑
+      ...> |> cast(:state, fn :steady -> sleep(10); :go! end, priority: :max) # ↑
       ...> |> fetch(:state)
       {:ok, :ready}
 
@@ -287,7 +287,9 @@ defmodule AgentMap do
 
   @type key :: term
   @type value :: term
-  @type priority :: :low | :mix | :mid | :avg | :high | :max | :now | non_neg_integer
+  @type alias :: :low | :mix | :mid | :avg | :high | :max
+  @type delta :: integer
+  @type priority :: alias | {alias, delta} | :now | non_neg_integer
 
   @doc false
   def child_spec(funs_and_opts) do
