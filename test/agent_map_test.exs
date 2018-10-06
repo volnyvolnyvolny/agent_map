@@ -73,6 +73,33 @@ defmodule AgentMapTest do
     # … → fetch
   end
 
+  test "drop" do
+    import AgentMap
+    import :timer
+    #
+    assert %{a: 1, b: 2, c: 3}
+           |> AgentMap.new()
+           |> cast([:a, b], &(sleep(20) && &1))
+           |> put(:a, "low", priority: :low)
+           |> put(:a, "mid", priority: :mid)
+           |> put(:a, "high", priority: :high)
+           |> drop([:a], priority: :mid)
+           |> take([:a, :b, :c]) == %{a: "low", c: 3}
+  end
+
+  test "put" do
+    assert %{a: 0}
+           |> AgentMap.new()
+           |> AgentMap.cast(:a, &(:timer.sleep(20) && &1))
+           |> AgentMap.put(:a, 1, priority: :low)
+           |> AgentMap.put(:a, 2, priority: :mid)
+           |> AgentMap.put(:a, 3, priority: :high)
+           |> AgentMap.put(:b, 1, priority: :low)
+           |> AgentMap.put(:b, 2, priority: :mid)
+           |> AgentMap.put(:b, 3, priority: :high)
+           |> AgentMap.take([:a, :b]) == %{a: 1, b: 3}
+  end
+
   test "main" do
     import :timer
     import AgentMap
@@ -151,13 +178,31 @@ defmodule AgentMapTest do
     import :timer
     #
     am = AgentMap.new(Alice: 1)
+
     assert am
-    |> cast(:Alice, fn v -> IO.inspect({v, 2}); sleep(100); 2 end)
-    |> cast(:Alice, fn v -> IO.inspect({v, 4}); 4 end)
-    |> update!(:Alice, fn v -> IO.inspect({v, 5}); 5 end)
-    |> update!(:Alice, fn v -> IO.inspect({v, 3}); 3 end, !: true)
-    |> fetch(:Alice, !: false)
-    == {:ok, 5}
+           |> cast(:Alice, fn v ->
+             IO.inspect({v, 2})
+             sleep(100)
+             2
+           end)
+           |> cast(:Alice, fn v ->
+             IO.inspect({v, 4})
+             4
+           end)
+           |> update!(:Alice, fn v ->
+             IO.inspect({v, 5})
+             5
+           end)
+           |> update!(
+             :Alice,
+             fn v ->
+               IO.inspect({v, 3})
+               3
+             end,
+             !: true
+           )
+           |> fetch(:Alice, !: false) == {:ok, 5}
+
     #
     # assert update!(am, :Bob, & &1)
     # ** (KeyError) key :Bob not found

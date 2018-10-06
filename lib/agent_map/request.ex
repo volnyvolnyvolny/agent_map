@@ -3,7 +3,7 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Worker, Req, Server, Common}
+  alias AgentMap.{Worker, Req, Server, Common, Multi}
 
   import Worker, only: [spawn_get_task: 2, dict: 1, processes: 1]
   import Enum, only: [filter: 2]
@@ -20,7 +20,7 @@ defmodule AgentMap.Req do
     :fun,
     :inserted_at,
     timeout: 5000,
-    !: false
+    !: 256
   ]
 
   def timeout(%_{timeout: {_, t}, inserted_at: nil}), do: t
@@ -60,6 +60,28 @@ defmodule AgentMap.Req do
   ##
   ## HANDLERS
   ##
+
+  def handle(%Req{action: :to_map} = req, state) do
+    keys = Map.keys(state)
+    fun = fn _ -> Process.get(:map) end
+
+    Multi.Req
+    |> struct(Map.from_struct(req))
+    |> Map.put(:keys, keys)
+    |> Map.put(:fun, fun)
+    |> Multi.Req.handle(state)
+  end
+
+  def handle(%Multi.Req{action: :drop} = req, state) do
+    req =
+      Multi.Req
+      |> struct(Map.from_struct(req))
+      |> Map.put(:action, :delete)
+
+    Enum.reduce(req.keys, state, fn key, state ->
+      handle(%{req | key: key}, state)
+    end)
+  end
 
   def handle(%Req{action: :processes} = req, state) do
     p =

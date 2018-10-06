@@ -16,7 +16,7 @@ defmodule AgentMap.Multi.Req do
     :fun,
     :inserted_at,
     timeout: 5000,
-    !: false
+    !: 256
   ]
 
   def timeout(req), do: AgentMap.Req.timeout(req)
