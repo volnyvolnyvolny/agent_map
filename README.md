@@ -102,7 +102,7 @@ defmodule Calc do
   def fib(1), do: 1
   def fib(n) when n >= 0 do
     unless GenServer.whereis(__MODULE__) do
-      AgentMap.start_link(name: __MODULE__)
+      AgentMap.start_link([], name: __MODULE__)
       fib(n)
     else
       AgentMap.get_and_update(__MODULE__, n, fn
@@ -131,7 +131,7 @@ multiple keys). Let's see an accounting demo:
 ```elixir
 defmodule Account do
   def start_link() do
-    AgentMap.start_link(name: __MODULE__)
+    AgentMap.start_link([], name: __MODULE__)
   end
 
   def stop() do

@@ -10,6 +10,7 @@ defmodule AgentMap.Worker do
   @moduledoc false
 
   @compile {:inline, rand: 1, dict: 1, busy?: 1}
+  @avg 256
 
   # ms
   @wait 10
@@ -227,11 +228,11 @@ defmodule AgentMap.Worker do
     put(:wait, @wait + rand(25))
 
     # →
-    loop({[], []})
+    loop({Heap.new, []})
   end
 
   # →
-  defp loop({[], []} = state) do
+  defp loop({%_{size: 0}, []} = state) do
     wait = get(:wait)
 
     receive do
@@ -258,51 +259,53 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp loop({_, [%{action: :get} = req | _]} = state) do
-    state = {p_queue, queue} = flush(state)
+  defp loop({_heap, [%{action: :get} = req | _]} = state) do
+    state = {heap, queue} = flush(state)
 
     if get(:processes) < get(:max_processes) do
       [_req | tail] = queue
       handle(req)
-      loop({p_queue, tail})
+      loop({heap, tail})
     else
       run(state) |> loop()
     end
   end
 
-  defp loop({p_queue, queue} = state) when p_queue != [] and queue != [] do
-    run(state) |> loop()
-  end
-
-  defp loop(state) do
-    receive do
-      req ->
-        place(state, req) |> loop()
-    after
-      0 ->
-        # Mailbox is empty. Run:
-        run(state) |> loop()
+  defp loop({heap, queue}) do
+    unless Heap.empty?(heap) || [] == queue do
+      run(state) |> loop()
+    else
+      receive do
+        req ->
+          place(state, req) |> loop()
+      after
+        0 ->
+          # Mailbox is empty. Run:
+          run(state) |> loop()
+      end
     end
   end
 
   #
 
-  defp run({[], [req | tail]}) do
+  defp run({%_{size: 0}, [req | tail]}) do
     handle(req)
-    {[], tail}
+    {Heap.new(), tail}
   end
 
-  defp run({p_queue, [%{action: :get_and_update} | _] = queue}) do
-    for req <- p_queue do
+  defp run({heap, [%{action: :get_and_update} | _] = queue}) do
+    for req <- heap do
       handle(req)
     end
 
-    {[], queue}
+    {Heap.new(), queue}
   end
 
-  defp run({[req | tail], queue}) do
+  defp run({heap, queue}) do
+    {req, rest} = Heap.split(heap)
+
     handle(req)
-    {tail, queue}
+    {rest, queue}
   end
 
   #
@@ -327,7 +330,7 @@ defmodule AgentMap.Worker do
         handle(msg)
         state
 
-      %{!: true} = req ->
+      %{!: @avg} = req ->
         {[req | p_queue], queue}
 
       _ ->
