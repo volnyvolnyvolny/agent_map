@@ -9,15 +9,14 @@ defmodule AgentMap.Worker do
 
   @moduledoc false
 
-  @compile {:inline, rand: 1, dict: 1, busy?: 1}
-  @avg 256
+  @compile {:inline, rand: 1, dict: 1, inc: 1, dec: 1}
 
   # ms
   @wait 10
 
   defp rand(n) when n < 100, do: rem(now(), n)
 
-  defp info(worker, key) do
+  def info(worker, key) do
     Process.info(worker, key) |> elem(1)
   end
 
@@ -29,10 +28,8 @@ defmodule AgentMap.Worker do
     end
   end
 
-  def dict(worker \\ self()), do: info(worker, :dictionary)
-
-  def busy?(worker) do
-    info(worker, :message_queue_len) > 0
+  def dict(worker \\ self()) do
+    info(worker, :dictionary)
   end
 
   def processes(worker) do
@@ -42,7 +39,40 @@ defmodule AgentMap.Worker do
         &match?(%{info: :get!}, &1)
       )
 
-    IO.inspect(get(:processes)) + ps
+    get(:processes) + ps
+  end
+
+  defp dec(key), do: put(key, get(key) - 1)
+
+  defp inc(key), do: put(key, get(key) + 1)
+
+  ##
+  ##
+  ##
+
+  def broadcast(pids, msg) do
+    for worker <- pids, do: send(worker, msg)
+  end
+
+  #
+
+  def collect(values, [], _), do: {:ok, values}
+
+  def collect(_, _, t) when t < 0, do: {:error, :expired}
+
+  def collect(values, pids, timeout) do
+    past = now()
+
+    receive do
+      {worker, value} ->
+        values = Map.put(values, worker, value)
+        pids = List.delete(pids, worker)
+
+        collect(values, pids, left(timeout, since: past))
+    after
+      timeout ->
+        {:error, :expired}
+    end
   end
 
   ##
@@ -164,15 +194,13 @@ defmodule AgentMap.Worker do
   defp handle(%{action: :get} = req) do
     box = get(:value)
 
-    p = get(:processes)
-
-    if p < max_processes() do
+    if get(:processes) < max_processes() do
       key = get(:key)
       s = get(:gen_server)
 
       spawn_get_task(req, {key, box}, server: s, worker: self())
 
-      put(:processes, p + 1)
+      inc(:processes)
     else
       run(req, box)
     end
@@ -186,19 +214,8 @@ defmodule AgentMap.Worker do
     put(:max_processes, req.data)
   end
 
-  defp handle(%{info: :done}) do
-    p = get(:processes)
-    put(:processes, p - 1)
-  end
-
-  defp handle(%{info: :get!}) do
-    p = get(:processes)
-    put(:processes, p + 1)
-  end
-
-  defp handle(:dontdie!) do
-    put(:dontdie?, true)
-  end
+  defp handle(%{info: :done}), do: dec(:processes)
+  defp handle(%{info: :get!}), do: inc(:processes)
 
   defp handle(msg) do
     k = inspect(get(:key))
@@ -227,114 +244,64 @@ defmodule AgentMap.Worker do
 
     put(:wait, @wait + rand(25))
 
+    loop(Heap.new())
     # →
-    loop({Heap.new, []})
   end
 
   # →
-  defp loop({%_{size: 0}, []} = state) do
+  defp loop(%_{size: 0} = heap) do
     wait = get(:wait)
 
     receive do
       req ->
-        place(state, req) |> loop()
+        place(heap, req) |> loop()
     after
       wait ->
-        if get(:dontdie?) do
-          loop(state)
-        else
-          send(get(:gen_server), {self(), :die?})
+        send(get(:gen_server), {self(), :die?})
 
-          receive do
-            :die! ->
-              :bye
+        receive do
+          :die! ->
+            :bye
 
-            :continue ->
-              # Next time wait a few ms more.
-              wait = get(:wait)
-              put(:wait, wait + rand(5))
-              loop(state)
-          end
+          :continue ->
+            # Next time wait a few ms more.
+            wait = get(:wait)
+            put(:wait, wait + rand(5))
+            loop(heap)
         end
     end
   end
 
-  defp loop({_heap, [%{action: :get} = req | _]} = state) do
-    state = {heap, queue} = flush(state)
-
-    if get(:processes) < get(:max_processes) do
-      [_req | tail] = queue
-      handle(req)
-      loop({heap, tail})
-    else
-      run(state) |> loop()
-    end
-  end
-
-  defp loop({heap, queue}) do
-    unless Heap.empty?(heap) || [] == queue do
-      run(state) |> loop()
-    else
-      receive do
-        req ->
-          place(state, req) |> loop()
-      after
-        0 ->
-          # Mailbox is empty. Run:
-          run(state) |> loop()
-      end
-    end
-  end
-
-  #
-
-  defp run({%_{size: 0}, [req | tail]}) do
-    handle(req)
-    {Heap.new(), tail}
-  end
-
-  defp run({heap, [%{action: :get_and_update} | _] = queue}) do
-    for req <- heap do
-      handle(req)
-    end
-
-    {Heap.new(), queue}
-  end
-
-  defp run({heap, queue}) do
-    {req, rest} = Heap.split(heap)
+  defp loop(heap) do
+    {{_, _, req}, rest} =
+      heap
+      |> flush()
+      |> Heap.split()
 
     handle(req)
-    {rest, queue}
+    loop(rest)
   end
 
-  #
-
-  # Mailbox → queues.
-  defp flush(state) do
+  # Flush mailbox.
+  defp flush(heap) do
     receive do
       req ->
-        place(state, req) |> flush()
+        place(heap, req) |> flush()
     after
       0 ->
-        state
+        heap
     end
   end
 
   #
-
-  # Req → queues.
-  defp place({p_queue, queue} = state, req) do
+  defp place(heap, req) do
     case req do
       %{info: _} = msg ->
         handle(msg)
-        state
+        heap
 
-      %{!: @avg} = req ->
-        {[req | p_queue], queue}
-
-      _ ->
-        {p_queue, queue ++ [req]}
+      req ->
+        Heap.push(heap, {req[:!], -now(), req})
     end
   end
 end

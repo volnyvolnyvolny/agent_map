@@ -124,6 +124,10 @@ defmodule AgentMap.Server.State do
     end
   end
 
+  #
+  # %{a: {{:value, v}, _}, b: {nil, _}, c: {:pid, w}}
+  # =>
+  # {%{a: v}, %{c: w}}
   def separate(state, keys) do
     Enum.reduce(keys, {%{}, %{}}, fn key, {map, workers} ->
       case get(state, key) do

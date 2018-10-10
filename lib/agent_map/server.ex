@@ -4,9 +4,9 @@ defmodule AgentMap.Server do
 
   alias AgentMap.{Req, Worker, Server.State, Common}
 
-  import Worker, only: [busy?: 1, dict: 1]
-  import State, only: [put: 3, get: 2]
+  import Worker, only: [dict: 1, info: 2]
   import Common, only: [now: 0]
+  import State, only: [put: 3, get: 2]
 
   use GenServer
 
@@ -128,7 +128,7 @@ defmodule AgentMap.Server do
   def handle_info({worker, :die?}, state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
-    unless busy?(worker) do
+    unless info(worker, :message_queue_len) > 0 do
       #!
       dict = dict(worker)
       send(worker, :die!)

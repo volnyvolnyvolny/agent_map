@@ -638,7 +638,7 @@ defmodule AgentMap do
 
     * `:!` (`priority`, :avg) — to set [priority](#module-priority);
 
-    * `!: :now` — to make this call in a separate `Task`, providing the current
+    * `!: :now` — to make this call in a separate `Task`, providing current
       value as an argument.
 
       This calls are not counted in a number of processes allowed to run in
@@ -652,7 +652,7 @@ defmodule AgentMap do
           5
           #
           iex> fun =
-          ...>   fn nil -> sleep(40); &1 end
+          ...>   fn nil -> sleep(40) end
           ...>
           iex> for _ <- 1..100 do
           ...>   Task.async(fn ->

@@ -56,8 +56,12 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `!: true` — (`boolean`, `false`) if given, `fun` will be executed
-      immediately, passing current values as an argument.
+    * `:initial` (`term`, `nil`) — to set the initial value;
+
+    * `:!` (`priority`, :avg) — to set [priority](#module-priority);
+
+    * `!: :now` — to make this call in a separate `Task`, providing current
+      values as an argument.
 
       To achieve the same on the client side use:
 
@@ -72,15 +76,15 @@ defmodule AgentMap.Multi do
           end
           |> fun.()
 
-    * `timeout: {:drop, pos_integer}` — to throw out a call from queue upon the
-      occurence of a timeout. See [timeout
-      section](AgentMap.html#module-timeout);
+    * `timeout: {:drop, pos_integer}` — to not execute this call after
+      [timeout](#module-timeout);
 
-    * `timeout: {:break, pos_integer}` — to throw out from queue or cancel a
-      running call upon the occurence of a timeout. See [timeout
-      section](AgentMap.html#module-timeout);
+    * `timeout: {:break, pos_integer}` — to not execute this call after the
+      [timeout](#module-timeout). If `fun` is already running — abort its
+      execution. This requires an additional process, as `fun` will be wrapped
+      in a `Task`.
 
-    * `:timeout` — (`pos_integer | :infinity`, `5000`).
+    * `:timeout` (`timeout`, `5000`).
 
   ## Examples
 
@@ -107,10 +111,10 @@ defmodule AgentMap.Multi do
       iex> am
       ...> |> cast(:a, fn 1 -> sleep(10); 2 end)
       ...> |> M.cast([:a, :b], fn [2, 1] -> sleep(10); [3, 2] end)
-      ...> |> M.get([:a, :b], & &1, !: true)
+      ...> |> M.get([:a, :b], & &1, !: :now)
       [1, 1]
       iex> am
-      ...> |> M.get([:a, :b], & &1, !: false)
+      ...> |> M.get([:a, :b], & &1)
       [3, 2]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
@@ -210,25 +214,17 @@ defmodule AgentMap.Multi do
           iex> AgentMap.take(am, keys)
           %{}
 
-  Multis are *Isolated* and *Durabled* (by ACID model). *Atomicity* can be
-  implemented inside callbacks and *Consistency* is out of question here as it
-  is the application level concept.
-
   ## Options
 
-    * `!: true` — (`boolean`, `false`) to make
-      [priority](AgentMap.html#module-priority-calls-true) multi-key calls.
+    * `:!` (`priority`, :avg) — to set [priority](#module-priority);
 
-      Asks involved workers via "selective receive" to process "return me a
-      value and wait for a new one" [request](#content) in a prioriry order.
+    * `timeout: {:drop, pos_integer}` — to not execute this call after
+      [timeout](#module-timeout);
 
-    * `timeout: {:drop, pos_integer}` — to throw out a call from queue upon the
-      occurence of a timeout. See [timeout
-      section](#AgentMap.html#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to throw out from queue or cancel a
-      running call upon the occurence of a timeout. See [timeout
-      section](AgentMap.html#module-timeout);
+    * `timeout: {:break, pos_integer}` — to not execute this call after the
+      [timeout](#module-timeout). If `fun` is already running — abort its
+      execution. This requires an additional process, as `fun` will be wrapped
+      in a `Task`;
 
     * `:timeout` — (`pos_integer | :infinity`, `5000`).
 
@@ -387,7 +383,7 @@ defmodule AgentMap.Multi do
 
   ## Special process dictionary keys
 
-  Are the same as for `get_and_update/4`.
+  Are the same as for `get_and_update/4`, except for `:timeout`.
 
   ## Options
 

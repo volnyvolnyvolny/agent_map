@@ -3,7 +3,8 @@ defmodule AgentMap.Multi.Req do
 
   alias AgentMap.{Common, CallbackError, Server, Worker, Multi.Req}
 
-  import Common, only: [run: 4, now: 0, left: 2, reply: 2]
+  import Worker, only: [broadcast: 2, collect: 3]
+  import Common, only: [run: 4, reply: 2]
   import Server.State
 
   @enforce_keys [:action]
@@ -21,12 +22,8 @@ defmodule AgentMap.Multi.Req do
 
   def timeout(req), do: AgentMap.Req.timeout(req)
 
-  defp broadcast(workers, msg) do
-    for w <- workers, do: send(w, msg)
-  end
-
-  # on process
-  defp prepair(req, pids) when is_list(pids) do
+  #
+  defp prepair_workers(req, pids) do
     act = req.action
     me = self()
 
@@ -35,54 +32,31 @@ defmodule AgentMap.Multi.Req do
 
       if act == :get_and_update do
         Worker.accept_value()
-      end || {:_get}
+      end
     end
 
-    broadcast(pids, %{action: :get_and_update, fun: f, !: req.!})
+    req = %{action: req.action, fun: f, !: req.!}
+    broadcast(pids, req)
   end
 
   # on server
-  defp prepair(%Req{action: :get, !: true} = req, state) do
-    {state, {take(state, req.keys), %{}}}
+  defp prepair(%Req{action: :get, !: :now} = req, state) do
+    map = take(state, req.keys)
+    {state, {map, %{}}}
   end
 
   defp prepair(%Req{action: :get} = req, state) do
     {state, separate(state, req.keys)}
   end
 
-  defp prepair(%Req{action: _} = req, state) do
+  # action: :get_and_update
+  defp prepair(req, state) do
     state =
       Enum.reduce(req.keys, state, fn key, state ->
         spawn_worker(state, key)
       end)
 
     {state, separate(state, req.keys)}
-  end
-
-  ##
-  ##
-  ##
-
-  defp collect(map, [], _), do: {:ok, map}
-
-  defp collect(_, _, t) when t < 0, do: {:error, :expired}
-
-  defp collect(map, unknown, timeout) do
-    past = now()
-
-    receive do
-      {key, nil} ->
-        unknown = List.delete(unknown, key)
-        collect(map, unknown, left(timeout, since: past))
-
-      {key, {:value, v}} ->
-        map = Map.put(map, key, v)
-        unknown = List.delete(unknown, key)
-        collect(map, unknown, left(timeout, since: past))
-    after
-      timeout ->
-        {:error, :expired}
-    end
   end
 
   ##
@@ -151,6 +125,14 @@ defmodule AgentMap.Multi.Req do
     end
   end
 
+  #
+
+  defp to_map(values) do
+    for {pid, value} <- values, into: %{} do
+      {Process.get(:key, pid), value}
+    end
+  end
+
   ##
   ##
   ##
@@ -160,15 +142,25 @@ defmodule AgentMap.Multi.Req do
     {state, {map, workers}} = prepair(req, state)
 
     pids = Map.values(workers)
-    broadcast(pids, :dontdie!)
+
+    # Worker may die before Task starts.
+    server = self()
+    ref = make_ref()
 
     Task.start_link(fn ->
-      with prepair(req, pids),
-           {:ok, map} <- collect(map, Map.keys(workers), timeout(req)),
+      with prepair_workers(req, pids),
+           send(server, {ref, :go!}),
+           #
+           {:ok, values} <- collect(map, pids, timeout(req)),
+           #
+           map = to_map(values),
+           #
            Process.put(:map, map),
            Process.put(:keys, req.keys),
+           #
            values = Enum.map(req.keys, &map[&1]),
            break? = match?({:break, _}, req.timeout),
+           #
            {:ok, result} <- run(req.fun, [values], timeout(req), break?),
            {:ok, {get, msgs}} <- interpret(req.action, values, result) do
         #
@@ -209,6 +201,9 @@ defmodule AgentMap.Multi.Req do
       end
     end)
 
-    {:noreply, state}
+    receive do
+      {^ref, :go!} ->
+        {:noreply, state}
+    end
   end
 end
