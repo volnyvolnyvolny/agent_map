@@ -7,8 +7,8 @@
    CLOSED: [2018-10-02 Вт 20:44]
 ** DONE delete/3
    CLOSED: [2018-10-02 Вт 21:19]
-** DONE drop/3
-   CLOSED: [2018-10-05 Пт 21:53]
+** drop/3
+Use collect.
 ** DONE fetch!/3
    CLOSED: [2018-10-05 Пт 21:46]
 ** DONE fetch/3
@@ -78,6 +78,7 @@
 ** DONE values/2
    CLOSED: [2018-10-06 Сб 03:35]
  
+** collectable
 * Private funs:
 
 ** DONE AgentMap.prepair/3
