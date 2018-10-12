@@ -274,4 +274,17 @@ defmodule AgentMap.Req do
         handle(req, state)
     end
   end
+
+  def handle(%Req{action: :sleep} = req, state) do
+    handle(
+      %{
+        req
+        | fun: fn _ ->
+            :timer.sleep(10)
+            :id
+          end
+      },
+      state
+    )
+  end
 end

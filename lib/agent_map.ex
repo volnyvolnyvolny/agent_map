@@ -184,9 +184,9 @@ defmodule AgentMap do
   Most of the functions support `!: priority` option to make out-of-turn
   ("priority") calls.
 
-  Priority can be given as a non-negative integer, alias or a pair with a delta
-  value. Aliases are: `:min | :low` = `0`, `:avg | :mid` = `256`, `:max | :high`
-  = `65536`. Also, relative value can be given, for ex.: `{:max, -1}` = `65535`.
+  Priority can be given as a non-negative integer or alias. Aliases are: `:min |
+  :low` = `0`, `:avg | :mid` = `256`, `:max | :high` = `65536`, also, relative
+  value can be given, for ex.: `{:max, -1}` = `65535`.
 
       iex> import AgentMap
       ...>
@@ -199,79 +199,68 @@ defmodule AgentMap do
       ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
       ...> |> fetch(:state)
       {:ok, :ready}
-      iex> am
-      ...> |> fetch(:state, !: {:max, +1})
+      iex> fetch(am, :state, !: {:max, +1})
       {:ok, :steady}
-      iex> am
-      ...> |> fetch(:state, !: :max)
+      iex> fetch(am, :state, !: :max)
       {:ok, :go!}
-      ...> |> fetch(:state, !: :avg)
+      iex> fetch(am, :state, !: :avg)
       {:ok, :stop}
 
-  Also, `!: :now` can be used in `get/4`, `get_lazy/4`, `take/3`
+  Also, `!: :now` option can be given in `get/4`, `get_lazy/4`, `take/3` to
+  instruct `AgentMap` to make execution in a separate `Task`, using the
+  *current* value(s). Calls `fetch!/3`, `fetch/3`, `values/2`, `to_map/2` and
+  `has_key?/3` use this by default.
 
-
-  By default, on each key, no more than fifth `get/4` calls can be executed
-  simultaneously. If `update!/4`, `update/4`, `cast/4`, `get_and_update/4` or a
-  `6`-th `get/4` call came, a special worker process will be spawned that became
-  the holder of the execution queue. It's the FIFO queue, but priority (`!:
-  true`) option can be provided to instruct `AgentMap` to execute a callback in
-  the order of preference (out of turn).
-
-  For example:
-
-
-  ### Snapshot-calls
-
-  Some of the non-changing state functions (`get/4`, `fetch/3`, `fetch!/3`,
-  `get_lazy/4`, `take/3`, `values/2`) support `!: true` option to select: return
-  immediately or wait for callbacks with lower priority to execute.
-
-  `key` could have an associated queue of callbacks, awaiting of execution. If
-  such queue exists, asks a worker to process `fun` in the priority order;
+      iex> import AgentMap
+      ...>
+      iex> am =
+      ...>   AgentMap.new(state: 1)
+      iex> am
+      ...> |> sleep(:state, 10)
+      ...> |> put(:state, 42)
+      ...> |> fetch(:state)
+      {:ok, 1}
+      iex> get(am, :state, & &1 + 1, !: :now)
+      {:ok, 2}
+      iex> get(am, :state, & &1 + 1)
+      {:ok, 43}
 
   ### Timeout
 
-  Timeout is an integer greater than zero which specifies how many milliseconds
-  are allowed before the `AgentMap` instance executes `fun` and returns a
-  result, or an atom `:infinity` to wait indefinitely. If no result is received
-  within the specified time, the caller exits. By default it is set to `5000 ms`
-  = `5 sec`.
+  Timeout is an integer greater than zero which specifies the amount of
+  milliseconds is allowed before the `AgentMap` instance executes `fun` and
+  returns a result, or an atom `:infinity` to wait indefinitely. If no result is
+  received within the specified time, the caller exits. By default it is set to
+  `5000 ms` = `5 sec`.
 
   If no result is received within the specified time, the caller exits, (!) but
-  the callback will remain in a queue! To change this behaviour, provide
-  `timeout: {:drop, pos_integer}` as a value.
+  the callback will remain in a queue! To change this behaviour, use `timeout:
+  {:!, pos_integer}` option.
 
       iex> import AgentMap
-      iex> import :timer
       ...>
       iex> Process.flag(:trap_exit, true)
       iex> Process.info(self())[:message_queue_len]
       0
       iex> AgentMap.new(a: 42)
-      ...> |> cast(:a, &(sleep(15) && &1))
-      ...> |> put(:a, 24, timeout: 10)
-      ...> |> put(:a, 33, timeout: {:drop, 10})
-      ...> |> fetch(:a, !: false)
-      {:ok, 24}
+      ...> |> sleep(:a, 15)
+      ...> |> put(:a, 33, timeout: 10)
+      ...> |> put(:a, 24, timeout: {:!, 10})
+      ...> |> get(:a)
+      33
       iex> Process.info(self())[:message_queue_len]
       2
 
   The second `put/4` was never executed because it was dropped from queue,
   although, `GenServer` exit signal will be send.
 
-  If timeout occurs while callback is executed — it will not be interrupted. For
-  this special case `timeout: {:break, pos_integer}` option exist that instructs
-  `AgentMap` to wrap call in a `Task`. In the
-
-      cast(am, :key, &(sleep(:infinity) && &1), timeout: {:break, 6000})
-
-  call, callback is wrapped in a `Task` which has `6` sec before *shutdown*.
+  If timeout occurs while callback is executed — the call will not be
+  interrupted. Use `safe_apply/3` to [bypass](#safe-apply/3-examples).
 
   ## Name registration
 
-  An `AgentMap` is bound to the same name registration rules as `GenServers`,
-  see `GenServer` documentation for details.
+  `AgentMap` is bound to the same name registration rules as `GenServers`, see
+  `GenServer` documentation for details.
 
   ## Other
 
@@ -289,7 +278,7 @@ defmodule AgentMap do
 
       use AgentMap, restart: :transient, shutdown: 10_000
 
-  See `Supervisor` docs for more information.
+  See `Supervisor` docs.
   """
 
   @max_processes 5
@@ -333,11 +322,9 @@ defmodule AgentMap do
   #
 
   @doc false
-  def _call(am, req, opts \\ []) do
-    req = struct(req, opts)
-
-    case opts[:timeout] do
-      {_, t} ->
+  def _call(am, req) do
+    case req.timeout do
+      {:!, t} ->
         GenServer.call(pid(am), req, t)
 
       t ->
@@ -350,6 +337,8 @@ defmodule AgentMap do
   @doc """
   Sleeps the given `key` for `t` ms.
 
+  Returns *immediately*, as `GenServer.cast/2` is used.
+
   ## Options
 
     * `:!` (`priority`, `:avg`) — to postpone sleep until calls with a lower or
@@ -357,8 +346,19 @@ defmodule AgentMap do
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
   def sleep(am, key, t, opts \\ [!: :avg]) do
-    opts = prepair(opts, [!: :avg], forbid: [:break, :drop])
-    cast(am, key, fn _ -> :timer.sleep(t) end, opts)
+    opts = prepair(opts, [!: :avg], forbid: [])
+
+    req =
+      %Req{action: :sleep, key: key, data: t}
+      |> struct(opts)
+
+    if opts[:cast] do
+      GenServer.cast(pid(am), req)
+    else
+      _call(am, req)
+    end
+
+    am
   end
 
   #
@@ -473,6 +473,42 @@ defmodule AgentMap do
       iex> fun = fn -> :timer.sleep(10); 42 end
       iex> AgentMap.safe_apply(fun, [], 20)
       {:ok, 42}
+
+      iex> import AgentMap
+      iex> import System, only: [system_time: 0]
+      ...>
+      iex> Process.flag(:trap_exit, true)
+      iex> am =
+      ...>   AgentMap.new(a: 42) |> sleep(:a, 10)
+      ...>
+      iex> past = system_time()
+      ...>
+      iex> slow_fun =
+      ...>   fn _v -> :timer.sleep(5000); "5 sec. after" end
+      ...>
+      iex> fun =
+      ...>   fn arg ->
+      ...>     case safe_apply(slow_fun, [arg], timeout: system_time() - past) do
+      ...>       {:ok, res} ->
+      ...>         res
+      ...>
+      ...>       {:error, reason} ->
+      ...>         raise reason
+      ...>
+      ...>       {:error, :timeout} ->
+      ...>         :id
+      ...>     end
+      ...>   end
+      ...>
+      iex> am
+      ...> |> cast(:a, fun, timeout: {:!, 20})
+      ...> |> get(:a)
+      42
+      iex> Process.info(self())[:message_queue_len]
+      1
+
+  This wraps call in a `Task`, which will have an around of `10` milliseconds
+  before *shutdown*.
   """
   def safe_apply(fun, args, timeout) do
     past = now()
@@ -721,13 +757,8 @@ defmodule AgentMap do
           iex> info(am, :k)[:processes]
           100
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after
+    * `timeout: {:!, pos_integer}` — to not execute this call after
       [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to not execute this call after
-      [timeout](#module-timeout). If `fun` is already running — abort its
-      execution. This requires `+1` process, as `fun` will be wrapped in a
-      `Task`;
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -798,13 +829,8 @@ defmodule AgentMap do
     * `!: :now` — to *immediately* execute this call in a separate `Task`
       (passing a current value);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after
+    * `timeout: {:!, pos_integer}` — to not execute this call after
       [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to not execute this call after
-      [timeout](#module-timeout). If `fun` is already running — abort its
-      execution. This requires `+1` process, as `fun` will be wrapped in a
-      `Task`;
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -868,13 +894,8 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout). If `fun` is already running — abort its
-      execution. This requires `+1` process, as `fun` will be wrapped in a
-      `Task`;
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -910,7 +931,7 @@ defmodule AgentMap do
         when get: var
   def get_and_update(am, key, fun, opts \\ [!: :avg]) do
     defs = [!: :avg]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
     req = %Req{action: :get_and_update, key: key, fun: fun, data: opts[:initial]}
 
@@ -918,7 +939,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Gets the value from `key` and updates it. Raises if there is no `key`.
+  Gets the value for `key` and updates it. Raises if there is no `key`.
 
   Behaves exactly like `get_and_update/4`, but raises a `KeyError` exception if
   `key` is not present.
@@ -1124,7 +1145,7 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:timeout` (`pos_integer | :infinity`, `5000`).
@@ -1147,7 +1168,7 @@ defmodule AgentMap do
   """
   @spec replace!(am, key, value, keyword | timeout) :: am
   def replace!(am, key, value, opts \\ [!: :avg]) do
-    opts = prepair(opts, [!: :avg], forbid: [:break])
+    opts = prepair(opts, [!: :avg], forbid: [])
     update!(am, key, fn _ -> value end, opts)
   end
 
@@ -1170,13 +1191,8 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout). If `fun` is already running — abort its
-      execution. This requires an additional process, as `fun` will be wrapped
-      in a `Task`.
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
+      [timeout](#module-timeout).
 
   Caller will not receive exit signal when timeout occurs.
 
@@ -1194,8 +1210,8 @@ defmodule AgentMap do
   """
   @spec cast(am, key, (value -> value), keyword) :: am
   def cast(am, key, fun, opts \\ [!: :avg]) do
-    req = %Req{action: :get_and_update, key: key, fun: &{:_get, fun.(&1)}}
     opts = prepair(opts, [cast: true, !: :avg], forbid: [])
+    req = %Req{action: :get_and_update, key: key, fun: &{:_get, fun.(&1)}}
 
     GenServer.cast(pid(am), struct(req, opts))
     am
@@ -1406,7 +1422,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`) — to wait until calls with a lower or equal
+    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
       [priorities](#module-priority) are executed for `key`;
 
     * `:timeout` (`timeout`, `5000`).
@@ -1436,7 +1452,7 @@ defmodule AgentMap do
   @spec fetch(am, key, keyword | timeout) :: {:ok, value} | :error
   def fetch(am, key, opts \\ [!: :now]) do
     defs = [!: :now]
-    opts = prepair(opts, defs, forbid: [:break, :drop])
+    opts = prepair(opts, defs, forbid: [:!])
 
     req = %Req{action: :fetch, key: key}
 
@@ -1451,7 +1467,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`) — to wait until calls with a lower or equal
+    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
       [priorities](#module-priority) are executed for `key`;
 
     * `:timeout` (`timeout`, `5000`).
@@ -1494,7 +1510,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`) — to set [priority](#module-priority);
+    * `:!` (`priority`, `:now`) — to set [priority](#module-priority);
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -1535,7 +1551,7 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`).
@@ -1562,7 +1578,7 @@ defmodule AgentMap do
   @spec pop(am, key, any, keyword | timeout) :: value | any
   def pop(am, key, default \\ nil, opts \\ [!: :avg]) do
     defs = [!: :avg]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
     fun = fn _ ->
       if Process.get(:value) do
@@ -1587,7 +1603,7 @@ defmodule AgentMap do
     * `:timeout` (`pos_integer | :infinity`, `5000`). This option is ignored if
       `cast: true` is used (by default);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
@@ -1621,7 +1637,7 @@ defmodule AgentMap do
       ...>   |> sleep(:a, 20)
       ...>   |> put(:a, 42)
       ...>   |> put(:a, 0, !: :avg)
-      ...>   |> put(:a, 1, !: :avg, timeout: {:drop, 10})
+      ...>   |> put(:a, 1, !: :avg, timeout: {:!, 10})
       ...>
       iex> fetch(am, :a)          # ⏺ ⟶ s ⟶ p ⟶ p ⟶̸ p̶
       {:ok, 1}
@@ -1633,9 +1649,11 @@ defmodule AgentMap do
   @spec put(am, key, value, keyword) :: am
   def put(am, key, value, opts \\ [!: :max, cast: true]) do
     defs = [!: :max, cast: true]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
-    req = %Req{action: :put, key: key, data: value} |> struct(opts)
+    req =
+      %Req{action: :put, key: key, data: value}
+      |> struct(opts)
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1662,7 +1680,7 @@ defmodule AgentMap do
     * `:timeout` (`pos_integer | :infinity`, `5000`). The option is ignored if
       `cast: true` is used (by default);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
@@ -1684,9 +1702,11 @@ defmodule AgentMap do
   @spec put_new(am, key, value, keyword) :: am
   def put_new(am, key, value, opts \\ [!: :max, cast: true]) do
     defs = [!: :max, cast: true]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
-    req = %Req{action: :put_new, key: key, data: value} |> struct(opts)
+    req =
+      %Req{action: :put_new, key: key, data: value}
+      |> struct(opts)
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1717,11 +1737,8 @@ defmodule AgentMap do
     * `:timeout` (`pos_integer | :infinity`, `5000`). This option is ignored if
       `cast: true` is used (by default);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to break execution of a running `fun`
-      after the [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
 
@@ -1744,9 +1761,11 @@ defmodule AgentMap do
   @spec put_new_lazy(am, key, (() -> value()), keyword) :: am
   def put_new_lazy(am, key, fun, opts \\ [!: :max, cast: true]) do
     defs = [!: :max, cast: true]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
-    req = %Req{action: :put_new, key: key, fun: fun} |> struct(opts)
+    req =
+      %Req{action: :put_new, key: key, fun: fun}
+      |> struct(opts)
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1771,7 +1790,7 @@ defmodule AgentMap do
     * `:timeout` (`pos_integer | :infinity`, `5000`). Is ignored if `cast: true`
       option is given (by default);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
@@ -1790,9 +1809,11 @@ defmodule AgentMap do
   @spec delete(am, key, keyword) :: am
   def delete(am, key, opts \\ [!: :max, cast: true]) do
     defs = [!: :max, cast: true]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
-    req = %Req{action: :delete, key: key} |> struct(opts)
+    req =
+      %Req{action: :delete, key: key}
+      |> struct(opts)
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1817,7 +1838,7 @@ defmodule AgentMap do
     * `:timeout` (`pos_integer | :infinity`, `5000`). Is ignored if `cast: true`
       option is given (by default);
 
-    * `timeout: {:drop, pos_integer}` — to cancel delete upon the occurence of
+    * `timeout: {:!, pos_integer}` — to cancel delete upon the occurence of
       [timeout](#module-timeout). On cancel, if delete happen for some key, its
       value will remain deleted;
 
@@ -1844,7 +1865,7 @@ defmodule AgentMap do
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [!: :max, cast: true]) do
     defs = [!: :max, cast: true]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
     if opts[:cast] do
       req = struct(%Req{action: :drop}, opts)
@@ -1861,8 +1882,8 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`) — to wait until calls with a lower or equal priorities
-      are executed;
+    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
+      priorities are executed;
 
     * `:timeout` (`pos_integer | :infinity`, `5000`).
 
@@ -1876,7 +1897,7 @@ defmodule AgentMap do
   @spec to_map(am, keyword | timeout) :: %{required(key) => value}
   def to_map(am, opts \\ [!: :now]) do
     defs = [!: :now]
-    opts = prepair(opts, defs, forbid: [:break, :drop])
+    opts = prepair(opts, defs, forbid: [:!])
 
     req = struct(%Req{action: :to_map}, opts)
     _call(am, req)
@@ -1921,7 +1942,7 @@ defmodule AgentMap do
   @spec take(am, [key], keyword | timeout) :: map
   def take(am, keys, opts \\ [!: :avg]) do
     defs = [!: :avg]
-    opts = prepair(opts, defs, forbid: [:break, :drop])
+    opts = prepair(opts, defs, forbid: [:!])
 
     fun = fn _ -> Process.get(:map) end
     Multi.get(am, keys, fun, opts)
@@ -1945,7 +1966,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`) — to wait until calls with a lower or equal
+    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
       [priorities](#module-priority) are executed;
 
     * `:timeout` (`timeout`, `5000`).
@@ -1958,24 +1979,27 @@ defmodule AgentMap do
       [1, 2, 3]
 
       iex> import AgentMap
-      iex> import :timer
       ...>
       iex> am =
       ...>   %{a: 1, b: 2, c: 42}
       ...>   |> AgentMap.new()
-      ...>   |> cast(:a, fn _ -> sleep(10); 42 end)
-      ...>   |> cast(:b, fn _ -> sleep(10); 42 end)
-      ...>   |> put(:a, 0)
+      ...>   |> sleep(:a, 10)
+      ...>   |> sleep(:b, 10)
+      ...>   |> put(:a, 42,   !: {:max, +1})
+      ...>   |> put(:a, 0)  # !: :max
+      ...>   |> put(:b, 42) # !: :max
       ...>
+      iex> values(am, !: {:max, +1})
+      [ 1,  2, 42]
       iex> values(am, !: :max)
-      [42, 42, 42]
+      [42,  2, 42]
       iex> values(am, !: :min)
-      [0, 42, 42]
+      [42, 42, 42]
   """
   @spec values(am, keyword | timeout) :: [value]
   def values(am, opts \\ [!: :now]) do
     defs = [!: :now]
-    opts = prepair(opts, defs, forbid: [:break, :drop])
+    opts = prepair(opts, defs, forbid: [:!])
 
     fun = fn _ ->
       Map.values(Process.get(:map))
@@ -2005,7 +2029,7 @@ defmodule AgentMap do
     * `cast: false` (`boolean`, `true`) — to return only when the actual
       increment occur;
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after the
+    * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`). Is ignored if `cast: true` is given;
@@ -2038,7 +2062,7 @@ defmodule AgentMap do
   @spec inc(am, key, keyword) :: am
   def inc(am, key, opts \\ [step: 1, cast: true, initial: 0, !: :avg]) do
     defs = [step: 1, cast: true, initial: 0, !: :avg]
-    opts = prepair(opts, defs, forbid: [:break])
+    opts = prepair(opts, defs, forbid: [])
 
     step = opts[:step]
     initial = opts[:initial]
@@ -2059,7 +2083,9 @@ defmodule AgentMap do
         end
     end
 
-    req = %Req{action: :get_and_update, key: key, fun: fun} |> struct(opts)
+    req =
+      %Req{action: :get_and_update, key: key, fun: fun}
+      |> struct(opts)
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -2106,4 +2132,3 @@ defmodule AgentMap do
     GenServer.stop(pid(am), reason, timeout)
   end
 end
-
