@@ -2,7 +2,7 @@ defmodule Memo do
   use AgentMap
 
   def start_link() do
-    AgentMap.start_link(name: __MODULE__)
+    AgentMap.start_link([], name: __MODULE__)
   end
 
   def stop(), do: AgentMap.stop(__MODULE__)

@@ -12,8 +12,8 @@ defmodule AgentMap do
   different keys. Basically, it can be used as a cache, memoization,
   computational framework and, sometimes, as a `GenServer` alternative.
 
-  Underneath it's a `GenServer` that holds a `Map`. When an `update/4`,
-  `update!/4`, `get_and_update/4` or `cast/4` is first called for a key, a
+  Underneath it's a `GenServer` that holds a `Map`. When a state changing call
+  is first made for a key (`update/4`, `update!/4`, `get_and_update/4`, …), a
   special temporary process called "worker" is spawned. All subsequent calls for
   that key will be forwarded to the message queue of this worker. This process
   respects the order of incoming new calls, executing them in a sequence, except
@@ -188,8 +188,6 @@ defmodule AgentMap do
   :low` = `0`, `:avg | :mid` = `256`, `:max | :high` = `65536`, also, relative
   value can be given, for ex.: `{:max, -1}` = `65535`.
 
-      iex> import AgentMap
-      ...>
       iex> am =
       ...>   AgentMap.new(state: :ready)
       iex> am
@@ -206,13 +204,11 @@ defmodule AgentMap do
       iex> fetch(am, :state, !: :avg)
       {:ok, :stop}
 
-  Also, `!: :now` option can be given in `get/4`, `get_lazy/4`, `take/3` to
+  Also, `!: :now` option can be given in `get/4`, `get_lazy/4` or `take/3` to
   instruct `AgentMap` to make execution in a separate `Task`, using the
   *current* value(s). Calls `fetch!/3`, `fetch/3`, `values/2`, `to_map/2` and
   `has_key?/3` use this by default.
 
-      iex> import AgentMap
-      ...>
       iex> am =
       ...>   AgentMap.new(state: 1)
       iex> am
@@ -237,8 +233,6 @@ defmodule AgentMap do
   the callback will remain in a queue! To change this behaviour, use `timeout:
   {:!, pos_integer}` option.
 
-      iex> import AgentMap
-      ...>
       iex> Process.flag(:trap_exit, true)
       iex> Process.info(self())[:message_queue_len]
       0
@@ -255,7 +249,7 @@ defmodule AgentMap do
   although, `GenServer` exit signal will be send.
 
   If timeout occurs while callback is executed — the call will not be
-  interrupted. Use `safe_apply/3` to [bypass](#safe-apply/3-examples).
+  interrupted. Use `safe_apply/3` to [bypass](#safe_apply/3-examples).
 
   ## Name registration
 
@@ -389,22 +383,22 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> AgentMap.safe_apply(:notfun, [])
+      iex> safe_apply(:notfun, [])
       {:error, :badfun}
 
-      iex> AgentMap.safe_apply(fn -> 1 end, [:extra_arg])
+      iex> safe_apply(fn -> 1 end, [:extra_arg])
       {:error, :badarity}
 
-      iex> fun = fn -> Process.exit(self(), :reason) end
-      iex> AgentMap.safe_apply(fun, [])
+      iex> fun = fn -> exit :reason end
+      iex> safe_apply(fun, [])
       {:error, {:exit, :reason}}
 
       iex> {:error, {e, _stacktrace}} =
-      ...>   AgentMap.safe_apply(fn -> raise "oops" end, [])
+      ...>   safe_apply(fn -> raise "oops" end, [])
       iex> e
       %RuntimeError{message: "oops"}
 
-      iex> AgentMap.safe_apply(fn -> 1 end, [])
+      iex> safe_apply(fn -> 1 end, [])
       {:ok, 1}
   """
   def safe_apply(fun, args) do
@@ -420,6 +414,7 @@ defmodule AgentMap do
       {:error, {exception, __STACKTRACE__}}
   catch
     :exit, reason ->
+      IO.inspect(reason)
       {:error, {:exit, reason}}
   end
 
@@ -433,14 +428,15 @@ defmodule AgentMap do
   ## Examples
 
       iex> fun = fn -> :timer.sleep(:infinity) end
-      iex> AgentMap.safe_apply(fun, [], 20)
+      iex> safe_apply(fun, [], 20)
       {:error, :timeout}
 
       iex> fun = fn -> :timer.sleep(10); 42 end
-      iex> AgentMap.safe_apply(fun, [], 20)
+      iex> safe_apply(fun, [], 20)
       {:ok, 42}
 
-      iex> import AgentMap
+  Calls that potentially can run for a long time after timeout can be stopped:
+
       iex> import System, only: [system_time: 0]
       ...>
       iex> Process.flag(:trap_exit, true)
@@ -449,12 +445,12 @@ defmodule AgentMap do
       ...>
       iex> past = system_time()
       ...>
-      iex> slow_fun =
+      iex> slow_call =
       ...>   fn _v -> :timer.sleep(5000); "5 sec. after" end
       ...>
       iex> fun =
       ...>   fn arg ->
-      ...>     case safe_apply(slow_fun, [arg], timeout: system_time() - past) do
+      ...>     case safe_apply(slow_call, [arg], timeout: system_time() - past) do
       ...>       {:ok, res} ->
       ...>         res
       ...>
@@ -522,16 +518,16 @@ defmodule AgentMap do
   ## Examples
 
       iex> am = AgentMap.new(a: 42, b: 24)
-      iex> AgentMap.get(am, :a)
+      iex> get(am, :a)
       42
-      iex> AgentMap.keys(am)
+      iex> keys(am)
       [:a, :b]
 
       iex> {:ok, pid} = AgentMap.start_link()
       iex> pid
       ...> |> AgentMap.new()
-      ...> |> AgentMap.put(:a, 1)
-      ...> |> AgentMap.get(:a)
+      ...> |> put(:a, 1)
+      ...> |> get(:a)
       1
   """
   @spec new(Enumerable.t() | am) :: am
@@ -566,7 +562,7 @@ defmodule AgentMap do
 
       iex> [:a, :b]
       ...> |> AgentMap.new(&{&1, to_string(&1)})
-      ...> |> AgentMap.take([:a, :b])
+      ...> |> take([:a, :b])
       %{a: "a", b: "b"}
   """
   @spec new(Enumerable.t(), (term -> {key, value})) :: am
@@ -617,7 +613,7 @@ defmodule AgentMap do
 
       iex> {:ok, pid} =
       ...>   AgentMap.start_link(k: fn -> 42 end)
-      iex> AgentMap.get(pid, :k)
+      iex> get(pid, :k)
       42
       iex> max_processes(pid)
       5
@@ -636,8 +632,8 @@ defmodule AgentMap do
   #
 
       iex> AgentMap.start([], name: Account)
-      iex> AgentMap.put(Account, :a, 42)
-      iex> AgentMap.get(Account, :a)
+      iex> put(Account, :a, 42)
+      iex> get(Account, :a)
       42
   """
   @spec start_link([{key, (() -> any)}], GenServer.options() | timeout) :: on_start
@@ -753,7 +749,6 @@ defmodule AgentMap do
       This call is not counted in a number of processes allowed to run in
       parallel (see `max_processes/3`):
 
-          iex> import AgentMap
           iex> import :timer
           ...>
           iex> am = AgentMap.new()
@@ -775,8 +770,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new()
       iex> get(am, :Alice, & &1)
       nil
@@ -810,16 +803,16 @@ defmodule AgentMap do
   ## Examples
 
       iex> am = AgentMap.new(Alice: 42)
-      iex> AgentMap.get(am, :Alice)
+      iex> get(am, :Alice)
       42
-      iex> AgentMap.get(am, :Bob)
+      iex> get(am, :Bob)
       nil
 
       iex> %{Alice: 42}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.sleep(:Alice, 10)
-      ...> |> AgentMap.put(:Alice, 0)
-      ...> |> AgentMap.get(:Alice)
+      ...> |> sleep(:Alice, 10)
+      ...> |> put(:Alice, 0)
+      ...> |> get(:Alice)
       0
   """
   @spec get(am, key) :: value | nil
@@ -854,9 +847,9 @@ defmodule AgentMap do
       ...>   # some expensive operation here
       ...>   13
       ...> end
-      iex> AgentMap.get_lazy(am, :a, fun)
+      iex> get_lazy(am, :a, fun)
       1
-      iex> AgentMap.get_lazy(am, :b, fun)
+      iex> get_lazy(am, :b, fun)
       13
   """
   @spec get_lazy(am, key, (() -> a), keyword | timeout) :: value | a when a: var
@@ -887,7 +880,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
       iex> import :timer
       ...>
       iex> am = AgentMap.new(a: 1)
@@ -932,12 +924,11 @@ defmodule AgentMap do
   ## Examples
 
       iex> am = AgentMap.new(a: 1)
-      iex> AgentMap.fetch!(am, :a)
+      iex> fetch!(am, :a)
       1
-      iex> AgentMap.fetch!(am, :b)
+      iex> fetch!(am, :b)
       ** (KeyError) key :b not found
 
-      iex> import AgentMap
       iex> AgentMap.new()
       ...> |> sleep(:a, 10)
       ...> |> put(:a, 42)
@@ -997,8 +988,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new(a: 42)
       ...>
       iex> get_and_update(am, :a, & {&1, &1 + 1})
@@ -1048,10 +1037,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...> #
       iex> am = AgentMap.new(a: 1)
-      ...> #
+      ...>
       iex> get_and_update!(am, :a, fn value ->
       ...>   {value, "new value!"}
       ...> end)
@@ -1125,8 +1112,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      iex> #
       ...> %{Alice: 24}
       ...> |> AgentMap.new()
       ...> |> update(:Alice, & &1 + 1_000)
@@ -1157,8 +1142,6 @@ defmodule AgentMap do
 
   ## Example
 
-      iex> import AgentMap
-      ...> #
       iex> %{a: 42}
       ...> |> AgentMap.new()
       ...> |> update(:a, :initial, & &1 + 1)
@@ -1193,8 +1176,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new(Alice: 1)
       iex> am
       ...> |> sleep(:Alice, 20)
@@ -1250,8 +1231,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new(a: 1, b: 2)
       iex> am
       ...> |> replace!(:a, 3)
@@ -1278,8 +1257,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new()
       iex> max_processes(am)
       5
@@ -1307,8 +1284,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new()
       iex> max_processes(am)
       5
@@ -1334,7 +1309,6 @@ defmodule AgentMap do
   By default, `5` get-processes per key allowed, but this can be changed via
   `max_processes/2`.
 
-      iex> import AgentMap
       iex> import :timer
       ...>
       iex> am = AgentMap.new(k: 42)
@@ -1353,8 +1327,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new()
       iex> max_processes(am, :key, 42)
       ...>
@@ -1409,8 +1381,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am = AgentMap.new()
       ...>
       iex> info(am, :key)
@@ -1445,7 +1415,6 @@ defmodule AgentMap do
 
   But keep in mind, that:
 
-      iex> import AgentMap
       iex> import :timer
       ...>
       iex> am = AgentMap.new()
@@ -1491,19 +1460,17 @@ defmodule AgentMap do
   ## Examples
 
       iex> am = AgentMap.new(a: 1)
-      iex> AgentMap.has_key?(am, :a)
+      iex> has_key?(am, :a)
       true
-      iex> AgentMap.has_key?(am, :b)
+      iex> has_key?(am, :b)
       false
 
-      iex> import AgentMap
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
       ...> |> delete(:a)
       ...> |> has_key?(:a)
       true
 
-      iex> import AgentMap
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
       ...> |> delete(:a)
@@ -1522,7 +1489,7 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: nil, c: 3}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.keys()
+      ...> |> keys()
       [:a, :b, :c]
   """
   @spec keys(am) :: [key]
@@ -1542,11 +1509,9 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.values()
+      ...> |> values()
       [1, 2, 3]
 
-      iex> import AgentMap
-      ...>
       iex> am =
       ...>   %{a: 1, b: 2, c: 42}
       ...>   |> AgentMap.new()
@@ -1602,8 +1567,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> %{a: 1}
       ...> |> AgentMap.new()
       ...> |> put(:a, 42)
@@ -1617,8 +1580,6 @@ defmodule AgentMap do
   possible).
 
       iex> Process.flag(:trap_exit, true)
-      ...>
-      iex> import AgentMap
       ...>
       iex> am =
       ...>   %{a: 1}
@@ -1678,8 +1639,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> %{a: 1}
       ...> |> AgentMap.new()
       ...> |> put_new(:a, 42)
@@ -1731,8 +1690,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> fun = fn ->
       ...>   # some expensive operation
       ...>   42
@@ -1783,7 +1740,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
       iex> am =
       ...>   AgentMap.new(a: 42, b: nil)
       ...>
@@ -1951,8 +1907,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> am =
       ...>   %{a: 1, b: 2, c: 3}
       ...>   |> AgentMap.new()
@@ -2019,11 +1973,9 @@ defmodule AgentMap do
       3.0
       iex> get(am, :b)
       1
-      iex> inc(am, :c, initial: false)
+      iex> inc(am, :c, initial: false, cast: false)
       ** (KeyError) key :c not found
 
-      iex> import AgentMap
-      ...> #
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)
       ...> |> put(:a, 1)              # 1
@@ -2042,7 +1994,7 @@ defmodule AgentMap do
 
     fun = fn
       v when is_number(v) ->
-        {:ok, v + step}
+        {:_ok, v + step}
 
       v ->
         if Process.get(:value) do
@@ -2051,19 +2003,22 @@ defmodule AgentMap do
           if initial do
             {:ok, initial + step}
           else
-            raise KeyError, key: key
+            if opts[:cast] do
+              raise KeyError, key: key
+            end || {:error}
           end
         end
     end
 
     req =
-      %Req{action: :get_and_update, key: key, fun: fun}
-      |> struct(opts)
+      struct(%Req{action: :get_and_update, key: key, fun: fun}, opts)
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
     else
-      _call(am, req)
+      if _call(am, req) == :error do
+        raise KeyError, key: key
+      end
     end
 
     am
@@ -2110,8 +2065,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import AgentMap
-      ...>
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
       ...> |> cast(:a, fn 2 -> 3 end)          # 2

@@ -3,14 +3,33 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap
+  doctest AgentMap, import: true
+
+  test "inc" do
+    # am = AgentMap.new(a: 1.5)
+
+    # assert am
+    # |> inc(:a, step: 1.5)
+    # |> inc(:b)
+    # |> get(:a) == 3
+
+    # assert get(am, :b) == 1
+
+    # Process.flag(:trap_exit, true)
+
+    # assert_raise inc(am, :c, initial: false, cast: false)
+
+    # sleep(100)
+
+#    Process.info()[:message_queue_len] |> IO.inspect()
+  end
 
   test "put" do
     # assert %{a: 1}
     #        |> AgentMap.new()
     #        |> put(:a, 42)
     #        |> put(:b, 42)
-    #        |> take([:a, :b]) == %{a: 42, b: 42}
+    #        |> take([:a, :b]) == %{a:...>  42, b: 42}
 
     # Process.flag(:trap_exit, true)
 
