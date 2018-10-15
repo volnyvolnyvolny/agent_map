@@ -1,7 +1,7 @@
 defmodule AgentMap.Multi do
   alias AgentMap.Multi.Req
 
-  import AgentMap, only: [pid: 1, _call: 3]
+  import AgentMap, only: [pid: 1, _call: 2, _prepair: 2]
 
   @moduledoc """
   This module contains functions for making multi-key calls.
@@ -14,10 +14,8 @@ defmodule AgentMap.Multi do
   created worker and a special "return me a value and wait for a new one"
   request will be added to the end of the workers queue.
 
-  When performing `get/4` with option `!: true`, values are fetched immediately,
-  without sending any requests and creating workers. If `!: false` option (by
-  default) is given, no workers will be created and special "return me a value"
-  request will be added to the end of the workers queue.
+  When performing `get/4` with option `!: :now`, values are fetched immediately,
+  without sending any requests and creating workers.
   """
 
   @type name :: atom | {:global, term} | {:via, module, term}
@@ -27,11 +25,6 @@ defmodule AgentMap.Multi do
 
   @type key :: term
   @type value :: term
-
-  defp _cast(am, req, opts) do
-    GenServer.cast(pid(am), struct(req, opts))
-    am
-  end
 
   ##
   ## PUBLIC PART
@@ -76,13 +69,8 @@ defmodule AgentMap.Multi do
           end
           |> fun.()
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after
+    * `timeout: {:!, pos_integer}` — to not execute this call after
       [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout). If `fun` is already running — abort its
-      execution. This requires an additional process, as `fun` will be wrapped
-      in a `Task`.
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -118,10 +106,12 @@ defmodule AgentMap.Multi do
       [3, 2]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
-  def get(am, keys, fun, opts \\ [])
+  def get(am, keys, fun, opts \\ [!: :avg])
       when is_function(fun, 1) and is_list(keys) do
+    opts = _prepair(opts, !: :avg)
     req = %Req{action: :get, keys: keys, fun: fun}
-    _call(am, req, opts)
+
+    _call(am, struct(req, opts))
   end
 
   @doc """
@@ -218,13 +208,8 @@ defmodule AgentMap.Multi do
 
     * `:!` (`priority`, :avg) — to set [priority](#module-priority);
 
-    * `timeout: {:drop, pos_integer}` — to not execute this call after
+    * `timeout: {:!, pos_integer}` — to not execute this call after
       [timeout](#module-timeout);
-
-    * `timeout: {:break, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout). If `fun` is already running — abort its
-      execution. This requires an additional process, as `fun` will be wrapped
-      in a `Task`;
 
     * `:timeout` — (`pos_integer | :infinity`, `5000`).
 
@@ -265,9 +250,9 @@ defmodule AgentMap.Multi do
       "10 ms later"
 
   will delay for `10` ms any execution of the (single key or multi-key)
-  `get_and_update/4`, `update/4`, `cast/4` or `get/4` (`!: false`) calls that
-  involves `:Alice` and `:Bob` keys . Priority calls that are not changing
-  values will not be delayed. `:Chris` key is not influenced.
+  `get_and_update/4`, `update/4`, `cast/4` calls that involves `:Alice` and
+  `:Bob` keys . Priority calls that are not changing values will not be delayed.
+  `:Chris` key is not influenced.
 
       iex> alias AgentMap.Multi, as: M
       iex> am = AgentMap.new(a: 22, b: 24)
@@ -319,8 +304,10 @@ defmodule AgentMap.Multi do
             |> String.replace("\n", " ")
     end
 
+    opts = _prepair(opts, !: :avg)
     req = %Req{action: :get_and_update, keys: keys, fun: fun}
-    _call(am, req, opts)
+
+    _call(am, struct(req, opts))
   end
 
   @doc """
@@ -393,7 +380,10 @@ defmodule AgentMap.Multi do
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
   def cast(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
+    opts = _prepair(opts, !: :avg)
     req = %Req{action: :get_and_update, keys: keys, fun: &{:_get, fun.(&1)}}
-    _cast(am, req, opts)
+
+    GenServer.cast(pid(am), struct(req, opts))
+    am
   end
 end

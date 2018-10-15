@@ -32,54 +32,23 @@ defmodule AgenxtMapWorkerTest do
 
     msg =
       msg
-      |> Map.put(:timeout, {:drop, 5})
+      |> Map.put(:timeout, {:!, 5})
       |> Map.put(:inserted_at, now() - 3 * ms())
 
     Worker.spawn_get_task(msg, {:key, nil})
     assert_receive {:_, {nil, {:key, nil}}}
     assert_receive %{info: :done, key: :key}
 
-    msg =
-      msg
-      |> Map.put(:timeout, {:break, 15})
-      |> Map.put(:inserted_at, now() - 3 * ms())
-
-    Worker.spawn_get_task(msg, {:key, b})
-    assert_receive {:_, {42, {:key, ^b}}}
-    assert_receive %{info: :done, key: :key}
-
     # expired
     msg =
       msg
-      |> Map.put(:timeout, {:drop, 5})
+      |> Map.put(:timeout, {:!, 5})
       |> Map.put(:inserted_at, now() - 7 * ms())
 
     assert capture_log(fn ->
              Worker.spawn_get_task(msg, {:key, b})
              refute_receive {:_, {42, {:key, ^b}}}
              assert_receive %{info: :done, key: :key}
-           end) =~ "Key :key call is expired and will not be executed."
-
-    msg =
-      msg
-      |> Map.put(:timeout, {:break, 5})
-      |> Map.put(:inserted_at, now() - 7 * ms())
-
-    assert capture_log(fn ->
-             Worker.spawn_get_task(msg, {:key, b})
-             refute_receive {:_, {42, {:key, ^b}}}
-             assert_receive %{info: :done, key: :key}
-           end) =~ "Key :key call is expired and will not be executed."
-
-    msg =
-      msg
-      |> Map.put(:timeout, {:break, 5})
-      |> Map.put(:inserted_at, now() - 4 * ms())
-
-    assert capture_log(fn ->
-             Worker.spawn_get_task(msg, {:key, box(42)})
-             refute_receive {:_, {42, {:key, ^b}}}
-             assert_receive %{info: :done, key: :key}
-           end) =~ "Key :key call takes too long and will be terminated."
+           end) =~ "Call is expired and will not be executed."
   end
 end

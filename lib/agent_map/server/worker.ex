@@ -3,8 +3,8 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Common, CallbackError, Server.State}
 
-  import Process, only: [get: 1, put: 2, delete: 1]
-  import Common, only: [run: 4, reply: 2, now: 0, left: 2]
+  import Process, only: [get: 1, get: 2, put: 2, delete: 1]
+  import Common, only: [run: 3, reply: 2, now: 0, left: 2]
   import State, only: [un: 1, box: 1]
 
   @moduledoc false
@@ -22,7 +22,8 @@ defmodule AgentMap.Worker do
 
   defp max_processes() do
     unless max_p = get(:max_processes) do
-      dict(get(:gen_server))[:max_processes]
+      pid = get(:gen_server)
+      get(pid, :max_processes)
     else
       max_p
     end
@@ -39,7 +40,7 @@ defmodule AgentMap.Worker do
         &match?(%{info: :get!}, &1)
       )
 
-    get(:processes) + ps
+    dict(worker)[:processes] + ps
   end
 
   defp dec(key), do: put(key, get(key) - 1)
@@ -56,6 +57,8 @@ defmodule AgentMap.Worker do
 
   #
 
+  def collect(pids, timeout), do: collect(%{}, pids, timeout)
+
   def collect(values, [], _), do: {:ok, values}
 
   def collect(_, _, t) when t < 0, do: {:error, :expired}
@@ -65,10 +68,11 @@ defmodule AgentMap.Worker do
 
     receive do
       {worker, value} ->
-        values = Map.put(values, worker, value)
         pids = List.delete(pids, worker)
 
-        collect(values, pids, left(timeout, since: past))
+        values
+        |> Map.put(worker, value)
+        |> collect(pids, left(timeout, since: past))
     after
       timeout ->
         {:error, :expired}
@@ -80,10 +84,8 @@ defmodule AgentMap.Worker do
   ##
 
   def share_value(to: me) do
-    key = Process.get(:key)
     box = Process.get(:value)
-    delete(:dontdie?)
-    reply(me, {key, box})
+    reply(me, {self(), box}) && :id
   end
 
   def accept_value() do
@@ -107,7 +109,6 @@ defmodule AgentMap.Worker do
   defp timeout(%{}), do: :infinity
 
   defp run(req, box) do
-    break? = match?(%{timeout: {:break, _}}, req)
     t_left = timeout(req)
 
     arg =
@@ -117,7 +118,7 @@ defmodule AgentMap.Worker do
         Map.get(req, :data)
       end
 
-    res = run(req.fun, [arg], t_left, break?)
+    res = run(req.fun, [arg], t_left)
     interpret(req, arg, res)
   end
 
@@ -150,21 +151,10 @@ defmodule AgentMap.Worker do
   end
 
   defp interpret(req, arg, {:error, :expired}) do
-    key = get(:key)
-
     Logger.error("""
-    Key #{inspect(key)} call is expired and will not be executed.
+    Call is expired and will not be executed.
     Request: #{inspect(req)}.
-    Value: #{inspect(arg)}.
-    """)
-  end
-
-  defp interpret(req, arg, {:error, :toolong}) do
-    key = get(:key)
-
-    Logger.error("""
-    Key #{inspect(key)} call takes too long and will be terminated.
-    Request: #{inspect(req)}.
+    Key: #{inspect(get(:key))}.
     Value: #{inspect(arg)}.
     """)
   end
@@ -195,10 +185,12 @@ defmodule AgentMap.Worker do
     box = get(:value)
 
     if get(:processes) < max_processes() do
-      key = get(:key)
-      s = get(:gen_server)
-
-      spawn_get_task(req, {key, box}, server: s, worker: self())
+      spawn_get_task(
+        req,
+        {get(:key), box},
+        server: get(:gen_server),
+        worker: self()
+      )
 
       inc(:processes)
     else
@@ -218,10 +210,10 @@ defmodule AgentMap.Worker do
   defp handle(%{info: :get!}), do: inc(:processes)
 
   defp handle(msg) do
-    k = inspect(get(:key))
-
     Logger.warn("""
-    Worker (key: #{k}) got unexpected message #{inspect(msg)}
+    Worker got unexpected message.
+    Key: #{inspect(get(:key))}.
+    Message: #{inspect(msg)}.
     """)
   end
 
@@ -244,7 +236,7 @@ defmodule AgentMap.Worker do
 
     put(:wait, @wait + rand(25))
 
-    loop(Heap.new())
+    loop(Heap.max())
     # →
   end
 
@@ -290,6 +282,7 @@ defmodule AgentMap.Worker do
     after
       0 ->
         heap
+        #        |> IO.inspect(label: :flush)
     end
   end
 

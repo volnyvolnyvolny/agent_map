@@ -23,35 +23,12 @@ defmodule AgentMap.Common do
   ## APPLY AND RUN
   ##
 
-  def run(_fun, _args, timeout, _break?) when timeout <= 0 do
+  def run(_fun, _args, timeout) when timeout <= 0 do
     {:error, :expired}
   end
 
-  def run(fun, args, _timeout, false), do: {:ok, apply(fun, args)}
-
-  def run(fun, args, timeout, true) do
-    {_, dict} = Process.info(self(), :dictionary)
-
-    past = now()
-
-    task =
-      Task.async(fn ->
-        for {k, v} <- dict do
-          Process.put(k, v)
-        end
-
-        apply(fun, args)
-      end)
-
-    spent = to_ms(now() - past)
-
-    case Task.yield(task, timeout - spent) || Task.shutdown(task) do
-      {:ok, _result} = res ->
-        res
-
-      nil ->
-        {:error, :toolong}
-    end
+  def run(fun, args, _timeout) do
+    {:ok, apply(fun, args)}
   end
 
   def reply(nil, _msg), do: :nothing

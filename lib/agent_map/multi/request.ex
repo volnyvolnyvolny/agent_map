@@ -3,8 +3,8 @@ defmodule AgentMap.Multi.Req do
 
   alias AgentMap.{Common, CallbackError, Server, Worker, Multi.Req}
 
-  import Worker, only: [broadcast: 2, collect: 3]
-  import Common, only: [run: 4, reply: 2]
+  import Worker, only: [broadcast: 2, collect: 2]
+  import Common, only: [run: 3, reply: 2]
   import Server.State
 
   @enforce_keys [:action]
@@ -28,14 +28,15 @@ defmodule AgentMap.Multi.Req do
     me = self()
 
     f = fn _ ->
-      Worker.share_value(to: me)
-
       if act == :get_and_update do
+        Worker.share_value(to: me)
         Worker.accept_value()
+      else
+        Worker.share_value(to: me)
       end
     end
 
-    req = %{action: req.action, fun: f, !: req.!}
+    req = %{action: :get_and_update, fun: f, !: req.!}
     broadcast(pids, req)
   end
 
@@ -128,8 +129,8 @@ defmodule AgentMap.Multi.Req do
   #
 
   defp to_map(values) do
-    for {pid, value} <- values, into: %{} do
-      {Process.get(:key, pid), value}
+    for {pid, {:value, v}} <- values, into: %{} do
+      {Worker.dict(pid)[:key], v}
     end
   end
 
@@ -151,17 +152,16 @@ defmodule AgentMap.Multi.Req do
       with prepair_workers(req, pids),
            send(server, {ref, :go!}),
            #
-           {:ok, values} <- collect(map, pids, timeout(req)),
+           {:ok, values} <- collect(pids, timeout(req)),
            #
-           map = to_map(values),
+           map = Map.merge(map, to_map(values)),
            #
            Process.put(:map, map),
            Process.put(:keys, req.keys),
            #
            values = Enum.map(req.keys, &map[&1]),
-           break? = match?({:break, _}, req.timeout),
            #
-           {:ok, result} <- run(req.fun, [values], timeout(req), break?),
+           {:ok, result} <- run(req.fun, [values], timeout(req)),
            {:ok, {get, msgs}} <- interpret(req.action, values, result) do
         #
 
