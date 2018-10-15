@@ -71,6 +71,51 @@ defmodule AgentMap.Req do
     Multi.Req.handle(req, state)
   end
 
+  def handle(%Req{action: :inc} = req, state) do
+    key = req.key
+    step = req.data[:step]
+    safe? = req.data[:safe]
+    initial = req.data[:initial]
+
+    req
+    |> get_and_update(fn
+      v when is_number(v) ->
+        {:ok, v + step}
+
+      v ->
+        res =
+          if Process.get(:value) do
+            k = Process.get(:key) |> inspect()
+            v = inspect(v)
+            m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
+
+            %ArithmeticError{message: m.((step > 0 && "inc") || "dec")}
+          else
+            # no value:
+            if initial do
+              initial + step
+            else
+              %KeyError{key: key}
+            end
+          end
+
+        case res do
+          v when is_number(v) ->
+            {:ok, v}
+
+          e ->
+            if safe? do
+              Logger.error(Exception.message(e))
+
+              {{:error, e}}
+            else
+              raise e
+            end
+        end
+    end)
+    |> handle(state)
+  end
+
   def handle(%Multi.Req{action: :drop, from: nil} = req, state) do
     req =
       Req
@@ -305,8 +350,7 @@ defmodule AgentMap.Req do
       end
     end
 
-    req = %{req | action: :get, fun: fun}
-    handle(req, state)
+    handle(%{req | action: :get, fun: fun}, state)
   end
 
   def handle(%Req{action: :delete} = req, state) do
@@ -324,12 +368,11 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :sleep} = req, state) do
-    req =
-      get_and_update(req, fn _ ->
-        :timer.sleep(req.data)
-        :id
-      end)
-
-    handle(req, state)
+    req
+    |> get_and_update(fn _ ->
+      :timer.sleep(req.data)
+      :id
+    end)
+    |> handle(state)
   end
 end

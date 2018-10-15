@@ -3,7 +3,53 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap, import: true
+  doctest AgentMap, import: true, only: [safe_apply: 3, inc: 4]
+
+  test "safe_apply" do
+    # import System, only: [system_time: 1]
+
+    # Process.flag(:trap_exit, true)
+    # am = AgentMap.new(a: 42) |> sleep(:a, 10)
+
+    # past = system_time(:milliseconds)
+
+    # slow_call = fn _v ->
+    #   :timer.sleep(5000)
+    #   "5 sec. after"
+    # end
+
+    # fun = fn arg ->
+    #   case safe_apply(slow_call, [arg], system_time(:milliseconds) - past) do
+    #     {:ok, res} ->
+    #       {res, res}
+
+    #     {:error, :timeout} ->
+    #       :id
+
+    #     {:error, reason} ->
+    #       raise reason
+    #   end
+    # end
+
+    # #    IO.inspect(safe_apply(&get_and_update/4, [am, :a, fun, timeout: {:!, 20}]))
+
+    # try do
+    #   assert am
+    #          |> get_and_update(:a, fun, timeout: {:!, 20})
+    # catch
+    #   :exit, reason ->
+    #     IO.inspect(reason)
+    # end
+
+    # # :timer.sleep(100)
+
+    # # IO.inspect(:x)
+    # # assert Process.info(self())[:message_queue_len] == 1
+
+    # # IO.inspect(:x)
+
+    # # :timer.sleep(100)
+  end
 
   test "inc" do
     # am = AgentMap.new(a: 1.5)
@@ -21,7 +67,7 @@ defmodule AgentMapTest do
 
     # sleep(100)
 
-#    Process.info()[:message_queue_len] |> IO.inspect()
+    #    Process.info()[:message_queue_len] |> IO.inspect()
   end
 
   test "put" do

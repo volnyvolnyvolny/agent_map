@@ -1,8 +1,10 @@
 defmodule AgentMap do
+  require Logger
+
   @enforce_keys [:pid]
   defstruct @enforce_keys
 
-  alias AgentMap.{Req, IncError, Multi, Worker, CallbackError, Common}
+  alias AgentMap.{Req, Multi, Worker, CallbackError, Common}
 
   import Worker, only: [dict: 1]
   import Common, only: [now: 0, to_ms: 1]
@@ -414,7 +416,6 @@ defmodule AgentMap do
       {:error, {exception, __STACKTRACE__}}
   catch
     :exit, reason ->
-      IO.inspect(reason)
       {:error, {:exit, reason}}
   end
 
@@ -437,20 +438,23 @@ defmodule AgentMap do
 
   Calls that potentially can run for a long time after timeout can be stopped:
 
-      iex> import System, only: [system_time: 0]
+      iex> import System, only: [system_time: 1]
       ...>
       iex> Process.flag(:trap_exit, true)
       iex> am =
       ...>   AgentMap.new(a: 42) |> sleep(:a, 10)
       ...>
-      iex> past = system_time()
+      iex> now = fn -> system_time(:milliseconds) end
+      ...>
+      iex> past = now.()
       ...>
       iex> slow_call =
       ...>   fn _v -> :timer.sleep(5000); "5 sec. after" end
       ...>
       iex> fun =
       ...>   fn arg ->
-      ...>     case safe_apply(slow_call, [arg], timeout: system_time() - past) do
+      ...>     timeout = now.() - past
+      ...>     case safe_apply(slow_call, [arg], timeout) do
       ...>       {:ok, res} ->
       ...>         res
       ...>
@@ -480,7 +484,7 @@ defmodule AgentMap do
         safe_apply(fun, args)
       end)
 
-    spent = to_ms(now() - past)
+    spent = to_ms(now() - past) |> IO.inspect()
 
     case Task.yield(task, timeout - spent) || Task.shutdown(task) do
       {:ok, result} ->
@@ -1601,8 +1605,10 @@ defmodule AgentMap do
     opts = _prepair(opts, !: :max, cast: true)
 
     req =
-      %Req{action: :put, key: key, data: value}
-      |> struct(opts)
+      struct(
+        %Req{action: :put, key: key, data: value},
+        opts
+      )
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1651,8 +1657,10 @@ defmodule AgentMap do
     opts = _prepair(opts, !: :max, cast: true)
 
     req =
-      %Req{action: :put_new, key: key, data: value}
-      |> struct(opts)
+      struct(
+        %Req{action: :put_new, key: key, data: value},
+        opts
+      )
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1707,8 +1715,10 @@ defmodule AgentMap do
     opts = _prepair(opts, !: :max, cast: true)
 
     req =
-      %Req{action: :put_new, key: key, fun: fun}
-      |> struct(opts)
+      struct(
+        %Req{action: :put_new, key: key, fun: fun},
+        opts
+      )
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
@@ -1939,19 +1949,19 @@ defmodule AgentMap do
   Increments value with given `key`.
 
   By default, returns *immediately*, without waiting for the actual increment to
-  occur.
-
-  This call raises an `ArithmeticError` for a non-numeric values.
+  occur. If `key` has a non-numeric value, raises `IncError` and exits
+  `AgentMap` instance.
 
   ### Options
+
+    * `:step` (`number`, `1`) — increment step;
 
     * `:initial` (`number`, `0`) — if value does not exist it is considered to
       be the one given as initial;
 
-    * `initial: false` — raises `KeyError` if value does not exist;
+    * `initial: false` — to raise `KeyError` if value does not exist;
 
-    * `:step` (`number`, `1`) — increment step;
-
+    * `safe: true` — to keep instance alive if an exception is raised;
 
     * `cast: false` (`boolean`, `true`) — to return only when the actual
       increment occur;
@@ -1973,8 +1983,13 @@ defmodule AgentMap do
       3.0
       iex> get(am, :b)
       1
-      iex> inc(am, :c, initial: false, cast: false)
+      iex> inc(am, :c, cast: false, safe: true, initial: false)
       ** (KeyError) key :c not found
+
+      iex> %{a: :notnum}
+      ...> |> AgentMap.new()
+      ...> |> inc(:a, cast: false, safe: true)
+      ** (ArithmeticError) cannot increment key :a because it has a non-numerical value :notnum
 
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)
@@ -1985,39 +2000,25 @@ defmodule AgentMap do
       3
   """
   @spec inc(am, key, keyword) :: am
-  def inc(am, key, opts \\ [step: 1, cast: true, initial: 0, !: :avg]) do
-    defs = [step: 1, cast: true, initial: 0, !: :avg]
+  def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true, safe: false]) do
+    defs = [step: 1, initial: 0, !: :avg, cast: true, safe: false]
     opts = _prepair(opts, defs)
 
-    step = opts[:step]
-    initial = opts[:initial]
-
-    fun = fn
-      v when is_number(v) ->
-        {:_ok, v + step}
-
-      v ->
-        if Process.get(:value) do
-          raise IncError, key: key, value: v, step: step
-        else
-          if initial do
-            {:ok, initial + step}
-          else
-            if opts[:cast] do
-              raise KeyError, key: key
-            end || {:error}
-          end
-        end
-    end
-
     req =
-      struct(%Req{action: :get_and_update, key: key, fun: fun}, opts)
+      struct(
+        %Req{action: :inc, key: key, data: opts},
+        opts
+      )
 
     if opts[:cast] do
       GenServer.cast(pid(am), req)
     else
-      if _call(am, req) == :error do
-        raise KeyError, key: key
+      case _call(am, req) do
+        {:error, e} ->
+          raise e
+
+        :ok ->
+          :ok
       end
     end
 
