@@ -21,9 +21,10 @@ defmodule AgentMap.Worker do
   end
 
   defp max_processes() do
-    unless max_p = get(:max_processes) do
+    max_p = get(:max_processes)
+    unless max_p do
       pid = get(:gen_server)
-      get(pid, :max_processes)
+      dict(pid)[:max_processes]
     else
       max_p
     end
@@ -184,7 +185,7 @@ defmodule AgentMap.Worker do
   defp handle(%{action: :get} = req) do
     box = get(:value)
 
-    if get(:processes) < max_processes() do
+    if IO.inspect(get(:processes)) < IO.inspect(max_processes()) do
       spawn_get_task(
         req,
         {get(:key), box},

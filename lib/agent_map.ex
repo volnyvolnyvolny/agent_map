@@ -402,6 +402,31 @@ defmodule AgentMap do
 
       iex> safe_apply(fn -> 1 end, [])
       {:ok, 1}
+
+  One of the main uses:
+
+      iex> require Logger
+      ...>
+      iex> am = AgentMap.new(a: 1, b: 2)
+      ...>
+      iex> safe_update = fn am, key, fun ->
+      ...>   get_and_update(am, key, fn arg ->
+      ...>     case safe_apply(fun, [arg]) do
+      ...>       {:error, r} ->
+      ...>         Logger.error(inspect(r)) && :id
+      ...>
+      ...>       {:ok, new_value} ->
+      ...>         {:_get, new_value}
+      ...>     end
+      ...>   end)
+      ...> end
+      ...>
+      iex> safe_update.(am, :a, fn 1 -> raise RuntimeError, message: "SOS!" end)
+      iex> safe_update.(am, :b, fn 2 -> 42 end)
+      iex> safe_update.(am, :c, fn nil -> nil end)
+      ...>
+      iex> take(am, [:a, :b, :c, :d])
+      %{a: 1, b: 42, c: nil}
   """
   def safe_apply(fun, args) do
     {:ok, apply(fun, args)}
@@ -438,9 +463,10 @@ defmodule AgentMap do
 
   Calls that potentially can run for a long time after timeout can be stopped:
 
+      iex> require Logger
+      ...>
       iex> import System, only: [system_time: 1]
       ...>
-      iex> Process.flag(:trap_exit, true)
       iex> am =
       ...>   AgentMap.new(a: 42) |> sleep(:a, 10)
       ...>
@@ -448,30 +474,23 @@ defmodule AgentMap do
       ...>
       iex> past = now.()
       ...>
-      iex> slow_call =
-      ...>   fn _v -> :timer.sleep(5000); "5 sec. after" end
+      iex> safe_update = fn am, key, fun, t ->
+      ...>   get_and_update(am, key, fn arg ->
+      ...>     case safe_apply(fun, [arg], t) do
+      ...>       {:error, r} ->
+      ...>         Logger.error(inspect(r)) && :id
       ...>
-      iex> fun =
-      ...>   fn arg ->
-      ...>     timeout = now.() - past
-      ...>     case safe_apply(slow_call, [arg], timeout) do
-      ...>       {:ok, res} ->
-      ...>         res
-      ...>
-      ...>       {:error, :timeout} ->
-      ...>         :id
-      ...>
-      ...>       {:error, reason} ->
-      ...>         raise reason
+      ...>       {:ok, new_value} ->
+      ...>         {:_get, new_value}
       ...>     end
-      ...>   end
+      ...>   end, timeout: {:!, t})
+      ...> end
       ...>
-      iex> am
-      ...> |> cast(:a, fun, timeout: {:!, 20})
-      ...> |> get(:a)
-      42
-      iex> Process.info(self())[:message_queue_len]
-      1
+      iex> safe_update.(am, :a, fn 1 -> :timer.sleep(:infinity) end, 20)
+      iex> safe_update.(am, :b, fn 2 -> 42 end)
+      iex> put(am, :a, 42)
+      iex> take(am, [:a, :b])
+      %{a: 42, b: 42}
 
   This wraps call in a `Task`, which will have an around of `10` milliseconds
   before *shutdown*.
@@ -969,9 +988,9 @@ defmodule AgentMap do
       `key` and removes it;
     * `:id` to return a current value, while not changing it.
 
-  For example, `get_and_update(account, :Alice, & {&1, &1 + 1_000_000})` returns
+  For example, `get_and_update(account, :Alice, &{&1, &1 + 1_000_000})` returns
   the balance of `:Alice` and makes the deposit, while `get_and_update(account,
-  :Alice, & {&1})` just returns the balance.
+  :Alice, &{&1})` just returns the balance.
 
   This call creates a temporary worker that is responsible for holding queue of
   calls awaiting execution for `key`. If such a worker exists, call is added to
@@ -994,7 +1013,7 @@ defmodule AgentMap do
 
       iex> am = AgentMap.new(a: 42)
       ...>
-      iex> get_and_update(am, :a, & {&1, &1 + 1})
+      iex> get_and_update(am, :a, &{&1, &1 + 1})
       42
       iex> get(am, :a)
       43
@@ -1006,11 +1025,11 @@ defmodule AgentMap do
       nil
       iex> has_key?(am, :a)
       false
-      iex> get_and_update(am, :a, & {&1, &1})
+      iex> get_and_update(am, :a, &{&1, &1})
       nil
       iex> has_key?(am, :a)
       true
-      iex> get_and_update(am, :b, & {&1, &1}, initial: 42)
+      iex> get_and_update(am, :b, &{&1, &1}, initial: 42)
       42
       iex> has_key?(am, :b)
       true
@@ -1023,7 +1042,12 @@ defmodule AgentMap do
 
     req = %Req{action: :get_and_update, key: key, fun: fun, data: opts[:initial]}
 
-    _call(am, struct(req, opts))
+    if opts[:cast] do
+      GenServer.cast(pid(am), req)
+      am
+    else
+      _call(am, req)
+    end
   end
 
   @doc """
@@ -1203,11 +1227,11 @@ defmodule AgentMap do
 
     res = get_and_update(am, key, fun, opts)
 
-    if :ok == res do
-      am
-    else
+    if res == :error do
       raise KeyError, key: key
     end
+
+    am
   end
 
   @doc """
@@ -1396,28 +1420,27 @@ defmodule AgentMap do
       [processes: 0, max_processes: 3]
       #
       iex> am
-      ...> |> sleep(:key, 10)
+      ...> |> sleep(:key, 50)
       ...> |> info(:key)
       [processes: 1, max_processes: 3]
-      #
-      iex> am
-      ...> |> max_processes(5)
-      ...> |> info(:key)
-      [processes: 1, max_processes: 5]
-      #
-      iex> for _ <- 1..100 do
+
+      iex> am = AgentMap.new()
+      ...>
+      iex> for i <- 1..100 do
       ...>   Task.async(fn ->
       ...>     get(am, :key, fn _ -> sleep(5) end)
+      ...>     IO.inspect({:done, i})
       ...>   end)
       ...> end
-      iex> sleep(5)
+      ...>
+      iex> sleep(3)
       iex> info(am, :key)[:processes]
       5
       iex> sleep(50)
       iex> info(am, :key)[:processes]
       1
 
-  But keep in mind, that:
+  Keep in mind that:
 
       iex> import :timer
       ...>
@@ -1428,7 +1451,7 @@ defmodule AgentMap do
       ...>   end)
       ...> end
       ...>
-      iex> sleep(10)
+      iex> sleep(20)
       ...>
       iex> info(am, :key)[:processes]
       100
@@ -2076,11 +2099,9 @@ defmodule AgentMap do
   """
   @spec cast(am, key, (value -> value), keyword) :: am
   def cast(am, key, fun, opts \\ [!: :avg]) do
-    opts = _prepair(opts, cast: true, !: :avg)
-    req = %Req{action: :get_and_update, key: key, fun: &{:_get, fun.(&1)}}
+    opts = _prepair(opts, !: :avg, cast: true)
 
-    GenServer.cast(pid(am), struct(req, opts))
-    am
+    get_and_update(am, key, &{:_get, fun.(&1)}, opts)
   end
 
   ##
