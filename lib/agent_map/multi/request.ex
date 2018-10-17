@@ -115,7 +115,7 @@ defmodule AgentMap.Multi.Req do
           {:error, {:callback, result}}
         else
           {_ok, get_msgs} = Enum.unzip(results)
-          {:ok, Enum.unzip(get_msgs)}
+          {:ok, Enum.unzip(get_msgs) |> IO.inspect()}
         end
 
       {_, values} ->
@@ -162,7 +162,7 @@ defmodule AgentMap.Multi.Req do
            values = Enum.map(req.keys, &map[&1]),
            #
            {:ok, result} <- run(req.fun, [values], timeout(req)),
-           {:ok, {get, msgs}} <- interpret(req.action, values, result) do
+           {:ok, {get, msgs}} <- interpret(req.action, values, result) |> IO.inspect() do
         #
 
         unless req.action == :get do

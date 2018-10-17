@@ -3,7 +3,7 @@ defmodule AgentMap.Worker do
 
   alias AgentMap.{Common, CallbackError, Server.State}
 
-  import Process, only: [get: 1, get: 2, put: 2, delete: 1]
+  import Process, only: [get: 1, put: 2, delete: 1]
   import Common, only: [run: 3, reply: 2, now: 0, left: 2]
   import State, only: [un: 1, box: 1]
 
@@ -22,6 +22,7 @@ defmodule AgentMap.Worker do
 
   defp max_processes() do
     max_p = get(:max_processes)
+
     unless max_p do
       pid = get(:gen_server)
       dict(pid)[:max_processes]

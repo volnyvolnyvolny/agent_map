@@ -3,7 +3,7 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Worker, Req, Server, Common, Multi}
+  alias AgentMap.{Worker, Req, Server, Common, Multi, CallbackError}
 
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Enum, only: [filter: 2]
@@ -72,10 +72,11 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :inc} = req, state) do
-    key = req.key
     step = req.data[:step]
     safe? = req.data[:safe]
-    initial = req.data[:initial]
+
+    k = req.key
+    i = req.data[:initial]
 
     req
     |> get_and_update(fn
@@ -85,18 +86,15 @@ defmodule AgentMap.Req do
       v ->
         res =
           if Process.get(:value) do
-            k = Process.get(:key) |> inspect()
+            k = inspect(k)
             v = inspect(v)
-            m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
 
-            %ArithmeticError{message: m.((step > 0 && "inc") || "dec")}
+            m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
+            m = m.((step > 0 && "inc") || "dec")
+
+            %ArithmeticError{message: m}
           else
-            # no value:
-            if initial do
-              initial + step
-            else
-              %KeyError{key: key}
-            end
+            if i, do: i + step, else: %KeyError{key: k}
           end
 
         case res do
@@ -105,7 +103,10 @@ defmodule AgentMap.Req do
 
           e ->
             if safe? do
-              Logger.error(Exception.message(e))
+              unless req.from do
+                # case: true
+                Logger.error(Exception.message(e))
+              end
 
               {{:error, e}}
             else
@@ -119,7 +120,7 @@ defmodule AgentMap.Req do
   def handle(%Multi.Req{action: :drop, from: nil} = req, state) do
     req =
       Req
-      |> struct(req)
+      |> struct(Map.from_struct(req))
       |> Map.put(:action, :delete)
 
     state =
@@ -374,5 +375,40 @@ defmodule AgentMap.Req do
       :id
     end)
     |> handle(state)
+  end
+
+  def handle(%Req{action: :get_and_update!} = req, state) do
+    Multi.Req
+    |> struct(Map.from_struct(req))
+    |> Map.put(:action, :get_and_update)
+    |> Map.put(:keys, [req.key])
+    |> Map.put(:fun, fn [value] ->
+      #
+      map = Process.get(:map)
+
+      if Map.has_key?(map, req.key) do
+        get = {:ok, value}
+
+        case req.fun.(value) do
+          {get} ->
+            get = {:ok, get}
+            [{get}]
+
+          {get, v} ->
+            get = {:ok, get}
+            [{get, v}]
+
+          :id ->
+            [{get}]
+
+          :pop ->
+            {[get], :drop}
+
+          reply ->
+            raise CallbackError, got: reply
+        end
+      end || {:error}
+    end)
+    |> Multi.Req.handle(state)
   end
 end

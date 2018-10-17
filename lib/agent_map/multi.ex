@@ -1,7 +1,7 @@
 defmodule AgentMap.Multi do
   alias AgentMap.Multi.Req
 
-  import AgentMap, only: [pid: 1, _call: 2, _prepair: 2]
+  import AgentMap, only: [_call: 4, _prep: 2]
 
   @moduledoc """
   This module contains functions for making multi-key calls.
@@ -108,10 +108,9 @@ defmodule AgentMap.Multi do
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
   def get(am, keys, fun, opts \\ [!: :avg])
       when is_function(fun, 1) and is_list(keys) do
-    opts = _prepair(opts, !: :avg)
+    #
     req = %Req{action: :get, keys: keys, fun: fun}
-
-    _call(am, struct(req, opts))
+    _call(am, req, opts, !: :avg)
   end
 
   @doc """
@@ -295,6 +294,7 @@ defmodule AgentMap.Multi do
         when get: var
   def get_and_update(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
+    #
     unless keys == Enum.uniq(keys) do
       raise """
             expected uniq keys for `update`, `get_and_update` and
@@ -304,10 +304,8 @@ defmodule AgentMap.Multi do
             |> String.replace("\n", " ")
     end
 
-    opts = _prepair(opts, !: :avg)
     req = %Req{action: :get_and_update, keys: keys, fun: fun}
-
-    _call(am, struct(req, opts))
+    _call(am, req, opts, !: :avg)
   end
 
   @doc """
@@ -358,6 +356,7 @@ defmodule AgentMap.Multi do
   @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword | timeout) :: am
   def update(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
+    #
     get_and_update(am, keys, &{am, fun.(&1)}, opts)
   end
 
@@ -380,10 +379,7 @@ defmodule AgentMap.Multi do
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
   def cast(am, keys, fun, opts \\ [])
       when is_function(fun, 1) and is_list(keys) do
-    opts = _prepair(opts, !: :avg)
-    req = %Req{action: :get_and_update, keys: keys, fun: &{:_get, fun.(&1)}}
-
-    GenServer.cast(pid(am), struct(req, opts))
-    am
+    #
+    update(am, keys, fun, _prep(opts, cast: true))
   end
 end
