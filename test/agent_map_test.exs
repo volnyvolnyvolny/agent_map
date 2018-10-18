@@ -3,7 +3,27 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap, import: true, only: []
+#  doctest AgentMap, import: true
+
+  test "prior" do
+      IO.inspect(:prior)
+      am =
+        AgentMap.new(state: :ready)
+      assert am
+      |> sleep(:state, 20)
+      |> cast(:state, fn :go! -> :stop end)                     # 3
+      |> cast(:state, fn :steady -> :go! end, !: :max)          # 2
+      |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
+      |> fetch(:state) ==
+      {:ok, :ready}
+      assert fetch(am, :state, !: {:max, +1}) ==
+      {:ok, :steady}
+      assert fetch(am, :state, !: :max) ==
+      {:ok, :go!}
+      assert fetch(am, :state, !: :avg) ==
+      {:ok, :stop}
+
+  end
 
   test "safe_apply" do
     # import System, only: [system_time: 1]

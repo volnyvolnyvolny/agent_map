@@ -111,6 +111,7 @@ defmodule AgentMap.Worker do
   defp timeout(%{}), do: :infinity
 
   defp run(req, box) do
+    IO.inspect(req, label: :run)
     t_left = timeout(req)
 
     arg =
@@ -284,7 +285,6 @@ defmodule AgentMap.Worker do
     after
       0 ->
         heap
-        #        |> IO.inspect(label: :flush)
     end
   end
 

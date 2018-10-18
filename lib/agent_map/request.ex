@@ -341,15 +341,19 @@ defmodule AgentMap.Req do
   end
 
   def handle(%Req{action: :fetch} = req, state) do
-    fun = fn value ->
-      if Process.get(:value) do
-        {:ok, value}
-      else
-        :error
+    if is_pid(get(state, req.key)) do
+      fun = fn value ->
+        if Process.get(:value) do
+          {:ok, value}
+        else
+          :error
+        end
       end
-    end
 
-    handle(%{req | action: :get, fun: fun}, state)
+      handle(%{req | action: :get, fun: fun}, state)
+    else
+      handle(%{req | action: :fetch, !: :now}, state)
+    end
   end
 
   def handle(%Req{action: :delete} = req, state) do
@@ -361,7 +365,7 @@ defmodule AgentMap.Req do
 
       _worker ->
         req
-        |> get_and_update(fun: fn _ -> :pop end)
+        |> get_and_update(fn _ -> :pop end)
         |> handle(state)
     end
   end

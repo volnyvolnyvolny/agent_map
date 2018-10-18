@@ -6,36 +6,36 @@ defmodule AgentMapMultiTest do
 
   use ExUnit.Case
 
-  test "Multi.get(…, …, …, !: :now)" do
-    fun = fn _ ->
-      sleep(50)
-      24
-    end
+  # test "Multi.get(…, …, …, !: :now)" do
+  #   fun = fn _ ->
+  #     sleep(50)
+  #     24
+  #   end
 
-    am =
-      AgentMap.new(a: 42, b: 1, c: 4)
-      |> cast(:a, fun)
-      |> cast(:b, fun)
+  #   am =
+  #     AgentMap.new(a: 42, b: 1, c: 4)
+  #     |> cast(:a, fun)
+  #     |> cast(:b, fun)
 
-    assert Multi.get(am, [:a, :b, :c, :d], & &1, !: :now) == [42, 1, 4, nil]
+  #   assert Multi.get(am, [:a, :b, :c, :d], & &1, !: :now) == [42, 1, 4, nil]
 
-    assert %{Alice: 24}
-           |> AgentMap.new()
-           |> update(:Alice, &(&1 + 1_000))
-           |> update(:Bob, fn nil -> 42 end)
-           |> take([:Alice, :Bob]) == %{Alice: 1024, Bob: 42}
-  end
+  #   assert %{Alice: 24}
+  #          |> AgentMap.new()
+  #          |> update(:Alice, &(&1 + 1_000))
+  #          |> update(:Bob, fn nil -> 42 end)
+  #          |> take([:Alice, :Bob]) == %{Alice: 1024, Bob: 42}
+  # end
 
-  test "Multi.get(…, …, …)" do
-    am =
-      AgentMap.new(a: 42, b: 1, c: 4)
-      |> sleep(:a, 20)
-      |> sleep(:b, 20)
-      |> put(:a, 24)
-      |> put(:b, 24)
+  # test "Multi.get(…, …, …)" do
+  #   am =
+  #     AgentMap.new(a: 42, b: 1, c: 4)
+  #     |> sleep(:a, 20)
+  #     |> sleep(:b, 20)
+  #     |> put(:a, 24)
+  #     |> put(:b, 24)
 
-    assert Multi.get(am, [:a, :b, :c, :d], & &1) == [24, 24, 4, nil]
-  end
+  #   assert Multi.get(am, [:a, :b, :c, :d], & &1) == [24, 24, 4, nil]
+  # end
 
   # test "Multi.get_and_update" do
   #   fun =
