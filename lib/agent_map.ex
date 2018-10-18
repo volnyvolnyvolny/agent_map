@@ -495,7 +495,7 @@ defmodule AgentMap do
         safe_apply(fun, args)
       end)
 
-    spent = to_ms(now() - past) |> IO.inspect()
+    spent = to_ms(now() - past)
 
     case Task.yield(task, timeout - spent) || Task.shutdown(task) do
       {:ok, result} ->
@@ -949,7 +949,7 @@ defmodule AgentMap do
   end
 
   ##
-  ## GET_AND_UPDATE / GET_AND_UPDATE!
+  ## GET_AND_UPDATE
   ##
 
   @doc """
@@ -1015,49 +1015,6 @@ defmodule AgentMap do
     req = %Req{action: :get_and_update, key: key, fun: fun, data: opts[:initial]}
 
     call(am, req, opts)
-  end
-
-  @doc """
-  Gets the value for `key` and updates it. Raises if there is no `key`.
-
-  Behaves exactly like `get_and_update/4`, but raises a `KeyError` exception if
-  `key` is not present.
-
-  ## Options
-
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
-    * `:timeout` (`timeout`, `5000`).
-
-  ## Examples
-
-      iex> am = AgentMap.new(a: 1)
-      ...>
-      iex> get_and_update!(am, :a, &{&1, "new value!"})
-      1
-      iex> get_and_update!(am, :a, fn _ -> :pop end)
-      "new value!"
-      iex> has_key?(am, :a)
-      nil
-      iex> get_and_update!(am, :b, fn _value -> :id end)
-      ** (KeyError) key :b not found
-  """
-  @spec get_and_update!(am, key, (value -> {get} | {get, value} | :pop | :id), keyword | timeout) ::
-          get | value | no_return
-        when get: term
-  def get_and_update!(am, key, fun, opts \\ [!: :avg]) do
-    req = %Req{action: :get_and_update!, key: key, fun: fun}
-
-    case _call(am, req, opts, !: :avg) do
-      {:ok, get} ->
-        get
-
-      :error ->
-        raise KeyError, key: key
-    end
   end
 
   ##
@@ -1287,7 +1244,7 @@ defmodule AgentMap do
   def max_processes(am, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    req = %Req{action: :max_processes, data: value}
+    req = %Req{action: :def_max_processes, data: value}
     call(am, req)
     am
   end
@@ -1297,16 +1254,14 @@ defmodule AgentMap do
 
   `AgentMap` can execute `get/4` calls made on the same key concurrently.
   `max_processes` option specifies number of processes allowed to use per key
-  (`-1` if a worker process was spawned).
+  (`+1` for a worker process if it was spawned).
 
   By default, `5` get-processes per key allowed, but this can be changed via
   `max_processes/2`.
 
-      iex> import :timer
-      ...>
       iex> am = AgentMap.new(k: 42)
       iex> task = fn ->
-      ...>   get(am, :k, fn _ -> sleep(10) end)
+      ...>   get(am, :k, fn _ -> :timer.sleep(10) end)
       ...> end
       iex> for _ <- 1..4, do: spawn(task) # +4
       iex> task.()                        # +1
@@ -1329,9 +1284,9 @@ defmodule AgentMap do
       ...>   end)
       ...> end
       ...>
-      iex> for _ <- 1..50 do
-      ...>   sleep(2) # — every 2 ms in 100 ms.
-      ...>   info(am, :key)[:max_processes]
+      iex> for _ <- 1..250 do
+      ...>   sleep(1)                   # every ms
+      ...>   info(am, :key)[:processes] # take the amount of processes being used
       ...> end
       ...> |> Enum.max()
       42
@@ -1342,7 +1297,7 @@ defmodule AgentMap do
   def max_processes(am, key, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    req = %Req{action: :max_processes, key: {key}, data: value}
+    req = %Req{action: :max_processes, key: key, data: value}
     call(am, req)
     am
   end

@@ -17,8 +17,6 @@ Use collect.
    CLOSED: [2018-10-06 Сб 03:25]
 ** DONE get/4
    CLOSED: [2018-10-06 Сб 04:05]
-** DONE get_and_update!/4
-   CLOSED: [2018-10-06 Сб 20:26]
 ** DONE get_and_update/4
    CLOSED: [2018-10-06 Сб 20:19]
 ** DONE get_lazy/4

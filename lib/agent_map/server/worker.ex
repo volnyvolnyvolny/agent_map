@@ -186,7 +186,7 @@ defmodule AgentMap.Worker do
   defp handle(%{action: :get} = req) do
     box = get(:value)
 
-    if IO.inspect(get(:processes)) < IO.inspect(max_processes()) do
+    if get(:processes) < max_processes() do
       spawn_get_task(
         req,
         {get(:key), box},

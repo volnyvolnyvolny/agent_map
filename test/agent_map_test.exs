@@ -3,7 +3,7 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap, import: true, only: [get_and_update!: 4]
+  doctest AgentMap, import: true, only: []
 
   test "safe_apply" do
     # import System, only: [system_time: 1]

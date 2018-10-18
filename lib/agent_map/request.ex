@@ -3,7 +3,7 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Worker, Req, Server, Common, Multi, CallbackError}
+  alias AgentMap.{Worker, Req, Server, Common, Multi}
 
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Enum, only: [filter: 2]
@@ -184,9 +184,9 @@ defmodule AgentMap.Req do
   end
 
   # per key:
-  def handle(%Req{action: :max_processes, key: {key}, data: nil}, state) do
+  def handle(%Req{action: :max_processes, data: nil} = req, state) do
     max_p =
-      case get(state, key) do
+      case get(state, req.key) do
         {_box, {_p, max_p}} ->
           max_p
 
@@ -197,23 +197,21 @@ defmodule AgentMap.Req do
     {:reply, max_p, state}
   end
 
-  def handle(%Req{action: :max_processes, key: {key}} = req, state) do
-    state =
-      case get(state, key) do
-        {box, {p, _max_p}} ->
-          pack = {box, {p, req.data}}
-          put(state, key, pack)
+  def handle(%Req{action: :max_processes} = req, state) do
+    case get(state, req.key) do
+      {box, {p, _max_p}} ->
+        pack = {box, {p, req.data}}
+        {:reply, :_ok, put(state, req.key, pack)}
 
-        worker ->
-          req = compress(%{req | !: :now, from: nil})
-          send(worker, req)
-      end
-
-    {:noreply, state}
+      worker ->
+        req = compress(%{req | !: :now, from: nil})
+        send(worker, req)
+        {:noreply, state}
+    end
   end
 
   # per server:
-  def handle(%Req{action: :max_processes} = req, state) do
+  def handle(%Req{action: :def_max_processes} = req, state) do
     max_p = Process.put(:max_processes, req.data)
     {:reply, max_p, state}
   end
@@ -252,11 +250,11 @@ defmodule AgentMap.Req do
 
     case get(state, req.key) do
       # Cannot spawn more Task's.
-      {_, {p, nil}} when p >= g_max_p ->
+      {_, {p, nil}} when p + 1 >= g_max_p ->
         state = spawn_worker(state, req.key)
         handle(req, state)
 
-      {_, {p, max_p}} when p >= max_p ->
+      {_, {p, max_p}} when p + 1 >= max_p ->
         state = spawn_worker(state, req.key)
         handle(req, state)
 
@@ -375,40 +373,5 @@ defmodule AgentMap.Req do
       :id
     end)
     |> handle(state)
-  end
-
-  def handle(%Req{action: :get_and_update!} = req, state) do
-    Multi.Req
-    |> struct(Map.from_struct(req))
-    |> Map.put(:action, :get_and_update)
-    |> Map.put(:keys, [req.key])
-    |> Map.put(:fun, fn [value] ->
-      #
-      map = Process.get(:map)
-
-      if Map.has_key?(map, req.key) do
-        get = {:ok, value}
-
-        case req.fun.(value) do
-          {get} ->
-            get = {:ok, get}
-            [{get}]
-
-          {get, v} ->
-            get = {:ok, get}
-            [{get, v}]
-
-          :id ->
-            [{get}]
-
-          :pop ->
-            {[get], :drop}
-
-          reply ->
-            raise CallbackError, got: reply
-        end
-      end || {:error}
-    end)
-    |> Multi.Req.handle(state)
   end
 end
