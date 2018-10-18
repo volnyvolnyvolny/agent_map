@@ -82,3 +82,14 @@ Use collect.
 ** DONE AgentMap.prepair/3
    CLOSED: [2018-10-02 Вт 22:08]
  
+* init
+  2) test init (AgentMapServerTest)
+     test/agent_map/server_test.exs:7
+     Assertion with == failed
+     code:  assert Server.init(args) == {:stop, [a: :badfun, b: :timeout, c: :timeout]}
+     left:  {:stop, [a: :badfun, c: :timeout]}
+     right: {:stop, [a: :badfun, b: :timeout, c: :timeout]}
+     stacktrace:
+       test/agent_map/server_test.exs:19: (test)
+
+.

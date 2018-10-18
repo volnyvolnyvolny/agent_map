@@ -190,20 +190,13 @@ defmodule AgentMap do
   :low` = `0`, `:avg | :mid` = `256`, `:max | :high` = `65536`, also, relative
   value can be given, for ex.: `{:max, -1}` = `65535`.
 
-      iex> am =
-      ...>   AgentMap.new(state: :ready)
-      iex> am
+      iex> %{state: :ready}
+      ...> |> AgentMap.new()
       ...> |> sleep(:state, 10)
       ...> |> cast(:state, fn :go! -> :stop end)                     # 3
       ...> |> cast(:state, fn :steady -> :go! end, !: :max)          # 2
       ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
-      ...> |> fetch(:state)
-      {:ok, :ready}
-      iex> fetch(am, :state, !: {:max, +1})
-      {:ok, :steady}
-      iex> fetch(am, :state, !: :max)
-      {:ok, :go!}
-      iex> fetch(am, :state, !: :avg)
+      ...> |> fetch(:state, !: :min)
       {:ok, :stop}
 
   Also, `!: :now` option can be given in `get/4`, `get_lazy/4` or `take/3` to
@@ -1346,19 +1339,18 @@ defmodule AgentMap do
 
       iex> am = AgentMap.new()
       ...>
-      iex> for i <- 1..100 do
+      iex> for i <- 1..10 do
       ...>   Task.async(fn ->
-      ...>     get(am, :key, fn _ -> sleep(5) end)
-      ...>     IO.inspect({:done, i})
+      ...>     get(am, :key, fn _ -> sleep(50) end)
       ...>   end)
       ...> end
       ...>
-      iex> sleep(3)
+      iex> sleep(10)
       iex> info(am, :key)[:processes]
       5
-      iex> sleep(50)
+      iex> sleep(150)
       iex> info(am, :key)[:processes]
-      1
+      0
 
   Keep in mind that:
 
