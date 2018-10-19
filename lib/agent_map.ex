@@ -196,8 +196,8 @@ defmodule AgentMap do
       ...> |> cast(:state, fn :go! -> :stop end)                     # 3
       ...> |> cast(:state, fn :steady -> :go! end, !: :max)          # 2
       ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
-      ...> |> fetch(:state, !: :min)
-      {:ok, :stop}
+      ...> |> get(:state)
+      :stop
 
   Also, `!: :now` option can be given in `get/4`, `get_lazy/4` or `take/3` to
   instruct `AgentMap` to make execution in a separate `Task`, using the
@@ -228,7 +228,6 @@ defmodule AgentMap do
   the callback will remain in a queue! To change this behaviour, use `timeout:
   {:!, pos_integer}` option.
 
-      iex> Process.flag(:trap_exit, true)
       iex> Process.info(self())[:message_queue_len]
       0
       iex> AgentMap.new(a: 42)
@@ -237,8 +236,6 @@ defmodule AgentMap do
       ...> |> put(:a, 24, timeout: {:!, 10})
       ...> |> get(:a)
       33
-      iex> Process.info(self())[:message_queue_len]
-      2
 
   The second `put/4` was never executed because it was dropped from queue,
   although, `GenServer` exit signal will be send.
@@ -1201,9 +1198,9 @@ defmodule AgentMap do
       iex> am = AgentMap.new()
       iex> max_processes(am)
       5
-      iex> max_processes(am, :infinity)
-      iex> :timer.sleep(10)
-      iex> max_processes(am)
+      iex> am
+      ...> |> max_processes(:infinity)
+      ...> |> max_processes()
       :infinity
       #
       iex> info(am, :key)[:max_processes]
@@ -1313,7 +1310,7 @@ defmodule AgentMap do
   end
 
   def info(am, key, :max_processes) do
-    req = %Req{action: :max_processes, key: {key}}
+    req = %Req{action: :max_processes, key: key}
     {:max_processes, _call(am, req)}
   end
 
@@ -1508,28 +1505,6 @@ defmodule AgentMap do
       ...> |> put(:b, 42)
       ...> |> take([:a, :b])
       %{a: 42, b: 42}
-
-  This function will not spawn worker for `key`, if there are no queue of calls
-  awaiting for invocation. So in this case `cast: false` is not used, since
-  take-call cannot occur before any of the actual puts (no race condition
-  possible).
-
-      iex> Process.flag(:trap_exit, true)
-      ...>
-      iex> am =
-      ...>   %{a: 1}
-      ...>   |> AgentMap.new()
-      ...>   |> sleep(:a, 20)
-      ...>   |> put(:a, 42)
-      ...>   |> put(:a, 0, !: :avg)
-      ...>   |> put(:a, 1, !: :avg, timeout: {:!, 10})
-      ...>
-      iex> fetch(am, :a)          # ⏺ ⟶ s ⟶ p ⟶ p ⟶̸ p̶
-      {:ok, 1}
-      iex> fetch(am, :a, !: :max) # s ⟶ p ⟶ ⏺ ⟶ p ⟶̸ p̶
-      {:ok, 42}
-      iex> fetch(am, :a, !: :min) # s ⟶ p ⟶ p ⟶ ⏺ ⟶̸ p̶
-      {:ok, 0}
   """
   @spec put(am, key, value, keyword) :: am
   def put(am, key, value, opts \\ [!: :max, cast: true]) do
@@ -1881,9 +1856,10 @@ defmodule AgentMap do
   @spec inc(am, key, keyword) :: am
   def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true, safe: false]) do
     defs = [step: 1, initial: 0, !: :avg, cast: true, safe: false]
+    opts = _prep(opts, defs)
     req = %Req{action: :inc, key: key, data: opts}
 
-    case _call(am, req, opts, defs) do
+    case call(am, req, opts) do
       {:error, e} ->
         raise e
 

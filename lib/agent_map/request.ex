@@ -76,7 +76,7 @@ defmodule AgentMap.Req do
     safe? = req.data[:safe]
 
     k = req.key
-    i = req.data[:initial]
+    i = IO.inspect(req).data[:initial]
 
     req
     |> get_and_update(fn
@@ -94,6 +94,7 @@ defmodule AgentMap.Req do
 
             %ArithmeticError{message: m}
           else
+            IO.inspect(i)
             if i, do: i + step, else: %KeyError{key: k}
           end
 
@@ -212,8 +213,8 @@ defmodule AgentMap.Req do
 
   # per server:
   def handle(%Req{action: :def_max_processes} = req, state) do
-    max_p = Process.put(:max_processes, req.data)
-    {:reply, max_p, state}
+    Process.put(:max_processes, req.data)
+    {:reply, :_ok, state}
   end
 
   #

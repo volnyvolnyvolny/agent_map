@@ -3,29 +3,29 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap, import: true#, only: [info: 2]
+  doctest AgentMap, import: true, only: [values: 2]
 
   test "prior" do
-      # IO.inspect(:prior)
-      # am =
-      #   AgentMap.new(state: :ready)
+    # IO.inspect(:prior)
+    # am =
+    #   AgentMap.new(state: :ready)
 
-      # max_processes(am, :state, 1)
+    # max_processes(am, :state, 1)
 
-      # assert am
-      # |> sleep(:state, 100)
-      # |> cast(:state, fn :go! -> :stop end)                     # 3
-      # |> cast(:state, fn :steady -> :go! end, !: :max)          # 2
-      # |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
-      # |> fetch(:state) ==
-      # {:ok, :ready}
+    # assert am
+    # |> sleep(:state, 100)
+    # |> cast(:state, fn :go! -> :stop end)                     # 3
+    # |> cast(:state, fn :steady -> :go! end, !: :max)          # 2
+    # |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
+    # |> fetch(:state) ==
+    # {:ok, :ready}
 
-      # assert fetch(am, :state, !: {:max, +1}) ==
-      # {:ok, :steady}
-      # assert fetch(am, :state, !: :max) ==
-      # {:ok, :go!}
-      # assert fetch(am, :state, !: :avg) ==
-      # {:ok, :stop}
+    # assert fetch(am, :state, !: {:max, +1}) ==
+    # {:ok, :steady}
+    # assert fetch(am, :state, !: :max) ==
+    # {:ok, :go!}
+    # assert fetch(am, :state, !: :avg) ==
+    # {:ok, :stop}
   end
 
   test "safe_apply" do
@@ -72,25 +72,6 @@ defmodule AgentMapTest do
     # # IO.inspect(:x)
 
     # # :timer.sleep(100)
-  end
-
-  test "inc" do
-    # am = AgentMap.new(a: 1.5)
-
-    # assert am
-    # |> inc(:a, step: 1.5)
-    # |> inc(:b)
-    # |> get(:a) == 3
-
-    # assert get(am, :b) == 1
-
-    # Process.flag(:trap_exit, true)
-
-    # assert_raise inc(am, :c, initial: false, cast: false)
-
-    # sleep(100)
-
-    #    Process.info()[:message_queue_len] |> IO.inspect()
   end
 
   test "put" do
