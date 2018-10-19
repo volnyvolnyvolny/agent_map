@@ -5,6 +5,25 @@ defmodule AgentMapTest do
   use ExUnit.Case
   doctest AgentMap, import: true, only: [values: 2]
 
+  test "values" do
+      am =
+        %{a: 1, b: 2, c: 42}
+        |> AgentMap.new()
+        |> sleep(:a, 10)
+        |> sleep(:b, 10)
+        |> put(:a, 42,   !: {:max, +1})
+        |> put(:a, 0)  # !: :max
+        |> put(:b, 42) # !: :max
+
+      assert values(am, !: {:max, +1}) ==
+      [ 1,  2, 42]
+      assert values(am, !: :max) ==
+      [42,  2, 42]
+      assert values(am, !: :min) ==
+      [42, 42, 42]
+
+  end
+
   test "prior" do
     # IO.inspect(:prior)
     # am =
