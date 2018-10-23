@@ -117,11 +117,9 @@ defmodule AgentMap.Server.State do
   end
 
   def take(state, keys) do
-    packs = Enum.map(keys, &{&1, fetch(state, &1)})
+    packs = Enum.map(keys, &{&1, fetch(state, &1)}) |> IO.inspect()
 
-    for {k, {:ok, v}} <- packs, into: %{} do
-      {k, v}
-    end
+    for {k, {:ok, v}} <- packs, into: %{}, do: {k, v}
   end
 
   #

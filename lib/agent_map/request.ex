@@ -76,7 +76,7 @@ defmodule AgentMap.Req do
     safe? = req.data[:safe]
 
     k = req.key
-    i = IO.inspect(req).data[:initial]
+    i = req.data[:initial]
 
     req
     |> get_and_update(fn
@@ -94,7 +94,6 @@ defmodule AgentMap.Req do
 
             %ArithmeticError{message: m}
           else
-            IO.inspect(i)
             if i, do: i + step, else: %KeyError{key: k}
           end
 

@@ -42,7 +42,8 @@ defmodule AgentMap.Multi.Req do
 
   # on server
   defp prepair(%Req{action: :get, !: :now} = req, state) do
-    map = take(state, req.keys)
+    IO.inspect({req, state}, label: :prep)
+    map = take(state, req.keys) |> IO.inspect()
     {state, {map, %{}}}
   end
 
@@ -115,7 +116,7 @@ defmodule AgentMap.Multi.Req do
           {:error, {:callback, result}}
         else
           {_ok, get_msgs} = Enum.unzip(results)
-          {:ok, Enum.unzip(get_msgs) |> IO.inspect()}
+          {:ok, Enum.unzip(get_msgs)}
         end
 
       {_, values} ->
@@ -162,7 +163,7 @@ defmodule AgentMap.Multi.Req do
            values = Enum.map(req.keys, &map[&1]),
            #
            {:ok, result} <- run(req.fun, [values], timeout(req)),
-           {:ok, {get, msgs}} <- interpret(req.action, values, result) |> IO.inspect() do
+           {:ok, {get, msgs}} <- interpret(req.action, values, result) do
         #
 
         unless req.action == :get do

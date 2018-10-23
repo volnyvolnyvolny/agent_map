@@ -228,8 +228,6 @@ defmodule AgentMap do
   the callback will remain in a queue! To change this behaviour, use `timeout:
   {:!, pos_integer}` option.
 
-      iex> Process.info(self())[:message_queue_len]
-      0
       iex> AgentMap.new(a: 42)
       ...> |> sleep(:a, 15)
       ...> |> put(:a, 33, timeout: 10)
@@ -642,7 +640,7 @@ defmodule AgentMap do
       42
   """
   @spec start_link([{key, (() -> any)}], GenServer.options() | timeout) :: on_start
-  def start_link(funs \\ [], opts \\ [max_processes: 5]) do
+  def start_link(funs \\ [], opts \\ [max_processes: @max_processes]) do
     opts = prepair(opts)
 
     args = [
@@ -678,7 +676,7 @@ defmodule AgentMap do
       %RuntimeError{message: "oops"}
   """
   @spec start([{key, (() -> any)}], GenServer.options() | timeout) :: on_start
-  def start(funs \\ [], opts \\ [max_processes: 5]) do
+  def start(funs \\ [], opts \\ [max_processes: @max_processes]) do
     opts = prepair(opts)
 
     args = [
@@ -786,9 +784,7 @@ defmodule AgentMap do
   @doc """
   Returns the value for the given `key`.
 
-  Syntactic sugar for
-
-      get(am, key, & &1, !: :min)
+  Syntactic sugar for `get(am, key, & &1, !: :min)`.
 
   This call executed with a minimum (`0`) priority. As so, execution will start
   only after all other calls for this `key` are completed.
@@ -821,6 +817,8 @@ defmodule AgentMap do
 
   This is useful if the default value is very expensive to calculate or
   generally difficult to setup and teardown again.
+
+  See `get/4`.
 
   ## Options
 
@@ -859,9 +857,7 @@ defmodule AgentMap do
   @doc """
   Fetches the value for a specific `key`.
 
-  If the value for a given `key` exists, `{:ok, value}` is returned. If it
-  doesn’t contain `key`, `:error` is returned. Returns value *immediately*,
-  unless `!: priority` is provided.
+  Returns *immediately* `{:ok, value}` or `:error` if `key` is not present.
 
   ## Options
 
@@ -869,9 +865,6 @@ defmodule AgentMap do
       [priorities](#module-priority) are executed for `key`;
 
     * `:timeout` (`timeout`, `5000`).
-
-  If worker (queue holder) was not spawned for `key` — value is fetched
-  *immediately*;
 
   ## Examples
 
@@ -900,8 +893,10 @@ defmodule AgentMap do
   @doc """
   Fetches the value for a specific `key`, erroring out otherwise.
 
-  Returns current value *immediately*, unless `!: priority` is provided. If
-  `key` is not present — raises a `KeyError`.
+  Returns current value *immediately*. Raises a `KeyError` if `key` is not
+  present.
+
+  See `fetch/3`.
 
   ## Options
 
@@ -909,9 +904,6 @@ defmodule AgentMap do
       [priorities](#module-priority) are executed for `key`;
 
     * `:timeout` (`timeout`, `5000`).
-
-  If worker (queue holder) was not spawned for `key` — value is fetched
-  *immediately*;
 
   ## Examples
 
@@ -952,11 +944,16 @@ defmodule AgentMap do
       new value;
     * a one element tuple `{get}` — to return "get" value;
     * `:pop` — to return current value and remove `key`;
-    * `:id` to just return current value.
+    * `:id` — to just return current value.
 
   For example, `get_and_update(account, :Alice, &{&1, &1 + 1_000_000})` returns
   the balance of `:Alice` and makes the deposit, while `get_and_update(account,
   :Alice, &{&1})` just returns the balance.
+
+  This call creates a temporary worker that is responsible for holding queue of
+  calls awaiting execution for `key`. If such a worker exists, call is added to
+  the end of the queue. Priority can be given (`:!`), to process call out of
+  turn.
 
   See `Map.get_and_update/3`.
 
@@ -1014,16 +1011,9 @@ defmodule AgentMap do
   @doc """
   Updates `key` with the given `fun`.
 
-  Syntactic sugar for
-
-      get_and_update(am, key, &{am, fun.(&1)}, opts)
+  Syntactic sugar for `get_and_update(am, key, &{am, fun.(&1)}, opts)`.
 
   See `get_and_update/4`.
-
-  This call creates a temporary worker that is responsible for holding queue of
-  calls awaiting execution for `key`. If such a worker exists, call is added to
-  the end of the queue. Priority can be given (`:!`), to process call out of
-  turn.
 
   ## Options
 
@@ -1035,8 +1025,7 @@ defmodule AgentMap do
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true`
-      is used.
+    * `:timeout` (`timeout`, `5000`).
 
   ## Examples
 
@@ -1071,8 +1060,7 @@ defmodule AgentMap do
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true`
-      is used.
+    * `:timeout` (`timeout`, `5000`).
 
   ## Example
 
@@ -1110,8 +1098,7 @@ defmodule AgentMap do
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true`
-      is used.
+    * `:timeout` (`timeout`, `5000`).
 
   ## Examples
 
@@ -1164,9 +1151,6 @@ defmodule AgentMap do
 
     * `cast: true` — to return *immediately*. `KeyError` exception will be
       logged.
-
-  If worker (queue holder) was not spawned for `key`, the value is replaced
-  *immediately*.
 
   ## Examples
 
@@ -1258,10 +1242,10 @@ defmodule AgentMap do
       :ok
 
   will be executed in around of `10` ms, not `50`. `AgentMap` can parallelize
-  any sequence of `get/3` calls ending with `get_and_update/3`, `update/3` or
-  `cast/3`.
+  any sequence of `get/3` calls. Sequence ends when a call that change state
+  arrive (`get_and_update/3`, `update/3`, etc.)
 
-  Use `max_processes: 1` to execute `get` calls in a sequence.
+  Use `max_processes: 1` to execute `get` calls one after another.
 
   ## Examples
 
@@ -1319,6 +1303,8 @@ defmodule AgentMap do
 
   ## Examples
 
+      iex> import :timer
+      ...>
       iex> am = AgentMap.new()
       ...>
       iex> info(am, :key)
@@ -1385,6 +1371,8 @@ defmodule AgentMap do
 
   Syntactic sugar for `match?({:ok, _}, fetch(am, key, opts))`.
 
+  See `fetch/3`.
+
   ## Options
 
     * `:!` (`priority`, `:now`) — to set [priority](#module-priority);
@@ -1443,24 +1431,17 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
+      ...> |> sleep(:a, 10)
+      ...> |> put(:a, 0)
       ...> |> values()
       [1, 2, 3]
 
-      iex> am =
-      ...>   %{a: 1, b: 2, c: 42}
-      ...>   |> AgentMap.new()
-      ...>   |> sleep(:a, 10)
-      ...>   |> sleep(:b, 10)
-      ...>   |> put(:a, 42,   !: {:max, +1})
-      ...>   |> put(:a, 0)  # !: :max
-      ...>   |> put(:b, 42) # !: :max
-      ...>
-      iex> values(am, !: {:max, +1})
-      [ 1,  2, 42]
-      iex> values(am, !: :max)
-      [42,  2, 42]
-      iex> values(am, !: :min)
-      [42, 42, 42]
+      iex> %{a: 1, b: 2}
+      ...> |> AgentMap.new()
+      ...> |> sleep(:a, 10)
+      ...> |> put(:a, 0)
+      ...> |> values(!: :min)
+      [0, 2]
   """
   @spec values(am, keyword | timeout) :: [value]
   def values(am, opts \\ [!: :now]) do
@@ -1493,9 +1474,6 @@ defmodule AgentMap do
       [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
-
-  If worker (queue holder) was not spawned for `key`, the value is replaced
-  *immediately*.
 
   ## Examples
 
@@ -1533,9 +1511,6 @@ defmodule AgentMap do
       [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
-
-  If worker (queue holder) was not spawned for `key`, the value is replaced
-  *immediately*.
 
   ## Examples
 
@@ -1659,15 +1634,12 @@ defmodule AgentMap do
     * `cast: false` — to return only when the actual drop occur;
 
     * `:timeout` (`pos_integer | :infinity`, `5000`). Is ignored if `cast: true`
-      option is given (by default);
+      option is used (by default);
 
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
-
-  If worker (queue holder) was not spawned for `key`, the value is deleted
-  *immediately*.
 
   ## Examples
 
@@ -1696,7 +1668,7 @@ defmodule AgentMap do
     * `cast: false` — to return only when the actual drop occur;
 
     * `:timeout` (`pos_integer | :infinity`, `5000`). Is ignored if `cast: true`
-      option is given (by default);
+      is used (by default);
 
     * `timeout: {:!, pos_integer}` — to cancel delete upon the occurence of
       [timeout](#module-timeout). On cancel, if delete happen for some key, its
@@ -1704,9 +1676,6 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:max`) — to set [priorities](#module-priority) for
       delete calls.
-
-  If workers (queue holders) are not spawned for some of the `keys`, values for
-  them are deleted *immediately*.
 
   ## Examples
 
@@ -1769,26 +1738,22 @@ defmodule AgentMap do
   ## Examples
 
       iex> am =
-      ...>   %{a: 1, b: 2, c: 3}
-      ...>   |> AgentMap.new()
-      ...>   |> sleep(:a, 10)
-      ...>   |> put(:a, 42)
-      ...>   |> put(:a, 0, !: :avg)
-      ...>   |> sleep(:b, 10)
-      ...>   |> put(:b, 42)
-      ...>
-      iex> take(am, [:a, :b], !: :now)
+      ...>   AgentMap.new(a: 1, b: 2, c: 3)
+      iex> am
+      ...> |> sleep(:a, 20)
+      ...> |> put(:a, 42)
+      ...> |> sleep(:b, 20)
+      ...> |> put(:b, 42)
+      ...> |> take([:a, :b, :d], !: :now)
       %{a: 1, b: 2}
-      iex> take(am, [:a, :b, :d], !: :max)
+      iex> take(am, [:a, :b])
       %{a: 42, b: 42}
-      iex> take(am, [:a, :b, :d])
-      %{a: 0, b: 42}
   """
   @spec take(am, [key], keyword | timeout) :: map
   def take(am, keys, opts \\ [!: :avg]) do
     fun = fn _ -> Process.get(:map) end
 
-    Multi.get(am, keys, fun, _prep(opts, !: :avg))
+    Multi.get(am, keys, fun, opts)
   end
 
   ##
@@ -1814,15 +1779,15 @@ defmodule AgentMap do
 
     * `safe: true` — to keep instance alive if an exception is raised;
 
-    * `cast: false` (`boolean`, `true`) — to return only when the actual
-      increment occur;
+    * `cast: false` — to return only when the actual increment occur;
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
-    * `:timeout` (`timeout`, `5000`). Is ignored if `cast: true` is given.
+    * `:timeout` (`timeout`, `5000`). Is ignored if `cast: true` is used (by
+      default).
 
   If `safe: true` and `cast: true` (by default) is given, any error will be
   logged.

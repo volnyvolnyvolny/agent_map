@@ -11,7 +11,7 @@ iex> fun =
 ...>     :timer.sleep(10)
 ...>     {:_get, v + 1}
 ...>   end
-...> #
+...>
 iex> map = Map.new(a: 1, b: 1)
 iex> {:_get, map} = Map.get_and_update(map, :a, fun)
 iex> {:_get, map} = Map.get_and_update(map, :b, fun)
@@ -29,12 +29,11 @@ iex> fun =
 ...>     :timer.sleep(10)
 ...>     {:_get, v + 1}
 ...>   end
-...> #
+...>
 iex> am = AgentMap.new(a: 1, b: 1)
 iex> AgentMap.get_and_update(am, :a, fun)
 :_get
 iex> AgentMap.get_and_update(am, :b, fun)
-:_get
 iex> AgentMap.get(am, :a)
 2
 iex> AgentMap.get(am, :b)
@@ -88,9 +87,9 @@ iex> pid
 ...> |> AgentMap.put(:a, 1)
 ...> |> AgentMap.get(:a)
 1
-iex> am = 
-...>   AgentMap.new(pid)
-iex> Enum.empty?(am)
+iex> pid
+...> |> AgentMap.new()
+...> |> Enum.empty?()
 false
 ```
 
