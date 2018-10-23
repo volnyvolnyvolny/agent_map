@@ -1017,8 +1017,8 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:initial` — (`term`, `nil`) if value does not exist it is considered to
-    be the one given as initial;
+    * `:initial` (`term`, `nil`) — if value does not exist it is considered to
+      be the one given as initial;
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
@@ -1102,17 +1102,13 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> am = AgentMap.new(Alice: 1)
-      iex> am
+      iex> %{Alice: 1}
+      ...> |> AgentMap.new()
       ...> |> sleep(:Alice, 20)
-      ...> |> put(:Alice, 2)
-      ...> |> cast(:Alice, fn 3 -> 4 end)
-      ...> |> update!(:Alice, fn 4 -> 5 end)
-      ...> |> update!(:Alice, fn 2 -> 3 end, !: :max)
-      ...> |> get(:Alice)
-      5
-      #
-      iex> update!(am, :Bob, & &1)
+      ...> |> put(:Alice, 3)
+      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})
+      ...> |> update!(:Alice, fn 3 -> 4 end)
+      ...> |> update!(:Bob, & &1)
       ** (KeyError) key :Bob not found
   """
   @spec update!(am, key, (value -> value), keyword | timeout) :: am | no_return
@@ -1322,7 +1318,7 @@ defmodule AgentMap do
 
       iex> am = AgentMap.new()
       ...>
-      iex> for i <- 1..10 do
+      iex> for _ <- 1..10 do
       ...>   Task.async(fn ->
       ...>     get(am, :key, fn _ -> sleep(50) end)
       ...>   end)

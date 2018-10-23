@@ -3,7 +3,7 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap, import: true, only: [take: 3]
+  doctest AgentMap, import: true, only: [update!: 4]
 
   # test "take" do
   #     am =

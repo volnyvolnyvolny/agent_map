@@ -42,8 +42,7 @@ defmodule AgentMap.Multi.Req do
 
   # on server
   defp prepair(%Req{action: :get, !: :now} = req, state) do
-    IO.inspect({req, state}, label: :prep)
-    map = take(state, req.keys) |> IO.inspect()
+    map = take(state, req.keys)
     {state, {map, %{}}}
   end
 
