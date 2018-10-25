@@ -1,7 +1,7 @@
 defmodule AgentMap.Multi.Req do
   @moduledoc false
 
-  alias AgentMap.{Common, CallbackError, Server, Worker, Multi.Req}
+  alias AgentMap.{Common, CallbackError, Server, Worker, Req}
 
   import Worker, only: [broadcast: 2, collect: 2]
   import Common, only: [run: 3, reply: 2]
@@ -20,42 +20,53 @@ defmodule AgentMap.Multi.Req do
     !: 256
   ]
 
-  def timeout(req), do: AgentMap.Req.timeout(req)
+  #
+  defdelegate timeout(req), to: Req
+
+  defdelegate compress(req), to: Req
+
+  defdelegate get_and_update(req, fun), to: Req
 
   #
-  defp prepair_workers(req, pids) do
-    act = req.action
-    me = self()
+  defp state({:reply, _, state}), do: state
 
-    f = fn _ ->
-      if act == :get_and_update do
-        Worker.share_value(to: me)
-        Worker.accept_value()
-      else
-        Worker.share_value(to: me)
-      end
+  defp state({:noreply, state}), do: state
+
+  #
+  defp fun_for(:get_and_update, me) do
+    fn _ ->
+      Worker.share_value(to: me)
+      Worker.accept_value()
     end
+  end
 
-    req = %{action: :get_and_update, fun: f, !: req.!}
-    broadcast(pids, req)
+  defp fun_for(:get, me) do
+    fn _ ->
+      Worker.share_value(to: me)
+    end
+  end
+
+  #
+
+  defp prepair_workers(req, pids) do
+    fun = fun_for(req.action, self())
+    req = get_and_update(%{req | from: nil}, fun)
+    broadcast(pids, compress(req))
   end
 
   # on server
-  defp prepair(%Req{action: :get, !: :now} = req, state) do
+  defp prepair(%{action: :get, !: :now} = req, state) do
     map = take(state, req.keys)
     {state, {map, %{}}}
   end
 
-  defp prepair(%Req{action: :get} = req, state) do
+  defp prepair(%{action: :get} = req, state) do
     {state, separate(state, req.keys)}
   end
 
   # action: :get_and_update
   defp prepair(req, state) do
-    state =
-      Enum.reduce(req.keys, state, fn key, state ->
-        spawn_worker(state, key)
-      end)
+    state = Enum.reduce(req.keys, state, &spawn_worker(&2, &1))
 
     {state, separate(state, req.keys)}
   end
@@ -138,7 +149,61 @@ defmodule AgentMap.Multi.Req do
   ##
   ##
 
-  @doc false
+  def handle(%{action: :drop, from: nil} = req, state) do
+    keys = req.keys
+
+    req =
+      Req
+      |> struct(Map.from_struct(req))
+      |> Map.put(:action, :delete)
+
+    state =
+      Enum.reduce(keys, state, fn key, state ->
+        %{req | key: key}
+        |> Req.handle(state)
+        |> state()
+      end)
+
+    {:reply, :_ok, state}
+  end
+
+  def handle(%{action: :drop} = req, state) do
+    {_map, workers} = separate(state, req.keys)
+
+    keys = req.keys -- Map.keys(workers)
+
+    if workers == %{} do
+      handle(%{req | from: nil, keys: keys}, state)
+    else
+      pids = Map.values(workers)
+
+      server = self()
+      ref = make_ref()
+
+      state =
+        %{req | from: nil, keys: keys}
+        |> handle(state)
+        |> state()
+
+      Task.start_link(fn ->
+        req =
+          %{req | from: self()}
+          |> get_and_update(fn _ -> :pop end)
+          |> compress()
+
+        Worker.broadcast(pids, req)
+        send(server, {ref, :go!})
+
+        Worker.collect(pids, timeout(req))
+      end)
+
+      receive do
+        {^ref, :go!} ->
+          {:noreply, state}
+      end
+    end
+  end
+
   def handle(req, state) do
     {state, {map, workers}} = prepair(req, state)
 

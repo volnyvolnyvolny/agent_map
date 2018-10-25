@@ -1029,12 +1029,20 @@ defmodule AgentMap do
 
   ## Examples
 
-      ...> %{Alice: 24}
+      iex> %{Alice: 24}
       ...> |> AgentMap.new()
       ...> |> update(:Alice, & &1 + 1_000)
       ...> |> update(:Bob, fn nil -> 42 end)
       ...> |> take([:Alice, :Bob])
       %{Alice: 1024, Bob: 42}
+
+      iex> AgentMap.new()
+      ...> |> sleep(:Alice, 20)                                        # 0
+      ...> |> put(:Alice, 3)                                           # 2
+      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1) # 1
+      ...> |> update(:Alice, fn 3 -> 4 end)                            # 3
+      ...> |> values()
+      [4]
   """
   @spec update(am, key, (value -> value), keyword | timeout) :: am
   def update(am, key, fun, opts \\ [!: :avg])
@@ -1083,7 +1091,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Updates `key` with the given function.
+  Updates `key` with the given function, but only if `key` already exists.
 
   If `key` is present, `fun` is invoked with value as argument and its result is
   used as the new value of `key`. If `key` is not present, a `KeyError`
@@ -1104,10 +1112,10 @@ defmodule AgentMap do
 
       iex> %{Alice: 1}
       ...> |> AgentMap.new()
-      ...> |> sleep(:Alice, 20)
-      ...> |> put(:Alice, 3)
-      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})
-      ...> |> update!(:Alice, fn 3 -> 4 end)
+      ...> |> sleep(:Alice, 20)                              # 0
+      ...> |> put(:Alice, 3)                                 # 2
+      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # 1
+      ...> |> update!(:Alice, fn 3 -> 4 end)                 # 3
       ...> |> update!(:Bob, & &1)
       ** (KeyError) key :Bob not found
   """
@@ -1143,10 +1151,7 @@ defmodule AgentMap do
       [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
-      used;
-
-    * `cast: true` — to return *immediately*. `KeyError` exception will be
-      logged.
+      used.
 
   ## Examples
 
@@ -1205,9 +1210,9 @@ defmodule AgentMap do
       iex> am = AgentMap.new()
       iex> max_processes(am)
       5
-      iex> max_processes(am, :infinity)
-      iex> :timer.sleep(10)
-      iex> max_processes(am)
+      iex> am
+      ...> |> max_processes(:infinity)
+      ...> |> max_processes()
       :infinity
   """
   @spec max_processes(am, pos_integer | :infinity) :: am
@@ -1414,7 +1419,7 @@ defmodule AgentMap do
   def keys(am), do: _call(am, %Req{action: :keys, !: :now})
 
   @doc """
-  Returns *immediately* all current values of an `AgentMap`.
+  Returns *immediately* all the current values of an `AgentMap`.
 
   ## Options
 
@@ -1461,15 +1466,15 @@ defmodule AgentMap do
 
   ## Options
 
-    * `cast: false` — to return only when the actual put occur;
+    * `:!` (`priority`, `:max`) — to set [priority](#module-priority);
 
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
-      used (by default);
+    * `cast: false` — to return only when the actual put occur;
 
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
-    * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
+    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
+      used (by default).
 
   ## Examples
 
@@ -1500,13 +1505,13 @@ defmodule AgentMap do
 
     * `cast: false` — to return only when the actual put occur;
 
-    * `:timeout` (`timeout`, `5000`). The option is ignored if `cast: true` is
-      used (by default);
+    * `:!` (`priority`, `:max`) — to set [priority](#module-priority);
 
     * `timeout: {:!, pos_integer}` — to not execute this call after the
       [timeout](#module-timeout);
 
-    * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
+    * `:timeout` (`timeout`, `5000`). The option is ignored if `cast: true` is
+      used (by default).
 
   ## Examples
 
@@ -1644,6 +1649,13 @@ defmodule AgentMap do
       ...> |> delete(:a)
       ...> |> take([:a, :b])
       %{b: 2}
+
+      iex> AgentMap.new(a: 1)
+      ...> |> sleep(:a, 20)
+      ...> |> delete(:a, !: :min) # 2
+      ...> |> put(:a, 2)          # 1
+      ...> |> get(:a)             # 3
+      nil
   """
   @spec delete(am, key, keyword) :: am
   def delete(am, key, opts \\ [!: :max, cast: true]) do
@@ -1680,6 +1692,12 @@ defmodule AgentMap do
       ...> |> drop([:b, :d])
       ...> |> take([:a, :b, :c, :d])
       %{a: 1, c: 3}
+
+      iex> %{a: 1, b: 2, c: 3}
+      ...> |> AgentMap.new()
+      ...> |> drop([:b, :d], cast: false)
+      ...> |> take([:a, :b, :c, :d], !: :now)
+      %{a: 1, c: 3}
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [!: :max, cast: true]) do
@@ -1706,8 +1724,17 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: nil}
       ...> |> AgentMap.new()
-      ...> |> AgentMap.to_map()
+      ...> |> sleep(:a, 20)   # 0
+      ...> |> put(:a, 42)     # 2
+      ...> |> to_map()        # 1
       %{a: 1, b: 2, c: nil}
+
+      iex> %{a: 1}
+      ...> |> AgentMap.new()
+      ...> |> sleep(:a, 20)   # 0
+      ...> |> put(:a, 42)     # 1
+      ...> |> to_map(!: :min) # 2
+      %{a: 42}
   """
   @spec to_map(am, keyword | timeout) :: %{required(key) => value}
   def to_map(am, opts \\ [!: :now]) do
@@ -1718,7 +1745,7 @@ defmodule AgentMap do
   @doc """
   Returns a key-value pairs.
 
-  Keys that do not exist are ignored.
+  Keys that do not exist will be missed in resulting map.
 
   ## Options
 
@@ -1727,9 +1754,6 @@ defmodule AgentMap do
     * `!: :now` — to return *immediately* a snapshot with keys and values;
 
     * `:timeout` (`timeout`, `5000`).
-
-  If workers (queue holders) are not spawned for some of the `keys`, values for
-  them are returned *immediately*.
 
   ## Examples
 

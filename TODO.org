@@ -106,3 +106,13 @@ Use collect.
      stacktrace:
        test/agent_map/server/worker_test.exs:28: (test)
 .
+
+  2) doctest module AgentMap (3) (AgentMapTest)
+     test/agent_map_test.exs:6
+     ** (exit) exited in: GenServer.call(#PID<0.2686.0>, %AgentMap.Req{!: 0, action: :get, data: nil, from: nil, fun: #Function<2.55779941/1 in AgentMap.get/2>, inserted_at: nil, key: :state, timeout: 5000}, 5000)
+         ** (EXIT) time out
+     stacktrace:
+       (elixir) lib/gen_server.ex:924: GenServer.call/3
+       (for doctest at) lib/agent_map.ex:199: (test)
+
+

@@ -23,15 +23,19 @@ defmodule AgentMap.Req do
     !: 256
   ]
 
-  def timeout(%_{timeout: {:!, t}, inserted_at: nil}), do: t
-  def timeout(%_{timeout: t, inserted_at: nil}), do: t
+  #
 
-  def timeout(%_{} = r) do
+  def timeout(%{timeout: {:!, t}, inserted_at: nil}), do: t
+  def timeout(%{timeout: t, inserted_at: nil}), do: t
+
+  def timeout(%{} = r) do
     timeout(%{r | inserted_at: nil})
     |> left(since: r.inserted_at)
   end
 
-  def compress(%Req{} = req) do
+  #
+
+  def compress(%_{} = req) do
     req
     |> Map.from_struct()
     |> Map.delete(:key)
@@ -52,7 +56,9 @@ defmodule AgentMap.Req do
     |> Enum.into(%{})
   end
 
-  defp get_and_update(req, fun) do
+  #
+
+  def get_and_update(req, fun) do
     %{req | action: :get_and_update, fun: fun, data: nil}
   end
 
@@ -60,7 +66,7 @@ defmodule AgentMap.Req do
   ## HANDLERS
   ##
 
-  def handle(%Req{action: :to_map} = req, state) do
+  def handle(%{action: :to_map} = req, state) do
     keys = Map.keys(state)
     fun = fn _ -> Process.get(:map) end
 
@@ -71,7 +77,7 @@ defmodule AgentMap.Req do
     Multi.Req.handle(req, state)
   end
 
-  def handle(%Req{action: :inc} = req, state) do
+  def handle(%{action: :inc} = req, state) do
     step = req.data[:step]
     safe? = req.data[:safe]
 
@@ -117,60 +123,7 @@ defmodule AgentMap.Req do
     |> handle(state)
   end
 
-  def handle(%Multi.Req{action: :drop, from: nil} = req, state) do
-    req =
-      Req
-      |> struct(Map.from_struct(req))
-      |> Map.put(:action, :delete)
-
-    state =
-      Enum.reduce(req.keys, state, fn key, state ->
-        case handle(%{req | key: key}, state) do
-          {:reply, _, state} ->
-            state
-
-          {:noreply, state} ->
-            state
-        end
-      end)
-
-    {:reply, :_ok, state}
-  end
-
-  def handle(%Multi.Req{action: :drop} = req, state) do
-    {_map, workers} = separate(state, req.keys)
-
-    keys = req.keys -- Map.keys(workers)
-
-    {:reply, _, state} = handle(%{req | from: nil, keys: keys}, state)
-
-    if keys != [] do
-      pids = Map.values(workers)
-
-      server = self()
-      ref = make_ref()
-
-      Task.start_link(fn ->
-        req =
-          %{req | from: self()}
-          |> get_and_update(fn _ -> :pop end)
-
-        Worker.broadcast(pids, compress(req))
-        send(server, {ref, :go!})
-
-        Worker.collect(pids, timeout(req))
-      end)
-
-      receive do
-        {^ref, :go!} ->
-          {:noreply, state}
-      end
-    else
-      {:reply, :_ok, state}
-    end
-  end
-
-  def handle(%Req{action: :processes} = req, state) do
+  def handle(%{action: :processes} = req, state) do
     p =
       case get(state, req.key) do
         {_box, {p, _max_p}} ->
@@ -184,7 +137,7 @@ defmodule AgentMap.Req do
   end
 
   # per key:
-  def handle(%Req{action: :max_processes, data: nil} = req, state) do
+  def handle(%{action: :max_processes, data: nil} = req, state) do
     max_p =
       case get(state, req.key) do
         {_box, {_p, max_p}} ->
@@ -197,7 +150,7 @@ defmodule AgentMap.Req do
     {:reply, max_p, state}
   end
 
-  def handle(%Req{action: :max_processes} = req, state) do
+  def handle(%{action: :max_processes} = req, state) do
     case get(state, req.key) do
       {box, {p, _max_p}} ->
         pack = {box, {p, req.data}}
@@ -211,14 +164,14 @@ defmodule AgentMap.Req do
   end
 
   # per server:
-  def handle(%Req{action: :def_max_processes} = req, state) do
+  def handle(%{action: :def_max_processes} = req, state) do
     Process.put(:max_processes, req.data)
     {:reply, :_ok, state}
   end
 
   #
 
-  def handle(%Req{action: :keys}, state) do
+  def handle(%{action: :keys}, state) do
     has_value? = &match?({:ok, _}, fetch(state, &1))
     ks = filter(Map.keys(state), has_value?)
 
@@ -227,7 +180,7 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%Req{action: :get, !: :now} = req, state) do
+  def handle(%{action: :get, !: :now} = req, state) do
     case get(state, req.key) do
       {b, {p, max_p}} ->
         spawn_get_task(req, {req.key, b})
@@ -245,7 +198,7 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :get} = req, state) do
+  def handle(%{action: :get} = req, state) do
     g_max_p = Process.get(:max_processes)
 
     case get(state, req.key) do
@@ -273,7 +226,7 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%Req{action: :get_and_update} = req, state) do
+  def handle(%{action: :get_and_update} = req, state) do
     case get(state, req.key) do
       {_box, _p_info} ->
         state = spawn_worker(state, req.key)
@@ -287,7 +240,7 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%Req{action: :put} = req, state) do
+  def handle(%{action: :put} = req, state) do
     case get(state, req.key) do
       {_box, p_info} ->
         pack = {box(req.data), p_info}
@@ -304,7 +257,7 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :put_new} = req, state) do
+  def handle(%{action: :put_new} = req, state) do
     case get(state, req.key) do
       {nil, p_info} ->
         if req.fun do
@@ -335,12 +288,12 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :fetch, !: :now} = req, state) do
+  def handle(%{action: :fetch, !: :now} = req, state) do
     value = fetch(state, req.key)
     {:reply, value, state}
   end
 
-  def handle(%Req{action: :fetch} = req, state) do
+  def handle(%{action: :fetch} = req, state) do
     if is_pid(get(state, req.key)) do
       fun = fn value ->
         if Process.get(:value) do
@@ -356,7 +309,7 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :delete} = req, state) do
+  def handle(%{action: :delete} = req, state) do
     case get(state, req.key) do
       {_box, p_info} ->
         pack = {nil, p_info}
@@ -370,7 +323,7 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%Req{action: :sleep} = req, state) do
+  def handle(%{action: :sleep} = req, state) do
     req
     |> get_and_update(fn _ ->
       :timer.sleep(req.data)

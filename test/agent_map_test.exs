@@ -3,7 +3,7 @@ defmodule AgentMapTest do
   import :timer
 
   use ExUnit.Case
-  doctest AgentMap, import: true, only: [update!: 4]
+  doctest AgentMap, import: true#, only: [drop: 3]
 
   # test "take" do
   #     am =
@@ -23,22 +23,22 @@ defmodule AgentMapTest do
   # end
 
   test "values" do
-      # am =
-      #   %{a: 1, b: 2, c: 42}
-      #   |> AgentMap.new()
-      #   |> sleep(:a, 10)
-      #   |> put(:a, 42,     !: {:max, +1})
-      #   |> put(:a, 0)    # !: :max
-      #   |> put(:a, 24,     !: :min)
-      #   |> sleep(:b, 10)
-      #   |> put(:b, 42)   # !: :max
+    # am =
+    #   %{a: 1, b: 2, c: 42}
+    #   |> AgentMap.new()
+    #   |> sleep(:a, 10)
+    #   |> put(:a, 42,     !: {:max, +1})
+    #   |> put(:a, 0)    # !: :max
+    #   |> put(:a, 24,     !: :min)
+    #   |> sleep(:b, 10)
+    #   |> put(:b, 42)   # !: :max
 
-      # assert values(am, !: {:max, +1}) ==
-      # [42, 2, 42]
-      # assert values(am, !: :max) ==
-      # [0, 42, 42]
-      # assert values(am, !: :min) ==
-      # [42, 42, 42]
+    # assert values(am, !: {:max, +1}) ==
+    # [42, 2, 42]
+    # assert values(am, !: :max) ==
+    # [0, 42, 42]
+    # assert values(am, !: :min) ==
+    # [42, 42, 42]
   end
 
   test "prior" do
