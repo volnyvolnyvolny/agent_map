@@ -93,20 +93,6 @@ Use collect.
      stacktrace:
        test/agent_map/server_test.exs:19: (test)
 
-  2) test spawn_get_task (AgenxtMapWorkerTest)
-     test/agent_map/server/worker_test.exs:15
-     Found message matching {:_, {42, {:key, ^b}}} after 100ms.
-     
-     This means the message was delivered too close to the timeout value, you may want to either:
-     
-       1. Give an increased timeout to `assert_receive/2`
-       2. Increase the default timeout to all `assert_receive` in your
-          test_helper.exs by setting ExUnit.configure(assert_receive_timeout: ...)
-     
-     code: assert_receive {:_, {42, {:key, ^b}}}
-     stacktrace:
-       test/agent_map/server/worker_test.exs:28: (test).
-
   1) test Multi.get_and_update (AgentMapMultiTest)
      test/agent_map/multi_test.exs:42
      Assertion with == failed
@@ -160,3 +146,31 @@ Use collect.
      stacktrace:
        (elixir) lib/gen_server.ex:924: GenServer.call/3
        (for doctest at) lib/agent_map.ex:1214: (test)
+
+  2) test spawn_get_task (AgenxtMapWorkerTest)
+     test/agent_map/server/worker_test.exs:15
+     Found message matching {:_, {42, {:key, ^b}}} after 100ms.
+     
+     This means the message was delivered too close to the timeout value, you may want to either:
+     
+       1. Give an increased timeout to `assert_receive/2`
+       2. Increase the default timeout to all `assert_receive` in your
+          test_helper.exs by setting ExUnit.configure(assert_receive_timeout: ...)
+     
+     code: assert_receive {:_, {42, {:key, ^b}}}
+     stacktrace:
+       test/agent_map/server/worker_test.exs:28: (test).
+
+  1) test spawn_get_task (AgenxtMapWorkerTest)
+     test/agent_map/server/worker_test.exs:15
+     No message matching {:_, {42, {:key, ^b}}} after 100ms.
+     The following variables were pinned:
+       b = {:value, 42}
+     Process mailbox:
+       {:_, 42}
+       %{info: :done, key: :key}
+     code: assert_receive {:_, {42, {:key, ^b}}}
+     stacktrace:
+       test/agent_map/server/worker_test.exs:28: (test)
+
+

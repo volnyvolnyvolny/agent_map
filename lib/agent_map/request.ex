@@ -3,12 +3,11 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Worker, Server, Time, Multi}
+  alias AgentMap.{Worker, Server, Multi}
 
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Enum, only: [filter: 2]
   import Server.State
-  import Time
 
   @enforce_keys [:act]
 
@@ -18,41 +17,21 @@ defmodule AgentMap.Req do
     :from,
     :key,
     :fun,
-    :inserted_at,
-    timeout: 5000,
     !: 256
   ]
-
-  #
-
-  def timeout(%{timeout: {:!, t}, inserted_at: nil}), do: t
-  def timeout(%{timeout: t, inserted_at: nil}), do: t
-
-  def timeout(%{} = r) do
-    timeout(%{r | inserted_at: nil})
-    |> left(since: r.inserted_at)
-  end
 
   #
 
   def compress(%_{} = req) do
     req
     |> Map.from_struct()
-    |> Map.delete(:key)
-    |> Map.delete(:keys)
     |> compress()
-  end
-
-  def compress(%{timeout: {:!, _t}} = map) do
-    map
-    |> Enum.reject(&match?({_, nil}, &1))
-    |> Enum.into(%{})
   end
 
   def compress(map) do
     map
-    |> Map.delete(:inserted_at)
-    |> Map.delete(:timeout)
+    |> Map.delete(:key)
+    |> Map.delete(:keys)
     |> Enum.reject(&match?({_, nil}, &1))
     |> Enum.into(%{})
   end

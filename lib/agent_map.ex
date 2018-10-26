@@ -179,9 +179,7 @@ defmodule AgentMap do
         end
       end
 
-  ## Options
-
-  ### Priority (`:!`)
+  ## Priority (`:!`)
 
   Most of the functions support `!: priority` option to make out-of-turn
   ("priority") calls.
@@ -215,31 +213,6 @@ defmodule AgentMap do
       99
       iex> get(am, :state, & &1 * 99)
       4158
-
-  ### Timeout
-
-  Timeout is an integer greater than zero which specifies the amount of
-  milliseconds is allowed before the `AgentMap` instance executes `fun` and
-  returns a result, or an atom `:infinity` to wait indefinitely. If no result is
-  received within the specified time, the caller exits. By default it is set to
-  `5000 ms` = `5 sec`.
-
-  If no result is received within the specified time, the caller exits, (!) but
-  the callback will remain in a queue! To change this behaviour, use `timeout:
-  {:!, pos_integer}` option.
-
-      iex> AgentMap.new(a: 42)
-      ...> |> sleep(:a, 15)
-      ...> |> put(:a, 33, timeout: 10)
-      ...> |> put(:a, 24, timeout: {:!, 10})
-      ...> |> get(:a)
-      33
-
-  The second `put/4` was never executed because it was dropped from queue,
-  although, `GenServer` exit signal will be send.
-
-  If timeout occurs while callback is executed — the call will not be
-  interrupted. Use `safe_apply/3` to bypass.
 
   ## Name registration
 
@@ -306,17 +279,6 @@ defmodule AgentMap do
   #
 
   @doc false
-  def _call(am, req) do
-    case req.timeout do
-      {:!, t} ->
-        GenServer.call(pid(am), req, t)
-
-      t ->
-        GenServer.call(pid(am), req, t || 5000)
-    end
-  end
-
-  @doc false
   def _call(am, req, opts) do
     req = struct(req, opts)
 
@@ -324,7 +286,7 @@ defmodule AgentMap do
       GenServer.cast(pid(am), req)
       am
     else
-      _call(am, req)
+      GenServer.call(pid(am), req, opts[:timeout] || 5000)
     end
   end
 
@@ -720,12 +682,7 @@ defmodule AgentMap do
           iex> info(am, :k)[:processes]
           100
 
-    * `:timeout` (`{:!, pos_integer}`, `{!: 5000}`) — to set
-      [timeout](#module-timeout). Callback will not be executed after timeout
-      expires;
-
-    * `timeout: timeout` — to set [timeout](#module-timeout). Callback *will be*
-      executed even after timeout expires.
+    * `:timeout` (`timeout, 5000`).
 
   ## Examples
 
@@ -740,8 +697,8 @@ defmodule AgentMap do
       1
   """
   @spec get(am, key, (value -> get), keyword | timeout) :: get when get: var
-  def get(am, key, fun, opts \\ [!: :avg, timeout: {:!, 5000}]) do
-    opts = _prep(opts, !: :avg, timeout: {:!, 5000})
+  def get(am, key, fun, opts \\ [!: :avg]) do
+    opts = _prep(opts, !: :avg)
     req = %Req{act: :get, key: key, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
@@ -794,12 +751,7 @@ defmodule AgentMap do
     * `!: :now` — to *immediately* execute this call in a separate `Task`
       (passing a current value);
 
-    * `:timeout` (`{:!, pos_integer}`, `{!: 5000}`) — to set
-      [timeout](#module-timeout). Callback will not be executed after timeout
-      expires;
-
-    * `timeout: timeout` — to set [timeout](#module-timeout). Callback *will be*
-      executed even after timeout expires.
+    * `:timeout` (`timeout, 5000`).
 
   ## Examples
 
@@ -930,9 +882,6 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
@@ -988,9 +937,6 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
@@ -1031,9 +977,6 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
     * `:timeout` (`timeout`, `5000`).
 
   ## Example
@@ -1068,9 +1011,6 @@ defmodule AgentMap do
   ## Options
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -1112,9 +1052,6 @@ defmodule AgentMap do
   ## Options
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
       used.
@@ -1185,7 +1122,7 @@ defmodule AgentMap do
   def max_processes(am, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    _call(am, %Req{act: :def_max_processes, data: value})
+    _call(am, %Req{act: :def_max_processes, data: value}, timeout: 5000)
     am
   end
 
@@ -1237,7 +1174,7 @@ defmodule AgentMap do
   def max_processes(am, key, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    _call(am, %Req{act: :max_processes, key: key, data: value})
+    _call(am, %Req{act: :max_processes, key: key, data: value}, timeout: 5000)
     am
   end
 
@@ -1255,12 +1192,12 @@ defmodule AgentMap do
   @spec info(am, key, :max_processes) :: {:max_processes, pos_integer | :infinity}
   def info(am, key, :processes) do
     req = %Req{act: :processes, key: key}
-    {:processes, _call(am, req)}
+    {:processes, _call(am, req, timeout: 5000)}
   end
 
   def info(am, key, :max_processes) do
     req = %Req{act: :max_processes, key: key}
-    {:max_processes, _call(am, req)}
+    {:max_processes, _call(am, req, timeout: 5000)}
   end
 
   @doc """
@@ -1376,7 +1313,7 @@ defmodule AgentMap do
       [:a, :b, :c]
   """
   @spec keys(am) :: [key]
-  def keys(am), do: _call(am, %Req{act: :keys, !: :now})
+  def keys(am), do: _call(am, %Req{act: :keys, !: :now}, timeout: 5000)
 
   @doc """
   Returns *immediately* all the current values of an `AgentMap`.
@@ -1430,9 +1367,6 @@ defmodule AgentMap do
 
     * `cast: false` — to return only when the actual put occur;
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
     * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
       used (by default).
 
@@ -1466,9 +1400,6 @@ defmodule AgentMap do
     * `cast: false` — to return only when the actual put occur;
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`). The option is ignored if `cast: true` is
       used (by default).
@@ -1506,11 +1437,7 @@ defmodule AgentMap do
 
     * `cast: false` — to return only when the actual put occur;
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
-      used (by default);
+    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`;
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
 
@@ -1546,11 +1473,7 @@ defmodule AgentMap do
 
   ## Options
 
-
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -1594,11 +1517,7 @@ defmodule AgentMap do
 
     * `cast: false` — to return only when the actual drop occur;
 
-    * `:timeout` (`pos_integer | :infinity`, `5000`). Is ignored if `cast: true`
-      option is used (by default);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
+    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`;
 
     * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
 
@@ -1635,12 +1554,7 @@ defmodule AgentMap do
 
     * `cast: false` — to return only when the actual drop occur;
 
-    * `:timeout` (`pos_integer | :infinity`, `5000`). Is ignored if `cast: true`
-      is used (by default);
-
-    * `timeout: {:!, pos_integer}` — to cancel delete upon the occurence of
-      [timeout](#module-timeout). On cancel, if delete happen for some key, its
-      value will remain deleted;
+    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`;
 
     * `:!` (`priority`, `:max`) — to set [priorities](#module-priority) for
       delete calls.
@@ -1682,18 +1596,18 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{a: 1, b: 2, c: nil}
-      ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)   # 0
-      ...> |> put(:a, 42)     # 2
-      ...> |> to_map()        # 1
-      %{a: 1, b: 2, c: nil}
+      # iex> %{a: 1, b: 2, c: nil}
+      # ...> |> AgentMap.new()
+      # ...> |> sleep(:a, 20)        # 0
+      # ...> |> put(:a, 42, !: :avg) # 2
+      # ...> |> to_map()             # 1
+      # %{a: 1, b: 2, c: nil}
 
       iex> %{a: 1}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)   # 0
-      ...> |> put(:a, 42)     # 1
-      ...> |> to_map(!: :min) # 2
+      ...> |> sleep(:a, 20)        # 0
+      ...> |> put(:a, 42, !: :avg) # 1
+      ...> |> to_map(!: :min)      # 2
       %{a: 42}
   """
   @spec to_map(am, keyword | timeout) :: %{required(key) => value}
@@ -1763,11 +1677,7 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout);
-
-    * `:timeout` (`timeout`, `5000`). Is ignored if `cast: true` is used (by
-      default).
+    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`.
 
   If `safe: true` and `cast: true` (by default) is given, any error will be
   logged.
@@ -1836,12 +1746,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after the
-      [timeout](#module-timeout).
-
-  Caller will not receive exit signal when timeout occurs.
+    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority).
 
   ## Examples
 

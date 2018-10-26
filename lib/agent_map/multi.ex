@@ -46,9 +46,6 @@ defmodule AgentMap.Multi do
 
     * `!: :now` — to use current values for this call.
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after
-      [timeout](AgentMap.html#module-timeout);
-
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
@@ -204,9 +201,6 @@ defmodule AgentMap.Multi do
     * `:!` (`priority`, `:avg`) — to set
       [priority](AgentMap.html#module-priority);
 
-    * `timeout: {:!, pos_integer}` — to not execute callback after the
-      [timeout](AgentMap.hmtl#module-timeout);
-
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
@@ -334,9 +328,6 @@ defmodule AgentMap.Multi do
     * `:!` (`priority`, `:avg`) — to set
       [priority](AgentMap.html#module-priority);
 
-    * `timeout: {:!, pos_integer}` — to not execute update callback after the
-      [timeout](AgentMap.html#module-timeout);
-
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
@@ -399,9 +390,6 @@ defmodule AgentMap.Multi do
 
     * `:!` (`priority`, `:avg`) — to set
       [priority](AgentMap.html#module-priority);
-
-    * `timeout: {:!, pos_integer}` — to not execute this call after
-      [timeout](AgentMap.html#module-timeout);
 
     * `:timeout` (`timeout`, `5000`).
 

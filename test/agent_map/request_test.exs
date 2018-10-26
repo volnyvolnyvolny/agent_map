@@ -1,22 +1,8 @@
 defmodule AgentMapRequestTest do
-  alias AgentMap.{Req, Time}
-  import Time
+  alias AgentMap.Req
   import Req
 
   use ExUnit.Case
-
-  defp ms(), do: 1_000_000
-
-  test "timeout" do
-    req = %Req{act: :get_and_update}
-    assert timeout(%{req | timeout: :infinity}) == :infinity
-    assert timeout(req) == 5000
-    assert timeout(%{req | timeout: {:!, 1000}}) == 1000
-
-    past = now() - 3 * ms()
-    assert timeout(%{req | timeout: {:!, 1000}, inserted_at: past}) < 1000
-    assert timeout(%{req | timeout: 1000, inserted_at: past}) < 1000
-  end
 
   test "compress" do
     f = & &1
@@ -27,22 +13,16 @@ defmodule AgentMapRequestTest do
     req = %Req{act: :get, key: :a, fun: f, data: nil}
     assert compress(req) == %{act: :get, fun: f, !: 256}
 
-    past = now()
-
     req = %Req{
       act: :get,
       key: :a,
       fun: f,
-      data: nil,
-      timeout: {:!, 1000},
-      inserted_at: past
+      data: nil
     }
 
     assert compress(req) == %{
              act: :get,
              fun: f,
-             timeout: {:!, 1000},
-             inserted_at: past,
              !: 256
            }
   end

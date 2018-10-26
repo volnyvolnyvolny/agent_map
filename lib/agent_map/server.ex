@@ -2,10 +2,9 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Req, Worker, Server.State, Time}
+  alias AgentMap.{Req, Worker, Server.State}
 
   import Worker, only: [dict: 1, info: 2]
-  import Time, only: [now: 0]
   import State, only: [put: 3, get: 2]
 
   use GenServer
@@ -71,12 +70,12 @@ defmodule AgentMap.Server do
 
   @impl true
   def handle_call(%r{} = req, from, state) do
-    r.handle(%{req | from: from, inserted_at: now()}, state)
+    r.handle(%{req | from: from}, state)
   end
 
   @impl true
   def handle_cast(%r{} = req, state) do
-    case r.handle(%{req | inserted_at: now()}, state) do
+    case r.handle(req, state) do
       {:reply, _, state} ->
         {:noreply, state}
 

@@ -3,7 +3,7 @@ defmodule AgentMap.Multi.Req do
 
   alias AgentMap.{CallbackError, Server, Worker, Req}
 
-  import Worker, only: [broadcast: 2, collect: 2]
+  import Worker, only: [broadcast: 2, collect: 1]
   import Server.State
 
   @enforce_keys [:act]
@@ -14,26 +14,13 @@ defmodule AgentMap.Multi.Req do
     :from,
     :keys,
     :fun,
-    :inserted_at,
-    timeout: 5000,
     !: 256
   ]
 
   #
-  defdelegate timeout(req), to: Req
-
   defdelegate compress(req), to: Req
 
   defdelegate get_and_update(req, fun), to: Req
-
-  #
-  defp run(req, values) do
-    if timeout(req) > 0 do
-      {:ok, apply(req.fun, [values])}
-    else
-      {:error, :expired}
-    end
-  end
 
   #
   defp to_req(m_req) do
@@ -54,11 +41,21 @@ defmodule AgentMap.Multi.Req do
     end
   end
 
+  # defp fun_for(act, me) do
+  #   fn _ ->
+  #     Worker.share_value(to: me)
+  #     if act == :get_and_update do
+  #       Worker.accept_value()
+  #     end
+  #   end
+  # end
+
   #
 
   defp prepair_workers(req, pids) do
     fun = fun_for(req.act, self())
     req = get_and_update(%{req | from: nil}, fun)
+#    req = %{req | from: nil, fun: fun}
     broadcast(pids, compress(req))
   end
 
@@ -194,49 +191,36 @@ defmodule AgentMap.Multi.Req do
     ref = make_ref()
 
     Task.start_link(fn ->
-      with prepair_workers(req, pids),
-           send(server, {ref, :go!}),
-           #
-           {:ok, values} <- collect(pids, timeout(req)),
-           #
-           map = Map.merge(map, to_map(values)),
-           #
-           Process.put(:map, map),
-           Process.put(:keys, req.keys),
-           #
-           values = Enum.map(req.keys, &Map.get(map, &1, req.data)),
-           #
-           {:ok, result} <- run(req, values),
-           {:ok, {get, msgs}} <- interpret(req.act, values, result) do
-        #
+      send(server, {ref, :go!})
+      #
+      prepair_workers(req, pids)
+      #
+      values = collect(pids)
+      map = Map.merge(map, to_map(values))
+      #
+      Process.put(:map, map)
+      Process.put(:keys, req.keys)
+      #
+      values = Enum.map(req.keys, &Map.get(map, &1, req.data))
+      result = apply(req.fun, [values])
 
-        unless req.act == :get do
-          for {key, msg} <- Enum.zip(req.keys, msgs) do
-            send(workers[key], msg)
+      case interpret(req.act, values, result) do
+        {:ok, {get, msgs}} ->
+          unless req.act == :get do
+            for {key, msg} <- Enum.zip(req.keys, msgs) do
+              send(workers[key], msg)
+            end
           end
-        end
 
-        if req.from do
-          GenServer.reply(req.from, get)
-        end
-      else
+          if req.from do
+            GenServer.reply(req.from, get)
+          end
+
         {:error, {:callback, result}} ->
           raise CallbackError, got: result, multi_key?: true
 
         {:error, {:update, values}} ->
           raise CallbackError, len: length(values)
-
-        {:error, :expired} ->
-          require Logger
-
-          if req.act == :get_and_update do
-            broadcast(pids, :id)
-          end
-
-          ks = inspect(req.keys)
-          r = inspect(req)
-
-          Logger.error("Takes too long to collect values for the keys #{ks}. Req: #{r}.")
       end
     end)
 

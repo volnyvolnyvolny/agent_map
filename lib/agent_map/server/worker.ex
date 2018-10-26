@@ -5,7 +5,7 @@ defmodule AgentMap.Worker do
 
   import Process, only: [get: 1, put: 2, delete: 1]
   import State, only: [un: 1, box: 1]
-  import Time, only: [now: 0, left: 2]
+  import Time, only: [now: 0]
 
   @moduledoc false
 
@@ -67,25 +67,18 @@ defmodule AgentMap.Worker do
 
   #
 
-  def collect(pids, timeout), do: collect(%{}, pids, timeout)
+  def collect(pids), do: collect(%{}, pids)
 
-  def collect(values, [], _), do: {:ok, values}
+  def collect(values, []), do: values
 
-  def collect(_, _, t) when t < 0, do: {:error, :expired}
-
-  def collect(values, pids, timeout) do
-    past = now()
-
+  def collect(values, pids) do
     receive do
       {worker, value} ->
         pids = List.delete(pids, worker)
 
         values
         |> Map.put(worker, value)
-        |> collect(pids, left(timeout, since: past))
-    after
-      timeout ->
-        {:error, :expired}
+        |> collect(pids)
     end
   end
 
@@ -115,14 +108,7 @@ defmodule AgentMap.Worker do
   ## REQUEST
   ##
 
-  defp timeout(%{timeout: {_, t}, inserted_at: i}), do: left(t, since: i)
-  defp timeout(%{}), do: :infinity
-
-  #
-
   defp run(req, box) do
-    t_left = timeout(req)
-
     arg =
       if box do
         un(box)
@@ -130,22 +116,15 @@ defmodule AgentMap.Worker do
         Map.get(req, :data)
       end
 
-    if t_left <= 0 do
-      Logger.error("""
-      Call is expired and will not be executed.
-      Request: #{inspect(req)}.
-      Key: #{inspect(get(:key))}.
-      Value: #{inspect(arg)}.
-      """)
-    else
-      interpret(req, arg, apply(req.fun, [arg]))
-    end
+    interpret(req, arg, apply(req.fun, [arg]))
   end
 
   #
 
   defp interpret(%{act: :get} = req, _arg, get) do
-    Map.get(req, :from) |> reply(get)
+    from = Map.get(req, :from)
+
+    reply(from, get)
   end
 
   # act: :get_and_update
