@@ -4,10 +4,10 @@ defmodule AgentMap do
   @enforce_keys [:pid]
   defstruct @enforce_keys
 
-  alias AgentMap.{Req, Multi, Worker, Common}
+  alias AgentMap.{Req, Multi, Worker, Time}
 
   import Worker, only: [dict: 1]
-  import Common, only: [now: 0, to_ms: 1]
+  import Time, only: [now: 0, to_ms: 1]
 
   @moduledoc """
   `AgentMap` can be seen as a stateful `Map` that parallelize operations made on

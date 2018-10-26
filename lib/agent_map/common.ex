@@ -1,4 +1,4 @@
-defmodule AgentMap.Common do
+defmodule AgentMap.Time do
   @moduledoc false
 
   import System, only: [system_time: 0, convert_time_unit: 3]
@@ -18,12 +18,4 @@ defmodule AgentMap.Common do
   def left(timeout, since: past) do
     timeout - to_ms(now() - past)
   end
-
-  ##
-  ## APPLY AND RUN
-  ##
-
-  def reply(nil, _msg), do: :nothing
-  def reply({_p, _ref} = from, msg), do: GenServer.reply(from, msg)
-  def reply(from, msg), do: send(from, msg)
 end

@@ -1,7 +1,7 @@
 defmodule AgenxtMapWorkerTest do
-  alias AgentMap.{Worker, Server.State, Common}
+  alias AgentMap.{Worker, Server.State, Time}
   import State
-  import Common
+  import Time
 
   use ExUnit.Case
 

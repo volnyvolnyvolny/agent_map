@@ -1,6 +1,6 @@
 defmodule AgentMapRequestTest do
-  alias AgentMap.{Req, Common}
-  import Common
+  alias AgentMap.{Req, Time}
+  import Time
   import Req
 
   use ExUnit.Case

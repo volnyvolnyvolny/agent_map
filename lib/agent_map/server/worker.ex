@@ -1,11 +1,11 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Common, CallbackError, Server.State}
+  alias AgentMap.{Time, CallbackError, Server.State}
 
   import Process, only: [get: 1, put: 2, delete: 1]
-  import Common, only: [reply: 2, now: 0, left: 2]
   import State, only: [un: 1, box: 1]
+  import Time, only: [now: 0, left: 2]
 
   @moduledoc false
 
@@ -13,6 +13,14 @@ defmodule AgentMap.Worker do
 
   # ms
   @wait 10
+
+  #
+
+  def reply(nil, _msg), do: :nothing
+  def reply({_p, _ref} = from, msg), do: GenServer.reply(from, msg)
+  def reply(from, msg), do: send(from, msg)
+
+  #
 
   defp rand(n) when n < 100, do: rem(now(), n)
 

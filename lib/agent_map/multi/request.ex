@@ -1,10 +1,9 @@
 defmodule AgentMap.Multi.Req do
   @moduledoc false
 
-  alias AgentMap.{Common, CallbackError, Server, Worker, Req}
+  alias AgentMap.{CallbackError, Server, Worker, Req}
 
   import Worker, only: [broadcast: 2, collect: 2]
-  import Common, only: [run: 3, reply: 2]
   import Server.State
 
   @enforce_keys [:action]
@@ -217,7 +216,9 @@ defmodule AgentMap.Multi.Req do
           end
         end
 
-        reply(req.from, get)
+        if req.from do
+          GenServer.reply(req.from, get)
+        end
       else
         {:error, {:callback, result}} ->
           raise CallbackError, got: result, multi_key?: true
