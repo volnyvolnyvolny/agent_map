@@ -78,7 +78,7 @@ defmodule AgentMap.Multi do
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
   def get(am, keys, fun, opts \\ [!: :avg]) do
     opts = _prep(opts, !: :avg)
-    req = %Req{action: :get, keys: keys, fun: fun, data: opts[:initial]}
+    req = %Req{act: :get, keys: keys, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
   end
@@ -309,7 +309,7 @@ defmodule AgentMap.Multi do
     end
 
     opts = _prep(opts, !: :avg)
-    req = %Req{action: :get_and_update, keys: keys, fun: fun, data: opts[:initial]}
+    req = %Req{act: :get_and_update, keys: keys, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
   end

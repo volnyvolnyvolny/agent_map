@@ -6,10 +6,10 @@ defmodule AgentMap.Multi.Req do
   import Worker, only: [broadcast: 2, collect: 2]
   import Server.State
 
-  @enforce_keys [:action]
+  @enforce_keys [:act]
 
   defstruct [
-    :action,
+    :act,
     :data,
     :from,
     :keys,
@@ -57,22 +57,22 @@ defmodule AgentMap.Multi.Req do
   #
 
   defp prepair_workers(req, pids) do
-    fun = fun_for(req.action, self())
+    fun = fun_for(req.act, self())
     req = get_and_update(%{req | from: nil}, fun)
     broadcast(pids, compress(req))
   end
 
   # on server
-  defp prepair(%{action: :get, !: :now} = req, state) do
+  defp prepair(%{act: :get, !: :now} = req, state) do
     map = take(state, req.keys)
     {state, {map, %{}}}
   end
 
-  defp prepair(%{action: :get} = req, state) do
+  defp prepair(%{act: :get} = req, state) do
     {state, separate(state, req.keys)}
   end
 
-  # action: :get_and_update
+  # act: :get_and_update
   defp prepair(req, state) do
     state = Enum.reduce(req.keys, state, &spawn_worker(&2, &1))
 
@@ -157,10 +157,10 @@ defmodule AgentMap.Multi.Req do
   ##
   ##
 
-  def handle(%{action: :drop, from: nil} = req, state) do
+  def handle(%{act: :drop, from: nil} = req, state) do
     keys = req.keys
 
-    req = %{to_req(req) | action: :delete}
+    req = %{to_req(req) | act: :delete}
 
     state =
       Enum.reduce(keys, state, fn key, state ->
@@ -176,7 +176,7 @@ defmodule AgentMap.Multi.Req do
     {:noreply, state}
   end
 
-  def handle(%{action: :drop} = req, state) do
+  def handle(%{act: :drop} = req, state) do
     req
     |> get_and_update(fn _ -> :pop end)
     |> handle(state)
@@ -207,10 +207,10 @@ defmodule AgentMap.Multi.Req do
            values = Enum.map(req.keys, &Map.get(map, &1, req.data)),
            #
            {:ok, result} <- run(req, values),
-           {:ok, {get, msgs}} <- interpret(req.action, values, result) do
+           {:ok, {get, msgs}} <- interpret(req.act, values, result) do
         #
 
-        unless req.action == :get do
+        unless req.act == :get do
           for {key, msg} <- Enum.zip(req.keys, msgs) do
             send(workers[key], msg)
           end
@@ -229,7 +229,7 @@ defmodule AgentMap.Multi.Req do
         {:error, :expired} ->
           require Logger
 
-          if req.action == :get_and_update do
+          if req.act == :get_and_update do
             broadcast(pids, :id)
           end
 

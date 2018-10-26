@@ -144,11 +144,11 @@ defmodule AgentMap.Worker do
 
   #
 
-  defp interpret(%{action: :get} = req, _arg, get) do
+  defp interpret(%{act: :get} = req, _arg, get) do
     Map.get(req, :from) |> reply(get)
   end
 
-  # action: :get_and_update
+  # act: :get_and_update
   defp interpret(req, arg, ret) do
     from = Map.get(req, :from)
 
@@ -196,7 +196,7 @@ defmodule AgentMap.Worker do
   ## HANDLERS
   ##
 
-  defp handle(%{action: :get} = req) do
+  defp handle(%{act: :get} = req) do
     box = get(:value)
 
     if get(:processes) < max_processes() do
@@ -213,11 +213,11 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp handle(%{action: :get_and_update} = req) do
+  defp handle(%{act: :get_and_update} = req) do
     run(req, get(:value))
   end
 
-  defp handle(%{action: :max_processes} = req) do
+  defp handle(%{act: :max_processes} = req) do
     put(:max_processes, req.data)
   end
 

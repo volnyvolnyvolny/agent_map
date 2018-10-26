@@ -136,7 +136,7 @@ defmodule AgentMap.Server do
   def code_change(_old, state, fun) do
     state =
       Enum.reduce(Map.keys(state), state, fn key, state ->
-        req = %Req{action: :cast, key: key, fun: fun, !: 65537}
+        req = %Req{act: :cast, key: key, fun: fun, !: 65537}
 
         case Req.handle(req, state) do
           {:reply, _, state} ->

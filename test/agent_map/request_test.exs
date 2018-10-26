@@ -8,7 +8,7 @@ defmodule AgentMapRequestTest do
   defp ms(), do: 1_000_000
 
   test "timeout" do
-    req = %Req{action: :get_and_update}
+    req = %Req{act: :get_and_update}
     assert timeout(%{req | timeout: :infinity}) == :infinity
     assert timeout(req) == 5000
     assert timeout(%{req | timeout: {:!, 1000}}) == 1000
@@ -21,16 +21,16 @@ defmodule AgentMapRequestTest do
   test "compress" do
     f = & &1
 
-    req = %Req{action: :max_processes, key: :a, data: 6}
-    assert compress(req) == %{action: :max_processes, data: 6, !: 256}
+    req = %Req{act: :max_processes, key: :a, data: 6}
+    assert compress(req) == %{act: :max_processes, data: 6, !: 256}
 
-    req = %Req{action: :get, key: :a, fun: f, data: nil}
-    assert compress(req) == %{action: :get, fun: f, !: 256}
+    req = %Req{act: :get, key: :a, fun: f, data: nil}
+    assert compress(req) == %{act: :get, fun: f, !: 256}
 
     past = now()
 
     req = %Req{
-      action: :get,
+      act: :get,
       key: :a,
       fun: f,
       data: nil,
@@ -39,7 +39,7 @@ defmodule AgentMapRequestTest do
     }
 
     assert compress(req) == %{
-             action: :get,
+             act: :get,
              fun: f,
              timeout: {:!, 1000},
              inserted_at: past,

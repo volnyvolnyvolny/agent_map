@@ -678,7 +678,7 @@ defmodule AgentMap do
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
   def sleep(am, key, t, opts \\ [!: :avg, cast: true]) do
-    req = %Req{action: :sleep, key: key, data: t}
+    req = %Req{act: :sleep, key: key, data: t}
     _call(am, req, opts, !: :avg, cast: true)
     am
   end
@@ -742,7 +742,7 @@ defmodule AgentMap do
   @spec get(am, key, (value -> get), keyword | timeout) :: get when get: var
   def get(am, key, fun, opts \\ [!: :avg, timeout: {:!, 5000}]) do
     opts = _prep(opts, !: :avg, timeout: {:!, 5000})
-    req = %Req{action: :get, key: key, fun: fun, data: opts[:initial]}
+    req = %Req{act: :get, key: key, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
   end
@@ -852,7 +852,7 @@ defmodule AgentMap do
   """
   @spec fetch(am, key, keyword | timeout) :: {:ok, value} | :error
   def fetch(am, key, opts \\ [!: :now]) do
-    req = %Req{action: :fetch, key: key}
+    req = %Req{act: :fetch, key: key}
     _call(am, req, opts, !: :now)
   end
 
@@ -965,7 +965,7 @@ defmodule AgentMap do
         when get: var
   def get_and_update(am, key, fun, opts \\ [!: :avg]) do
     opts = _prep(opts, !: :avg)
-    req = %Req{action: :get_and_update, key: key, fun: fun, data: opts[:initial]}
+    req = %Req{act: :get_and_update, key: key, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
   end
@@ -1185,7 +1185,7 @@ defmodule AgentMap do
   def max_processes(am, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    _call(am, %Req{action: :def_max_processes, data: value})
+    _call(am, %Req{act: :def_max_processes, data: value})
     am
   end
 
@@ -1237,7 +1237,7 @@ defmodule AgentMap do
   def max_processes(am, key, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    _call(am, %Req{action: :max_processes, key: key, data: value})
+    _call(am, %Req{act: :max_processes, key: key, data: value})
     am
   end
 
@@ -1254,12 +1254,12 @@ defmodule AgentMap do
   @spec info(am, key, :processes) :: {:processes, pos_integer}
   @spec info(am, key, :max_processes) :: {:max_processes, pos_integer | :infinity}
   def info(am, key, :processes) do
-    req = %Req{action: :processes, key: key}
+    req = %Req{act: :processes, key: key}
     {:processes, _call(am, req)}
   end
 
   def info(am, key, :max_processes) do
-    req = %Req{action: :max_processes, key: key}
+    req = %Req{act: :max_processes, key: key}
     {:max_processes, _call(am, req)}
   end
 
@@ -1376,7 +1376,7 @@ defmodule AgentMap do
       [:a, :b, :c]
   """
   @spec keys(am) :: [key]
-  def keys(am), do: _call(am, %Req{action: :keys, !: :now})
+  def keys(am), do: _call(am, %Req{act: :keys, !: :now})
 
   @doc """
   Returns *immediately* all the current values of an `AgentMap`.
@@ -1447,7 +1447,7 @@ defmodule AgentMap do
   """
   @spec put(am, key, value, keyword) :: am
   def put(am, key, value, opts \\ [!: :max, cast: true]) do
-    req = %Req{action: :put, key: key, data: value}
+    req = %Req{act: :put, key: key, data: value}
     _call(am, req, opts, !: :max, cast: true)
     am
   end
@@ -1484,7 +1484,7 @@ defmodule AgentMap do
   """
   @spec put_new(am, key, value, keyword) :: am
   def put_new(am, key, value, opts \\ [!: :max, cast: true]) do
-    req = %Req{action: :put_new, key: key, data: value}
+    req = %Req{act: :put_new, key: key, data: value}
     _call(am, req, opts, !: :max, cast: true)
     am
   end
@@ -1530,7 +1530,7 @@ defmodule AgentMap do
   """
   @spec put_new_lazy(am, key, (() -> value()), keyword) :: am
   def put_new_lazy(am, key, fun, opts \\ [!: :max, cast: true]) do
-    req = %Req{action: :put_new, key: key, fun: fun}
+    req = %Req{act: :put_new, key: key, fun: fun}
     _call(am, req, opts, !: :max, cast: true)
     am
   end
@@ -1619,7 +1619,7 @@ defmodule AgentMap do
   """
   @spec delete(am, key, keyword) :: am
   def delete(am, key, opts \\ [!: :max, cast: true]) do
-    req = %Req{action: :delete, key: key}
+    req = %Req{act: :delete, key: key}
     _call(am, req, opts, !: :max, cast: true)
     am
   end
@@ -1661,7 +1661,7 @@ defmodule AgentMap do
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [!: :max, cast: true]) do
-    req = %Multi.Req{action: :drop, keys: keys}
+    req = %Multi.Req{act: :drop, keys: keys}
     _call(am, req, opts, !: :max, cast: true)
     am
   end
@@ -1698,7 +1698,7 @@ defmodule AgentMap do
   """
   @spec to_map(am, keyword | timeout) :: %{required(key) => value}
   def to_map(am, opts \\ [!: :now]) do
-    req = %Req{action: :to_map}
+    req = %Req{act: :to_map}
     _call(am, req, opts, !: :now)
   end
 
@@ -1802,7 +1802,7 @@ defmodule AgentMap do
   def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true, safe: false]) do
     defs = [step: 1, initial: 0, !: :avg, cast: true, safe: false]
     opts = _prep(opts, defs)
-    req = %Req{action: :inc, key: key, data: opts}
+    req = %Req{act: :inc, key: key, data: opts}
 
     case _call(am, req, opts) do
       {:error, e} ->

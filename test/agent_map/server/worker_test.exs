@@ -21,7 +21,7 @@ defmodule AgenxtMapWorkerTest do
       {value, {key, box}}
     end
 
-    msg = %{action: :get, from: {self(), :_}, fun: fun}
+    msg = %{act: :get, from: {self(), :_}, fun: fun}
 
     b = box(42)
     Worker.spawn_get_task(msg, {:key, b})
