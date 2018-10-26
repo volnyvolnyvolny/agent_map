@@ -83,6 +83,7 @@ Use collect.
    CLOSED: [2018-10-02 Вт 22:08]
  
 * init
+ 
   2) test init (AgentMapServerTest)
      test/agent_map/server_test.exs:7
      Assertion with == failed
@@ -104,8 +105,34 @@ Use collect.
      
      code: assert_receive {:_, {42, {:key, ^b}}}
      stacktrace:
-       test/agent_map/server/worker_test.exs:28: (test)
-.
+       test/agent_map/server/worker_test.exs:28: (test).
+
+  1) test Multi.get_and_update (AgentMapMultiTest)
+     test/agent_map/multi_test.exs:42
+     Assertion with == failed
+     code:  assert Multi.get_and_update(am, [:a, :b, :c, :d], &({&1}), !: :max) == [24, 24, 4, nil]
+     left:  [42, 1, 4, nil]
+     right: [24, 24, 4, nil]
+     stacktrace:
+       test/agent_map/multi_test.exs:61: (test)
+
+  1) doctest AgentMap.Multi.cast/4 (1) (AgentMapMultiTest)
+     test/agent_map/multi_test.exs:7
+     ** (EXIT from #PID<0.234.0>) an exception was raised:
+         ** (FunctionClauseError) no function clause matching in Access.get/3
+             (elixir) lib/access.ex:316: Access.get(:id, :!, nil)
+             (agent_map) lib/agent_map/server/worker.ex:298: AgentMap.Worker.place/2
+             (agent_map) lib/agent_map/server/worker.ex:283: AgentMap.Worker.flush/1
+             (agent_map) lib/agent_map/server/worker.ex:272: AgentMap.Worker.loop/1
+
+  1) test Multi.get_and_update (AgentMapMultiTest)
+     test/agent_map/multi_test.exs:42
+     Assertion with == failed
+     code:  assert Multi.get_and_update(am, [:a, :b, :c, :d], &({&1}), !: :max) == [24, 24, 4, nil]
+     left:  [42, 1, 4, nil]
+     right: [24, 24, 4, nil]
+     stacktrace:
+       test/agent_map/multi_test.exs:61: (test)
 
   2) doctest module AgentMap (3) (AgentMapTest)
      test/agent_map_test.exs:6
@@ -116,3 +143,20 @@ Use collect.
        (for doctest at) lib/agent_map.ex:199: (test)
 
 
+  2) doctest AgentMap.safe_apply/3 (2) (AgentMapTest)
+     test/agent_map_test.exs:6
+     Doctest failed
+     code:  fun = fn -> :timer.sleep(10); 42 end
+             safe_apply(fun, [], 20) === {:ok, 42}
+     left:  {:error, :timeout}
+     right: {:ok, 42}
+     stacktrace:
+       lib/agent_map.ex:439: AgentMap (module)
+
+  1) doctest AgentMap.max_processes/3 (33) (AgentMapTest)
+     test/agent_map_test.exs:5
+     ** (exit) exited in: GenServer.call(#PID<0.539.0>, %AgentMap.Req{!: 0, action: :get, data: nil, from: nil, fun: #Function<2.26753303/1 in AgentMap.get/2>, inserted_at: nil, key: :key, timeout: 5000}, 5000)
+         ** (EXIT) time out
+     stacktrace:
+       (elixir) lib/gen_server.ex:924: GenServer.call/3
+       (for doctest at) lib/agent_map.ex:1214: (test)

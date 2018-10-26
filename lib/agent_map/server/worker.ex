@@ -4,7 +4,7 @@ defmodule AgentMap.Worker do
   alias AgentMap.{Common, CallbackError, Server.State}
 
   import Process, only: [get: 1, put: 2, delete: 1]
-  import Common, only: [run: 3, reply: 2, now: 0, left: 2]
+  import Common, only: [reply: 2, now: 0, left: 2]
   import State, only: [un: 1, box: 1]
 
   @moduledoc false
@@ -110,6 +110,8 @@ defmodule AgentMap.Worker do
   defp timeout(%{timeout: {_, t}, inserted_at: i}), do: left(t, since: i)
   defp timeout(%{}), do: :infinity
 
+  #
+
   defp run(req, box) do
     t_left = timeout(req)
 
@@ -120,16 +122,26 @@ defmodule AgentMap.Worker do
         Map.get(req, :data)
       end
 
-    res = run(req.fun, [arg], t_left)
-    interpret(req, arg, res)
+    if t_left <= 0 do
+      Logger.error("""
+      Call is expired and will not be executed.
+      Request: #{inspect(req)}.
+      Key: #{inspect(get(:key))}.
+      Value: #{inspect(arg)}.
+      """)
+    else
+      interpret(req, arg, apply(req.fun, [arg]))
+    end
   end
 
-  defp interpret(%{action: :get} = req, _arg, {:ok, get}) do
+  #
+
+  defp interpret(%{action: :get} = req, _arg, get) do
     Map.get(req, :from) |> reply(get)
   end
 
   # action: :get_and_update
-  defp interpret(req, arg, {:ok, ret}) do
+  defp interpret(req, arg, ret) do
     from = Map.get(req, :from)
 
     case ret do
@@ -152,14 +164,7 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp interpret(req, arg, {:error, :expired}) do
-    Logger.error("""
-    Call is expired and will not be executed.
-    Request: #{inspect(req)}.
-    Key: #{inspect(get(:key))}.
-    Value: #{inspect(arg)}.
-    """)
-  end
+  #
 
   def spawn_get_task(req, {key, box}, opts \\ [server: self()]) do
     Task.start_link(fn ->

@@ -3,7 +3,7 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Worker, Req, Server, Common, Multi}
+  alias AgentMap.{Worker, Server, Common, Multi}
 
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Enum, only: [filter: 2]
@@ -314,7 +314,7 @@ defmodule AgentMap.Req do
       {_box, p_info} ->
         pack = {nil, p_info}
         state = put(state, req.key, pack)
-        {:reply, :done, state}
+        {:reply, :_done, state}
 
       _worker ->
         req

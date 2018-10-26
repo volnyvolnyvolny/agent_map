@@ -75,7 +75,7 @@ defmodule AgentMap.Server do
   end
 
   @impl true
-  def handle_call(%_{timeout: {_, _t}, inserted_at: nil} = req, :_from, state) do
+  def handle_call(%_{timeout: {:!, _t}, inserted_at: nil} = req, :_from, state) do
     handle_call(%{req | inserted_at: now()}, :_from, state)
   end
 
@@ -155,7 +155,7 @@ defmodule AgentMap.Server do
   def code_change(_old, state, fun) do
     state =
       Enum.reduce(Map.keys(state), state, fn key, state ->
-        req = %Req{action: :cast, key: key, fun: fun}
+        req = %Req{action: :cast, key: key, fun: fun, !: 65537}
 
         case Req.handle(req, state) do
           {:reply, _, state} ->

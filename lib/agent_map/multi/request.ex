@@ -28,9 +28,18 @@ defmodule AgentMap.Multi.Req do
   defdelegate get_and_update(req, fun), to: Req
 
   #
-  defp state({:reply, _, state}), do: state
+  defp run(req, values) do
+    if timeout(req) > 0 do
+      {:ok, apply(req.fun, [values])}
+    else
+      {:error, :expired}
+    end
+  end
 
-  defp state({:noreply, state}), do: state
+  #
+  defp to_req(m_req) do
+    struct(Req, Map.from_struct(m_req))
+  end
 
   #
   defp fun_for(:get_and_update, me) do
@@ -152,57 +161,29 @@ defmodule AgentMap.Multi.Req do
   def handle(%{action: :drop, from: nil} = req, state) do
     keys = req.keys
 
-    req =
-      Req
-      |> struct(Map.from_struct(req))
-      |> Map.put(:action, :delete)
+    req = %{to_req(req) | action: :delete}
 
     state =
       Enum.reduce(keys, state, fn key, state ->
-        %{req | key: key}
-        |> Req.handle(state)
-        |> state()
+        case Req.handle(%{req | key: key}, state) do
+          {:noreply, state} ->
+            state
+
+          {:reply, :_done, state} ->
+            state
+        end
       end)
 
-    {:reply, :_ok, state}
+    {:noreply, state}
   end
 
   def handle(%{action: :drop} = req, state) do
-    {_map, workers} = separate(state, req.keys)
-
-    keys = req.keys -- Map.keys(workers)
-
-    if workers == %{} do
-      handle(%{req | from: nil, keys: keys}, state)
-    else
-      pids = Map.values(workers)
-
-      server = self()
-      ref = make_ref()
-
-      state =
-        %{req | from: nil, keys: keys}
-        |> handle(state)
-        |> state()
-
-      Task.start_link(fn ->
-        req =
-          %{req | from: self()}
-          |> get_and_update(fn _ -> :pop end)
-          |> compress()
-
-        Worker.broadcast(pids, req)
-        send(server, {ref, :go!})
-
-        Worker.collect(pids, timeout(req))
-      end)
-
-      receive do
-        {^ref, :go!} ->
-          {:noreply, state}
-      end
-    end
+    req
+    |> get_and_update(fn _ -> :pop end)
+    |> handle(state)
   end
+
+  #
 
   def handle(req, state) do
     {state, {map, workers}} = prepair(req, state)
@@ -224,9 +205,9 @@ defmodule AgentMap.Multi.Req do
            Process.put(:map, map),
            Process.put(:keys, req.keys),
            #
-           values = Enum.map(req.keys, &map[&1]),
+           values = Enum.map(req.keys, &Map.get(map, &1, req.data)),
            #
-           {:ok, result} <- run(req.fun, [values], timeout(req)),
+           {:ok, result} <- run(req, values),
            {:ok, {get, msgs}} <- interpret(req.action, values, result) do
         #
 
@@ -244,7 +225,7 @@ defmodule AgentMap.Multi.Req do
         {:error, {:update, values}} ->
           raise CallbackError, len: length(values)
 
-        err ->
+        {:error, :expired} ->
           require Logger
 
           if req.action == :get_and_update do
@@ -254,15 +235,7 @@ defmodule AgentMap.Multi.Req do
           ks = inspect(req.keys)
           r = inspect(req)
 
-          case err do
-            {:error, :expired} ->
-              Logger.error("Takes too long to collect values for the keys #{ks}. Req: #{r}.")
-
-            {:error, :toolong} ->
-              Logger.error(
-                "Call (keys: #{ks}) takes too long to execute. It will be terminated. Req: #{r}."
-              )
-          end
+          Logger.error("Takes too long to collect values for the keys #{ks}. Req: #{r}.")
       end
     end)
 

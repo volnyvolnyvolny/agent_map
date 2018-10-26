@@ -239,7 +239,7 @@ defmodule AgentMap do
   although, `GenServer` exit signal will be send.
 
   If timeout occurs while callback is executed — the call will not be
-  interrupted. Use `safe_apply/3` to [bypass](#safe_apply/3-examples).
+  interrupted. Use `safe_apply/3` to bypass.
 
   ## Name registration
 
@@ -316,7 +316,8 @@ defmodule AgentMap do
     end
   end
 
-  defp call(am, req, opts \\ []) do
+  @doc false
+  def _call(am, req, opts) do
     req = struct(req, opts)
 
     if opts[:cast] do
@@ -329,7 +330,7 @@ defmodule AgentMap do
 
   @doc false
   def _call(am, req, opts, defs) do
-    call(am, req, _prep(opts, defs))
+    _call(am, req, _prep(opts, defs))
   end
 
   #
@@ -432,48 +433,13 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> fun = fn -> :timer.sleep(:infinity) end
+      iex> fun = fn -> sleep(:infinity) end
       iex> safe_apply(fun, [], 20)
       {:error, :timeout}
 
-      iex> fun = fn -> :timer.sleep(10); 42 end
+      iex> fun = fn -> sleep(10); 42 end
       iex> safe_apply(fun, [], 20)
       {:ok, 42}
-
-  Calls that can run for a long time after timeout can be stopped:
-
-      iex> now =
-      ...>   fn -> System.system_time(:milliseconds) end
-      ...>
-      iex> safe_call =
-      ...>   fn am, key, fun, t ->
-      ...>     past = now.()
-      ...>
-      ...>     get_and_update(am, key, fn arg ->
-      ...>       t = t - (now.() - past) # ~10 ms
-      ...>
-      ...>       case safe_apply(fun, [arg], t) do
-      ...>         {:error, _r} ->
-      ...>           :id
-      ...>
-      ...>         {:ok, res} ->
-      ...>           res
-      ...>       end
-      ...>     end, timeout: {:!, t})
-      ...>   end
-      ...>
-      iex> am = AgentMap.new(a: 42)
-      iex> am
-      ...> |> sleep(:a, 10)
-      ...> |> safe_call.(:a, fn 1 -> :timer.sleep(:infinity); :id end, 20)
-      1
-      iex> safe_call.(am, :a, fn 1 -> {2, 2} end, 20)
-      2
-      iex> safe_call.(am, :a, fn 2 -> :pop end, 20)
-      2
-
-  This wraps call in a `Task`, which will have an around of `10` milliseconds
-  before *shutdown*.
   """
   def safe_apply(fun, args, timeout) do
     past = now()
@@ -667,7 +633,7 @@ defmodule AgentMap do
 
       iex> err =
       ...>   AgentMap.start([a: 42,
-      ...>                   b: fn -> :timer.sleep(:infinity) end,
+      ...>                   b: fn -> sleep(:infinity) end,
       ...>                   c: fn -> raise "oops" end],
       ...>                   timeout: 10)
       ...>
@@ -732,7 +698,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — to set the initial value;
+    * `:initial` (`term`, `nil`) — to set initial value;
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
@@ -742,8 +708,6 @@ defmodule AgentMap do
       This call is not counted in a number of processes allowed to run in
       parallel (see `max_processes/3`):
 
-          iex> import :timer
-          ...>
           iex> am = AgentMap.new()
           iex> info(am, :k)[:max_processes]
           5
@@ -756,10 +720,12 @@ defmodule AgentMap do
           iex> info(am, :k)[:processes]
           100
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after
-      [timeout](#module-timeout);
+    * `:timeout` (`{:!, pos_integer}`, `{!: 5000}`) — to set
+      [timeout](#module-timeout). Callback will not be executed after timeout
+      expires;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `timeout: timeout` — to set [timeout](#module-timeout). Callback *will be*
+      executed even after timeout expires.
 
   ## Examples
 
@@ -774,11 +740,11 @@ defmodule AgentMap do
       1
   """
   @spec get(am, key, (value -> get), keyword | timeout) :: get when get: var
-  def get(am, key, fun, opts \\ [!: :avg]) do
-    opts = _prep(opts, !: :avg)
+  def get(am, key, fun, opts \\ [!: :avg, timeout: {:!, 5000}]) do
+    opts = _prep(opts, !: :avg, timeout: {:!, 5000})
     req = %Req{action: :get, key: key, fun: fun, data: opts[:initial]}
 
-    call(am, req, opts)
+    _call(am, req, opts)
   end
 
   @doc """
@@ -828,10 +794,12 @@ defmodule AgentMap do
     * `!: :now` — to *immediately* execute this call in a separate `Task`
       (passing a current value);
 
-    * `timeout: {:!, pos_integer}` — to not execute this call after
-      [timeout](#module-timeout);
+    * `:timeout` (`{:!, pos_integer}`, `{!: 5000}`) — to set
+      [timeout](#module-timeout). Callback will not be executed after timeout
+      expires;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `timeout: timeout` — to set [timeout](#module-timeout). Callback *will be*
+      executed even after timeout expires.
 
   ## Examples
 
@@ -868,8 +836,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import :timer
-      ...>
       iex> am = AgentMap.new(a: 1)
       iex> fetch(am, :a)
       {:ok, 1}
@@ -937,8 +903,8 @@ defmodule AgentMap do
   @doc """
   Gets the value for `key` and updates it, all in one pass.
 
-  The function `fun` is sent to an `AgentMap` that invokes it, passing the value
-  for `key` (or `nil`). A `fun` can return:
+  The `fun` is sent to an `AgentMap` that invokes it, passing the value for
+  `key` (or `nil`). A `fun` can return:
 
     * a two element tuple: `{get, new value}` — to return "get" value and set
       new value;
@@ -1001,7 +967,7 @@ defmodule AgentMap do
     opts = _prep(opts, !: :avg)
     req = %Req{action: :get_and_update, key: key, fun: fun, data: opts[:initial]}
 
-    call(am, req, opts)
+    _call(am, req, opts)
   end
 
   ##
@@ -1219,8 +1185,7 @@ defmodule AgentMap do
   def max_processes(am, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    req = %Req{action: :def_max_processes, data: value}
-    call(am, req)
+    _call(am, %Req{action: :def_max_processes, data: value})
     am
   end
 
@@ -1236,7 +1201,7 @@ defmodule AgentMap do
 
       iex> am = AgentMap.new(k: 42)
       iex> task = fn ->
-      ...>   get(am, :k, fn _ -> :timer.sleep(10) end)
+      ...>   get(am, :k, fn _ -> sleep(10) end)
       ...> end
       iex> for _ <- 1..4, do: spawn(task) # +4
       iex> task.()                        # +1
@@ -1265,15 +1230,14 @@ defmodule AgentMap do
       ...> end
       ...> |> Enum.max()
       42
-      iex> get(am, :key)
+      iex> get(am, :key, & &1)
       nil
   """
   @spec max_processes(am, key, pos_integer | :infinity) :: am
   def max_processes(am, key, value)
       when (is_integer(value) and value > 0) or value == :infinity do
     #
-    req = %Req{action: :max_processes, key: key, data: value}
-    call(am, req)
+    _call(am, %Req{action: :max_processes, key: key, data: value})
     am
   end
 
@@ -1304,8 +1268,6 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> import :timer
-      ...>
       iex> am = AgentMap.new()
       ...>
       iex> info(am, :key)
@@ -1338,8 +1300,6 @@ defmodule AgentMap do
 
   Keep in mind that:
 
-      iex> import :timer
-      ...>
       iex> am = AgentMap.new()
       iex> for _ <- 1..100 do
       ...>   Task.async(fn ->
@@ -1432,14 +1392,14 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 10)
-      ...> |> put(:a, 0)
+      ...> |> sleep(:a, 20)
+      ...> |> put(:a, 0, !: :avg)
       ...> |> values()
       [1, 2, 3]
 
       iex> %{a: 1, b: 2}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 10)
+      ...> |> sleep(:a, 20)
       ...> |> put(:a, 0)
       ...> |> values(!: :min)
       [0, 2]
@@ -1761,9 +1721,9 @@ defmodule AgentMap do
       ...>   AgentMap.new(a: 1, b: 2, c: 3)
       iex> am
       ...> |> sleep(:a, 20)
-      ...> |> put(:a, 42)
+      ...> |> put(:a, 42, !: :avg)
       ...> |> sleep(:b, 20)
-      ...> |> put(:b, 42)
+      ...> |> put(:b, 42, !: :avg)
       ...> |> take([:a, :b, :d], !: :now)
       %{a: 1, b: 2}
       iex> take(am, [:a, :b])
@@ -1844,7 +1804,7 @@ defmodule AgentMap do
     opts = _prep(opts, defs)
     req = %Req{action: :inc, key: key, data: opts}
 
-    case call(am, req, opts) do
+    case _call(am, req, opts) do
       {:error, e} ->
         raise e
 
@@ -1895,7 +1855,7 @@ defmodule AgentMap do
   """
   @spec cast(am, key, (value -> value), keyword) :: am
   def cast(am, key, fun, opts \\ [!: :avg]) do
-    update(am, key, fun, _prep(opts, cast: true))
+    update(am, key, fun, _prep(opts, !: :avg, cast: true))
   end
 
   ##
