@@ -58,37 +58,13 @@ defmodule AgentMap.Worker do
   defp inc(key), do: put(key, get(key) + 1)
 
   ##
-  ##
-  ##
-
-  def broadcast(pids, msg) do
-    for worker <- pids, do: send(worker, msg)
-  end
-
-  #
-
-  def collect(pids), do: collect(%{}, pids)
-
-  def collect(values, []), do: values
-
-  def collect(values, pids) do
-    receive do
-      {worker, value} ->
-        pids = List.delete(pids, worker)
-
-        values
-        |> Map.put(worker, value)
-        |> collect(pids)
-    end
-  end
-
-  ##
   ## CALLBACKS
   ##
 
   def share_value(to: me) do
+    key = Process.get(:key)
     box = Process.get(:value)
-    reply(me, {self(), box}) && :id
+    reply(me, {key, box})
   end
 
   def accept_value() do

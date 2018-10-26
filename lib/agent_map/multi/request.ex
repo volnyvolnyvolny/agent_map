@@ -3,7 +3,6 @@ defmodule AgentMap.Multi.Req do
 
   alias AgentMap.{CallbackError, Server, Worker, Req}
 
-  import Worker, only: [broadcast: 2, collect: 1]
   import Server.State
 
   @enforce_keys [:act]
@@ -28,35 +27,41 @@ defmodule AgentMap.Multi.Req do
   end
 
   #
-  defp fun_for(:get_and_update, me) do
-    fn _ ->
-      Worker.share_value(to: me)
-      Worker.accept_value()
+
+  def collect(keys), do: collect(%{}, keys)
+
+  def collect(values, []), do: values
+
+  def collect(values, keys) do
+    receive do
+      {key, {:value, v}} ->
+        keys = List.delete(keys, key)
+        values
+        |> Map.put(key, v)
+        |> collect(keys)
+
+      {key, nil} ->
+        keys = List.delete(keys, key)
+        collect(values, keys)
     end
   end
-
-  defp fun_for(:get, me) do
-    fn _ ->
-      Worker.share_value(to: me)
-    end
-  end
-
-  # defp fun_for(act, me) do
-  #   fn _ ->
-  #     Worker.share_value(to: me)
-  #     if act == :get_and_update do
-  #       Worker.accept_value()
-  #     end
-  #   end
-  # end
 
   #
 
   defp prepair_workers(req, pids) do
-    fun = fun_for(req.act, self())
-    req = get_and_update(%{req | from: nil}, fun)
-#    req = %{req | from: nil, fun: fun}
-    broadcast(pids, compress(req))
+    me = self()
+
+    fun = fn _ ->
+      Worker.share_value(to: me)
+
+      if req.act == :get_and_update do
+        Worker.accept_value()
+      end
+    end
+
+    req = %{req | from: nil, fun: fun}
+
+    for w <- pids, do: send(w, compress(req))
   end
 
   # on server
@@ -142,14 +147,6 @@ defmodule AgentMap.Multi.Req do
     end
   end
 
-  #
-
-  defp to_map(values) do
-    for {pid, {:value, v}} <- values, into: %{} do
-      {Worker.dict(pid)[:key], v}
-    end
-  end
-
   ##
   ##
   ##
@@ -195,19 +192,20 @@ defmodule AgentMap.Multi.Req do
       #
       prepair_workers(req, pids)
       #
-      values = collect(pids)
-      map = Map.merge(map, to_map(values))
+      keys = req.keys
+      values = collect(Map.keys(workers))
+      map = Map.merge(map, values)
       #
       Process.put(:map, map)
-      Process.put(:keys, req.keys)
+      Process.put(:keys, keys)
       #
-      values = Enum.map(req.keys, &Map.get(map, &1, req.data))
+      values = Enum.map(keys, &Map.get(map, &1, req.data))
       result = apply(req.fun, [values])
 
       case interpret(req.act, values, result) do
         {:ok, {get, msgs}} ->
           unless req.act == :get do
-            for {key, msg} <- Enum.zip(req.keys, msgs) do
+            for {key, msg} <- Enum.zip(keys, msgs) do
               send(workers[key], msg)
             end
           end

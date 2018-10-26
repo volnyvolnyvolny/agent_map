@@ -1,24 +1,24 @@
 defimpl Enumerable, for: AgentMap do
   import AgentMap
 
-  def count(mag) do
-    {:ok, length(AgentMap.keys(mag))}
+  def count(am) do
+    {:ok, length(keys(am))}
   end
 
-  def member?(mag, {key, value}) do
-    case fetch(mag, key) do
+  def member?(am, {key, value}) do
+    case fetch(am, key) do
       {:ok, ^value} -> {:ok, true}
       _ -> {:ok, false}
     end
   end
 
-  def slice(mag) do
-    map = take(mag, keys(mag))
+  def slice(am) do
+    map = take(am, keys(am))
     {:ok, map_size(map), &Enumerable.List.slice(:maps.to_list(map), &1, &2)}
   end
 
-  def reduce(mag, acc, fun) do
-    map = take(mag, keys(mag))
+  def reduce(am, acc, fun) do
+    map = take(am, keys(am))
     reduce_list(:maps.to_list(map), acc, fun)
   end
 
