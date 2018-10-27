@@ -2,10 +2,11 @@ defmodule AgentMap.Server do
   @moduledoc false
   require Logger
 
-  alias AgentMap.{Req, Worker, Server.State}
+  alias AgentMap.{Req, Worker, Server.State, Time}
 
   import Worker, only: [dict: 1, info: 2]
   import State, only: [put: 3, get: 2]
+  import Time, only: [now: 0, left: 2]
 
   use GenServer
 
@@ -15,6 +16,8 @@ defmodule AgentMap.Server do
 
   @impl true
   def init(args) do
+    past = now()
+
     timeout = args[:timeout]
 
     funs = args[:funs]
@@ -27,7 +30,7 @@ defmodule AgentMap.Server do
           AgentMap.safe_apply(fun, [])
         end)
       end)
-      |> Task.yield_many(timeout)
+      |> Task.yield_many(left(timeout, since: past))
       |> Enum.map(fn {task, res} ->
         res || Task.shutdown(task, :brutal_kill)
       end)

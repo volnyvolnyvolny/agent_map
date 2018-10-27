@@ -84,15 +84,6 @@ Use collect.
  
 * init
  
-  2) test init (AgentMapServerTest)
-     test/agent_map/server_test.exs:7
-     Assertion with == failed
-     code:  assert Server.init(args) == {:stop, [a: :badfun, b: :timeout, c: :timeout]}
-     left:  {:stop, [a: :badfun, c: :timeout]}
-     right: {:stop, [a: :badfun, b: :timeout, c: :timeout]}
-     stacktrace:
-       test/agent_map/server_test.exs:19: (test)
-
   1) test Multi.get_and_update (AgentMapMultiTest)
      test/agent_map/multi_test.exs:42
      Assertion with == failed

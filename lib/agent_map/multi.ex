@@ -37,14 +37,17 @@ defmodule AgentMap.Multi do
   values associated with the `keys` (`nil`s for missing keys). The result of the
   invocation is returned from this function.
 
+  The default priority for this call is `:now`, which means that the current
+  values will be used as an argument for `fun`. If different priority is given,
+  call will wait before taking the corresponding values, until requests with a
+  higher priorities will be fulfilled for every key from `keys`.
+
   ## Options
 
     * `:initial` (`term`, `nil`) — to set the initial value for missing keys;
 
-    * `:!` (`priority`, :avg) — to set
+    * `:!` (`priority`, `:now`) — to set
       [priority](AgentMap.html#module-priority);
-
-    * `!: :now` — to use current values for this call.
 
     * `:timeout` (`timeout`, `5000`).
 
@@ -63,13 +66,13 @@ defmodule AgentMap.Multi do
 
       iex> AgentMap.new()
       ...> |> update([:Alice, :Bob], fn _ -> [43, 42] end)
-      ...> |> get([:Alice, :Bob], fn [a, b] -> a - b end)
+      ...> |> get([:Alice, :Bob], fn [a, b] -> a - b end, !: :avg)
       1
 
       iex> AgentMap.new(a: 1, b: 1)
       ...> |> AgentMap.sleep(:a, 20)
       ...> |> AgentMap.put(:a, 2)
-      ...> |> get([:a, :b], & &1, !: :now)
+      ...> |> get([:a, :b], & &1)
       [1, 1]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
@@ -104,7 +107,7 @@ defmodule AgentMap.Multi do
       [0, 42]
   """
   @spec get(am, [key]) :: [value | nil]
-  def get(am, keys), do: get(am, keys, & &1, !: :min, timeout: 4999)
+  def get(am, keys), do: get(am, keys, & &1, !: :min)
 
   @doc """
   Gets the values for `keys` and updates it, all in one pass.
@@ -399,8 +402,7 @@ defmodule AgentMap.Multi do
       ...> |> AgentMap.sleep(:a, 20)
       ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)                      # 2
       ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, !: :max, initial: 1) # 1
-      ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             # 3
-      ...> |> IO.inspect(label: :xi)
+      # ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             # 3
       ...> |> get([:a, :b])
       [4, 4]
   """

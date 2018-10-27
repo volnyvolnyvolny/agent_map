@@ -188,12 +188,13 @@ defmodule AgentMap.Multi.Req do
     ref = make_ref()
 
     Task.start_link(fn ->
-      send(server, {ref, :go!})
-      #
       prepair_workers(req, pids)
       #
+      send(server, {ref, :go!})
+      #
       keys = req.keys
-      values = collect(Map.keys(workers))
+      values = collect(IO.inspect(Map.keys(workers)))
+      IO.inspect(:collected, label: req.!)
       map = Map.merge(map, values)
       #
       Process.put(:map, map)

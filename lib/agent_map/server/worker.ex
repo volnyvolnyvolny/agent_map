@@ -64,7 +64,7 @@ defmodule AgentMap.Worker do
   def share_value(to: me) do
     key = Process.get(:key)
     box = Process.get(:value)
-    reply(me, {key, box})
+    reply(me, {key, box} |> IO.inspect(label: inspect(me)))
   end
 
   def accept_value() do
@@ -85,6 +85,7 @@ defmodule AgentMap.Worker do
   ##
 
   defp run(req, box) do
+    IO.inspect(req, label: :run)
     arg =
       if box do
         un(box)
