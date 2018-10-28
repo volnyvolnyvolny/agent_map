@@ -193,8 +193,7 @@ defmodule AgentMap.Multi.Req do
       send(server, {ref, :go!})
       #
       keys = req.keys
-      values = collect(IO.inspect(Map.keys(workers)))
-      IO.inspect(:collected, label: req.!)
+      values = collect(Map.keys(workers))
       map = Map.merge(map, values)
       #
       Process.put(:map, map)

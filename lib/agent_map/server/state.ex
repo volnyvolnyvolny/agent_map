@@ -135,8 +135,8 @@ defmodule AgentMap.Server.State do
         {nil, _} ->
           {map, workers}
 
-        w ->
-          {map, Map.put(workers, key, w)}
+        pid ->
+          {map, Map.put(workers, key, pid)}
       end
     end)
   end

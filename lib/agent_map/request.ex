@@ -311,4 +311,22 @@ defmodule AgentMap.Req do
     end)
     |> handle(state)
   end
+
+  def handle(%{act: :get_prop, key: :processes}, state) do
+    keys = Map.keys(state)
+    {_map, workers} = separate(state, keys)
+
+    ps = for {_, pid} <- workers, do: Worker.processes(pid)
+
+    {:reply, Enum.sum(ps) + 1, state}
+  end
+
+  def handle(%{act: :get_prop} = req, state) do
+    {:reply, Process.get(req.key, req.data), state}
+  end
+
+  def handle(%{act: :set_prop} = req, state) do
+    Process.put(req.key, req.data)
+    {:reply, :_done, state}
+  end
 end

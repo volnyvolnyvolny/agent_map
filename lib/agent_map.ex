@@ -4,9 +4,8 @@ defmodule AgentMap do
   @enforce_keys [:pid]
   defstruct @enforce_keys
 
-  alias AgentMap.{Req, Multi, Worker, Time}
+  alias AgentMap.{Req, Multi, Time}
 
-  import Worker, only: [dict: 1]
   import Time, only: [now: 0, to_ms: 1]
 
   @moduledoc """
@@ -546,7 +545,7 @@ defmodule AgentMap do
       ...>   AgentMap.start_link(k: fn -> 42 end)
       iex> get(pid, :k)
       42
-      iex> max_processes(pid)
+      iex> get_prop(pid, :max_processes)
       5
 
   — starts server with a predefined single key `:k`.
@@ -563,8 +562,9 @@ defmodule AgentMap do
   #
 
       iex> AgentMap.start([], name: Account)
-      iex> put(Account, :a, 42)
-      iex> get(Account, :a)
+      iex> Account
+      ...> |> put(:a, 42)
+      ...> |> get(:a)
       42
   """
   @spec start_link([{key, (() -> any)}], GenServer.options() | timeout) :: on_start
@@ -1077,56 +1077,6 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns the default `:max_processes` value.
-
-  See `max_processes/3`.
-
-  ## Examples
-
-      iex> am = AgentMap.new()
-      iex> max_processes(am)
-      5
-      iex> am
-      ...> |> max_processes(:infinity)
-      ...> |> max_processes()
-      :infinity
-      #
-      iex> info(am, :key)[:max_processes]
-      :infinity
-      #
-      iex> max_processes(am, :key, 3)
-      iex> info(am, :key)[:max_processes]
-      3
-  """
-  @spec max_processes(am) :: pos_integer | :infinity
-  def max_processes(am) do
-    dict(pid(am))[:max_processes]
-  end
-
-  @doc """
-  Sets the default `:max_processes` value.
-
-  See `max_processes/3`.
-
-  ## Examples
-
-      iex> am = AgentMap.new()
-      iex> max_processes(am)
-      5
-      iex> am
-      ...> |> max_processes(:infinity)
-      ...> |> max_processes()
-      :infinity
-  """
-  @spec max_processes(am, pos_integer | :infinity) :: am
-  def max_processes(am, value)
-      when (is_integer(value) and value > 0) or value == :infinity do
-    #
-    _call(am, %Req{act: :def_max_processes, data: value}, timeout: 5000)
-    am
-  end
-
-  @doc """
   Sets the `:max_processes` value for `key`.
 
   `AgentMap` can execute `get/4` calls made on the same key concurrently.
@@ -1211,7 +1161,7 @@ defmodule AgentMap do
       [processes: 0, max_processes: 5]
       #
       iex> am
-      ...> |> max_processes(3)
+      ...> |> set_prop(:max_processes, 3)
       ...> |> info(:key)
       [processes: 0, max_processes: 3]
       #
@@ -1258,6 +1208,115 @@ defmodule AgentMap do
       info(am, key, :processes),
       info(am, key, :max_processes)
     ]
+  end
+
+  ##
+  ## GET_PROP / PUT_PROP
+  ##
+
+  @doc """
+  Returns given `key`.
+
+  `AgentMap` depends on `:max_processes` key which defines the default mximum
+  amount of processes can be used per key.
+
+  Returns the value for the given `key` in the process dictionary of instance,
+  or default if key is not set.
+
+  See `set_prop/3`.
+  """
+  @spec get_prop(am, term, term) :: term
+  def get_prop(am, key, default) do
+    req = %Req{act: :get_prop, key: key, data: default}
+    _call(am, req, timeout: 5000)
+  end
+
+  @doc """
+  Returns `:max_processes` or `:processes` (total number) values.
+
+  See `get_prop/3`.
+
+  ## Examples
+
+      iex> am = AgentMap.new()
+      iex> get_prop(am, :processes)
+      1
+      iex> get_prop(am, :max_processes)
+      5
+      iex> am
+      ...> |> sleep(:a, 20)
+      ...> |> sleep(:b, 50)
+      ...> |> get_prop(:processes)
+      3
+      #
+      iex> sleep(40)
+      iex> get_prop(am, :processes)
+      2
+      #
+      iex> sleep(40)
+      iex> get_prop(am, :processes)
+      1
+
+      iex> am = AgentMap.new()
+      iex> get_prop(am, :max_processes)
+      5
+      iex> am
+      ...> |> set_prop(:max_processes, :infinity)
+      ...> |> get_prop(:max_processes)
+      :infinity
+      #
+      iex> info(am, :key)[:max_processes]
+      :infinity
+      #
+      iex> max_processes(am, :key, 3)
+      iex> info(am, :key)[:max_processes]
+      3
+  """
+  @spec get_prop(am, :processes) :: pos_integer
+  @spec get_prop(am, :max_processes) :: pos_integer | :infinit
+  def get_prop(am, key) do
+    req = %Req{act: :get_prop, key: key}
+    _call(am, req, timeout: 5000)
+  end
+
+  @doc """
+  Stores the given key-value pair in the process dictionary of instance.
+
+  The return value of this function is the value that was previously stored
+  under `key`, or `nil` in case no value was stored under `key`.
+
+  `AgentMap` depends on `:max_processes` key which defines the default maximum
+  amount of processes can be used per key.
+
+  See `get_prop/3`.
+
+      iex> am = AgentMap.new()
+      iex> am
+      ...> |> set_prop(:key, 42)
+      ...> |> get(:b, fn _ -> get_prop(am, :key) end)
+      42
+
+      iex> am = AgentMap.new()
+      iex> am
+      ...> |> get(:a, fn _ -> set_prop(am, :foo, :bar) end)
+      ...> |> get(:b, fn _ -> get_prop(am, :foo) end)
+      :bar
+
+      iex> am = AgentMap.new()
+      iex> get(am, :c, fn _ -> get_prop(am, :bar) end)
+      nil
+      iex> get(am, :c, fn _ -> get_prop(am, :bar, :baz) end)
+      :baz
+      iex> get(am, :d, fn _ -> get_prop(am, :max_processes) end)
+      5
+  """
+  @spec set_prop(am, :max_processes, pos_integer) :: am
+  @spec set_prop(am, :max_processes, :infinity) :: am
+  @spec set_prop(am, term, term) :: am
+  def set_prop(am, key, value) do
+    req = %Req{act: :set_prop, key: key, data: value}
+    _call(am, req, timeout: 5000)
+    am
   end
 
   ##
