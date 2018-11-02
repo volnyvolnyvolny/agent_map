@@ -93,6 +93,23 @@ Use collect.
      stacktrace:
        test/agent_map/multi_test.exs:61: (test)
 
+  2) doctest module AgentMap (3) (AgentMapTest)
+     test/agent_map_test.exs:5
+     ** (EXIT from #PID<0.2836.0>) an exception was raised:
+         ** (FunctionClauseError) no function clause matching in anonymous fn/1 in AgentMapTest."doctest module AgentMap (3)"/1
+             (for doctest at) lib/agent_map.ex:194: anonymous fn(:ready) in AgentMapTest."doctest module AgentMap (3)"/1
+             (agent_map) lib/agent_map.ex:968: anonymous fn/3 in AgentMap.update/4
+             (agent_map) lib/agent_map/server/worker.ex:95: AgentMap.Worker.run/2
+             (agent_map) lib/agent_map/server/worker.ex:243: AgentMap.Worker.loop/1
+
+
+01:58:57.654 [error] Process #PID<0.2839.0> raised an exception
+** (FunctionClauseError) no function clause matching in anonymous fn/1 in AgentMapTest."doctest module AgentMap (3)"/1
+    (for doctest at) lib/agent_map.ex:194: anonymous fn(:ready) in AgentMapTest."doctest module AgentMap (3)"/1
+    (agent_map) lib/agent_map.ex:968: anonymous fn/3 in AgentMap.update/4
+    (agent_map) lib/agent_map/server/worker.ex:95: AgentMap.Worker.run/2
+    (agent_map) lib/agent_map/server/worker.ex:243: AgentMap.Worker.loop/1
+
   1) doctest AgentMap.Multi.cast/4 (1) (AgentMapMultiTest)
      test/agent_map/multi_test.exs:7
      ** (EXIT from #PID<0.234.0>) an exception was raised:

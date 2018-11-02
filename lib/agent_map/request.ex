@@ -59,48 +59,40 @@ defmodule AgentMap.Req do
 
   def handle(%{act: :inc} = req, state) do
     step = req.data[:step]
-    safe? = req.data[:safe]
 
     k = req.key
     i = req.data[:initial]
 
-    req
-    |> get_and_update(fn
-      v when is_number(v) ->
-        {:ok, v + step}
+    inc = fn
+      {:value, v} when is_number(v) ->
+        v + step
 
-      v ->
-        res =
-          if Process.get(:value) do
-            k = inspect(k)
-            v = inspect(v)
+      {:value, v} ->
+        k = inspect(k)
+        v = inspect(v)
 
-            m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
-            m = m.((step > 0 && "inc") || "dec")
+        m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
+        m = m.((step > 0 && "inc") || "dec")
 
-            %ArithmeticError{message: m}
-          else
-            if i, do: i + step, else: %KeyError{key: k}
-          end
+        raise ArithmeticError, message: m
 
-        case res do
-          v when is_number(v) ->
-            {:ok, v}
+      nil ->
+        if i, do: i + step, else: raise KeyError, key: k
+    end
 
-          e ->
-            if safe? do
-              unless req.from do
-                # case: true
-                Logger.error(Exception.message(e))
-              end
+    case get(state, req.key) do
+      {box, p_info} ->
+        pack = {{:value, inc.(box)}, p_info}
+        state = put(state, req.key, pack)
+        {:reply, :_done, state}
 
-              {{:error, e}}
-            else
-              raise e
-            end
-        end
-    end)
-    |> handle(state)
+      _worker ->
+        req
+        |> get_and_update(fn _value ->
+             {:_done, inc.(Process.get(:value))}
+           end)
+        |> handle(state)
+    end
   end
 
   def handle(%{act: :processes} = req, state) do
@@ -268,6 +260,8 @@ defmodule AgentMap.Req do
     end
   end
 
+  #
+
   def handle(%{act: :fetch, !: :now} = req, state) do
     value = fetch(state, req.key)
     {:reply, value, state}
@@ -289,6 +283,8 @@ defmodule AgentMap.Req do
     end
   end
 
+  #
+
   def handle(%{act: :delete} = req, state) do
     case get(state, req.key) do
       {_box, p_info} ->
@@ -303,6 +299,8 @@ defmodule AgentMap.Req do
     end
   end
 
+  #
+
   def handle(%{act: :sleep} = req, state) do
     req
     |> get_and_update(fn _ ->
@@ -311,6 +309,8 @@ defmodule AgentMap.Req do
     end)
     |> handle(state)
   end
+
+  #
 
   def handle(%{act: :get_prop, key: :processes}, state) do
     keys = Map.keys(state)

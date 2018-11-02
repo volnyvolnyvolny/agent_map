@@ -1215,13 +1215,13 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns given `key`.
+  Returns prop with given `key`.
 
-  `AgentMap` depends on `:max_processes` key which defines the default mximum
+  `AgentMap` depends on `:max_processes` key which defines the default maximum
   amount of processes can be used per key.
 
   Returns the value for the given `key` in the process dictionary of instance,
-  or default if key is not set.
+  or `default` if `key` is not set.
 
   See `set_prop/3`.
   """
@@ -1244,18 +1244,20 @@ defmodule AgentMap do
       iex> get_prop(am, :max_processes)
       5
       iex> am
-      ...> |> sleep(:a, 20)
-      ...> |> sleep(:b, 50)
+      ...> |> sleep(:a, 10)
+      ...> |> sleep(:b, 100)
       ...> |> get_prop(:processes)
       3
       #
-      iex> sleep(40)
+      iex> sleep(50)
       iex> get_prop(am, :processes)
       2
       #
-      iex> sleep(40)
+      iex> sleep(200)
       iex> get_prop(am, :processes)
       1
+
+  #
 
       iex> am = AgentMap.new()
       iex> get_prop(am, :max_processes)
@@ -1655,12 +1657,12 @@ defmodule AgentMap do
 
   ## Examples
 
-      # iex> %{a: 1, b: 2, c: nil}
-      # ...> |> AgentMap.new()
-      # ...> |> sleep(:a, 20)        # 0
-      # ...> |> put(:a, 42, !: :avg) # 2
-      # ...> |> to_map()             # 1
-      # %{a: 1, b: 2, c: nil}
+      iex> %{a: 1, b: 2, c: nil}
+      ...> |> AgentMap.new()
+      ...> |> sleep(:a, 20)        # 0
+      ...> |> put(:a, 42, !: :avg) # 2
+      ...> |> to_map()             # 1
+      %{a: 1, b: 2, c: nil}
 
       iex> %{a: 1}
       ...> |> AgentMap.new()
@@ -1717,8 +1719,7 @@ defmodule AgentMap do
   Increments value with given `key`.
 
   By default, returns *immediately*, without waiting for the actual increment to
-  occur. If `key` has a non-numeric value, raises `IncError` and exits
-  `AgentMap` instance.
+  occur.
 
   ### Options
 
@@ -1727,19 +1728,15 @@ defmodule AgentMap do
     * `:initial` (`number`, `0`) — if value does not exist it is considered to
       be the one given as initial;
 
-    * `initial: false` — to raise `KeyError` if value does not exist;
+    * `initial: false` — to exit instance, rasing `KeyError` if value does not
+      exist;
 
-
-    * `safe: true` — to keep instance alive if an exception is raised;
 
     * `cast: false` — to return only when the actual increment occur;
 
     * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
 
     * `:timeout` (`timeout`, `5000`). Works only with `cast: false`.
-
-  If `safe: true` and `cast: true` (by default) is given, any error will be
-  logged.
 
   ### Examples
 
@@ -1751,13 +1748,6 @@ defmodule AgentMap do
       3.0
       iex> get(am, :b)
       1
-      iex> inc(am, :c, cast: false, safe: true, initial: false)
-      ** (KeyError) key :c not found
-
-      iex> %{a: :notnum}
-      ...> |> AgentMap.new()
-      ...> |> inc(:a, cast: false, safe: true)
-      ** (ArithmeticError) cannot increment key :a because it has a non-numerical value :notnum
 
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)
@@ -1768,18 +1758,13 @@ defmodule AgentMap do
       3
   """
   @spec inc(am, key, keyword) :: am
-  def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true, safe: false]) do
-    defs = [step: 1, initial: 0, !: :avg, cast: true, safe: false]
+  def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true]) do
+    defs = [step: 1, initial: 0, !: :avg, cast: true]
     opts = _prep(opts, defs)
     req = %Req{act: :inc, key: key, data: opts}
 
-    case _call(am, req, opts) do
-      {:error, e} ->
-        raise e
-
-      _ ->
-        am
-    end
+    _call(am, req, opts)
+    am
   end
 
   @doc """
