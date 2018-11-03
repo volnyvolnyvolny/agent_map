@@ -255,7 +255,7 @@ defmodule AgentMap.Worker do
         if Heap.size(heap) == 1 do
           {_, _, req} = Heap.root(heap)
 
-          if req[:multi_key] do
+          if req[:multi_key] && req[:act] == :get_and_update do
             :timer.sleep(2)
 
             receive do
