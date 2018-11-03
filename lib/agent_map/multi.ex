@@ -73,7 +73,7 @@ defmodule AgentMap.Multi do
       ...> |> AgentMap.sleep(:a, 20)
       ...> |> AgentMap.put(:a, 2)
       ...> |> get([:a, :b], & &1)
-      [1, 1]
+      [2, 1]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
   def get(am, keys, fun, opts \\ [!: :avg]) do
@@ -402,7 +402,7 @@ defmodule AgentMap.Multi do
       ...> |> AgentMap.sleep(:a, 20)
       ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)                      # 2
       ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, !: :max, initial: 1) # 1
-      # ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             # 3
+      ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             # 3
       ...> |> get([:a, :b])
       [4, 4]
   """

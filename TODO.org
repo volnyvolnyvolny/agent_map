@@ -110,15 +110,6 @@ Use collect.
     (agent_map) lib/agent_map/server/worker.ex:95: AgentMap.Worker.run/2
     (agent_map) lib/agent_map/server/worker.ex:243: AgentMap.Worker.loop/1
 
-  1) doctest AgentMap.Multi.cast/4 (1) (AgentMapMultiTest)
-     test/agent_map/multi_test.exs:7
-     ** (EXIT from #PID<0.234.0>) an exception was raised:
-         ** (FunctionClauseError) no function clause matching in Access.get/3
-             (elixir) lib/access.ex:316: Access.get(:id, :!, nil)
-             (agent_map) lib/agent_map/server/worker.ex:298: AgentMap.Worker.place/2
-             (agent_map) lib/agent_map/server/worker.ex:283: AgentMap.Worker.flush/1
-             (agent_map) lib/agent_map/server/worker.ex:272: AgentMap.Worker.loop/1
-
   1) test Multi.get_and_update (AgentMapMultiTest)
      test/agent_map/multi_test.exs:42
      Assertion with == failed
@@ -135,7 +126,6 @@ Use collect.
      stacktrace:
        (elixir) lib/gen_server.ex:924: GenServer.call/3
        (for doctest at) lib/agent_map.ex:199: (test)
-
 
   2) doctest AgentMap.safe_apply/3 (2) (AgentMapTest)
      test/agent_map_test.exs:6

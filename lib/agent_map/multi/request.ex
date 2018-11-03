@@ -36,6 +36,7 @@ defmodule AgentMap.Multi.Req do
     receive do
       {key, {:value, v}} ->
         keys = List.delete(keys, key)
+
         values
         |> Map.put(key, v)
         |> collect(keys)
@@ -61,7 +62,7 @@ defmodule AgentMap.Multi.Req do
 
     req = %{req | from: nil, fun: fun}
 
-    for w <- pids, do: send(w, compress(req))
+    for w <- pids, do: send(w, compress(req) |> Map.put(:multi_key, true))
   end
 
   # on server

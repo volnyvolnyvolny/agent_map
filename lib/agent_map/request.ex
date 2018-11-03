@@ -77,7 +77,7 @@ defmodule AgentMap.Req do
         raise ArithmeticError, message: m
 
       nil ->
-        if i, do: i + step, else: raise KeyError, key: k
+        if i, do: i + step, else: raise(KeyError, key: k)
     end
 
     case get(state, req.key) do
@@ -89,8 +89,8 @@ defmodule AgentMap.Req do
       _worker ->
         req
         |> get_and_update(fn _value ->
-             {:_done, inc.(Process.get(:value))}
-           end)
+          {:_done, inc.(Process.get(:value))}
+        end)
         |> handle(state)
     end
   end
