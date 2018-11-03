@@ -56,6 +56,10 @@ defmodule AgentMap do
       ...> |> AgentMap.new()
       ...> |> Enum.empty?()
       false
+      iex> am = AgentMap.new(pid)
+      iex> Enum.into(%{a: 2, b: 3}, am)
+      iex> to_map(am)
+      %{a: 2, b: 3}
 
   More complicated example involves memoization:
 
