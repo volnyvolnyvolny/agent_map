@@ -29,7 +29,6 @@ defmodule AgentMap.Mixfile do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      #      {:earmark, "~> 1.2", only: :dev},
       {:heap, "~> 2.0"},
       {:ex_doc, "~> 0.19", only: :dev, runtime: false},
       {:credo, "~> 0.10", only: :dev}
