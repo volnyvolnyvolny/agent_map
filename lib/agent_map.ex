@@ -525,9 +525,9 @@ defmodule AgentMap do
     * `:spawn_opt` — is passed as options to the underlying process as in
       `Process.spawn/4`;
 
-    * `:timeout` (`pos_integer | :infinity`, `:infinity`) — `AgentMap` is
-      allowed to spend at most the given number of milliseconds on the whole
-      process of initialization or it will be terminated;
+    * `:timeout` (`timeout`, `5000`) — `AgentMap` is allowed to spend at most
+      the given number of milliseconds on the whole process of initialization or
+      it will be terminated;
 
     * `:max_processes` (`pos_integer | :infinity`, `5`) — to seed default
       `:max_processes` value (see `max_processes/2`).
@@ -577,7 +577,7 @@ defmodule AgentMap do
 
     args = [
       funs: funs,
-      timeout: opts[:timeout] || :infinity,
+      timeout: opts[:timeout] || 5000,
       max_processes: opts[:max_processes] || @max_processes
     ]
 
@@ -613,7 +613,7 @@ defmodule AgentMap do
 
     args = [
       funs: funs,
-      timeout: opts[:timeout] || :infinity,
+      timeout: opts[:timeout] || 5000,
       max_processes: opts[:max_processes] || @max_processes
     ]
 
