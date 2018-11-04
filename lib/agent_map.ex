@@ -1830,7 +1830,7 @@ defmodule AgentMap do
       iex> size(am)
       1
   """
-  @spec size(am) :: am
+  @spec size(am) :: integer
   def size(am), do: _call(am, %Req{act: :size}, [])
 
   ##
