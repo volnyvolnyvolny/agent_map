@@ -312,6 +312,15 @@ defmodule AgentMap.Req do
 
   #
 
+  def handle(%{act: :size}, state) do
+    keys = Map.keys(state)
+    size = map_size(take(state, keys))
+
+    {:reply, size, state}
+  end
+
+  #
+
   def handle(%{act: :get_prop, key: :processes}, state) do
     keys = Map.keys(state)
     {_map, workers} = separate(state, keys)

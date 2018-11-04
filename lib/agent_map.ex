@@ -1812,6 +1812,28 @@ defmodule AgentMap do
   end
 
   ##
+  ## SIZE
+  ##
+
+  @doc """
+  Returns current size of `AgentMap`.
+
+  ## Examples
+
+      iex> am = AgentMap.new()
+      iex> am
+      ...> |> sleep(:a, 20)
+      ...> |> cast(:a, fn nil -> 42 end)
+      ...> |> size()
+      0
+      iex> sleep(40)
+      iex> size(am)
+      1
+  """
+  @spec size(am) :: am
+  def size(am), do: _call(am, %Req{act: :size}, [])
+
+  ##
   ## STOP
   ##
 
