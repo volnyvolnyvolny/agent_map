@@ -6,7 +6,6 @@ defmodule AgentMap.Req do
   alias AgentMap.{Worker, Server, Multi}
 
   import Worker, only: [spawn_get_task: 2, processes: 1]
-  import Enum, only: [filter: 2]
   import Server.State
 
   @enforce_keys [:act]
@@ -144,10 +143,10 @@ defmodule AgentMap.Req do
   #
 
   def handle(%{act: :keys}, state) do
-    has_value? = &match?({:ok, _}, fetch(state, &1))
-    ks = filter(Map.keys(state), has_value?)
+    has_v? = &match?({:ok, _}, fetch(state, &1))
+    keys = Enum.filter(Map.keys(state), has_v?)
 
-    {:reply, ks, state}
+    {:reply, keys, state}
   end
 
   #
@@ -263,8 +262,7 @@ defmodule AgentMap.Req do
   #
 
   def handle(%{act: :fetch, !: :now} = req, state) do
-    value = fetch(state, req.key)
-    {:reply, value, state}
+    {:reply, fetch(state, req.key), state}
   end
 
   def handle(%{act: :fetch} = req, state) do
@@ -312,14 +310,12 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%{act: :size}, state) do
-    keys = Map.keys(state)
-    size = map_size(take(state, keys))
+  def handle(%{act: :get_prop, key: :size}, state) do
+    has_v? = &match?({:ok, _}, fetch(state, &1))
+    size = Enum.count(Map.keys(state), has_v?)
 
     {:reply, size, state}
   end
-
-  #
 
   def handle(%{act: :get_prop, key: :processes}, state) do
     keys = Map.keys(state)

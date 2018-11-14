@@ -1219,13 +1219,7 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns prop with given `key`.
-
-  `AgentMap` depends on `:max_processes` key which defines the default maximum
-  amount of processes can be used per key.
-
-  Returns the value for the given `key` in the process dictionary of instance,
-  or `default` if `key` is not set.
+  Returns prop with given `key` or `default` if `key` is not there.
 
   See `set_prop/3`.
   """
@@ -1277,22 +1271,38 @@ defmodule AgentMap do
       iex> max_processes(am, :key, 3)
       iex> info(am, :key)[:max_processes]
       3
+
+  #
+
+      iex> am = AgentMap.new()
+      iex> am
+      ...> |> sleep(:a, 20)
+      ...> |> cast(:a, fn nil -> 42 end)
+      ...> |> get_prop(:size)
+      0
+      iex> sleep(40)
+      iex> get_prop(am, :size)
+      1
   """
   @spec get_prop(am, :processes) :: pos_integer
   @spec get_prop(am, :max_processes) :: pos_integer | :infinit
+  @spec get_prop(am, :size) :: non_neg_integer
   def get_prop(am, key) do
     req = %Req{act: :get_prop, key: key}
     _call(am, req, timeout: 5000)
   end
 
   @doc """
-  Stores the given key-value pair in the process dictionary of instance.
+  Stores key-value pair in a process dictionary of instance.
 
   The return value of this function is the value that was previously stored
   under `key`, or `nil` in case no value was stored under `key`.
 
   `AgentMap` depends on `:max_processes` key which defines the default maximum
   amount of processes can be used per key.
+
+  The reserved keys are `:processes` and `:size` — they can be readed via
+  `get_prop/2`, but could not be set.
 
   See `get_prop/3`.
 
@@ -1319,6 +1329,10 @@ defmodule AgentMap do
   @spec set_prop(am, :max_processes, pos_integer) :: am
   @spec set_prop(am, :max_processes, :infinity) :: am
   @spec set_prop(am, term, term) :: am
+  def set_prop(_am, key, _value) when key in [:processes, :size] do
+    throw "Cannot set values for keys :size and :processes."
+  end
+
   def set_prop(am, key, value) do
     req = %Req{act: :set_prop, key: key, data: value}
     _call(am, req, timeout: 5000)
@@ -1817,21 +1831,10 @@ defmodule AgentMap do
 
   @doc """
   Returns current size of `AgentMap`.
-
-  ## Examples
-
-      iex> am = AgentMap.new()
-      iex> am
-      ...> |> sleep(:a, 20)
-      ...> |> cast(:a, fn nil -> 42 end)
-      ...> |> size()
-      0
-      iex> sleep(40)
-      iex> size(am)
-      1
   """
+  @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead"
   @spec size(am) :: non_neg_integer
-  def size(am), do: _call(am, %Req{act: :size}, [])
+  def size(am), do: get_prop(am, :size)
 
   ##
   ## STOP

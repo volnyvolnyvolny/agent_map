@@ -1,14 +1,15 @@
 defimpl Enumerable, for: AgentMap do
   import AgentMap
 
-  def count(am) do
-    {:ok, length(keys(am))}
-  end
+  def count(am), do: {:ok, get_prop(am, :size)}
 
   def member?(am, {key, value}) do
     case fetch(am, key) do
-      {:ok, ^value} -> {:ok, true}
-      _ -> {:ok, false}
+      {:ok, ^value} ->
+        {:ok, true}
+
+      _ ->
+        {:ok, false}
     end
   end
 
