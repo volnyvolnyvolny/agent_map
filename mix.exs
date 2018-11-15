@@ -53,7 +53,7 @@ defmodule AgentMap.Mixfile do
 
   defp package do
     [
-      maintainers: ["Valentin Tumanov"],
+      maintainers: ["Valentin Tumanov (Vasilev)"],
       licenses: ["MIT"],
       links: %{
         "GitHub" => "https://github.com/zergera/agent_map",
