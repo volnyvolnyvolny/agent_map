@@ -1139,8 +1139,7 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns information about `key` — number of processes or maximum processes
-  allowed.
+  Returns the `:processes` or `:max_processes` numbers for `key`.
 
   See `info/2`.
   """
@@ -1157,7 +1156,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns keyword with a `:processes` and `:max_processes` numbers for `key`.
+  Returns keyword with the `:processes` and `:max_processes` numbers for `key`.
 
   ## Examples
 
@@ -1834,7 +1833,7 @@ defmodule AgentMap do
   @doc """
   Returns current size of `AgentMap`.
   """
-  @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead"
+  @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead."
   @spec size(am) :: non_neg_integer
   def size(am), do: get_prop(am, :size)
 
