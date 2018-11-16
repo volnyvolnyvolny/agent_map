@@ -59,13 +59,14 @@ defmodule AgentMap.Multi do
 
   ## How it works
 
-  Each multi-key callback is executed in a separate process, which is
-  responsible for collecting values, invoking callback, returning a result, and
-  handling timeout and possible errors. Computation can start after all the
-  related values will be known. If a call is a value-changing
-  (`get_and_update/4`, `update/4`, `cast/4`), for every involved `key` will be
-  created worker and a special "return me a value and wait for a new one"
-  request will be added to the end of the workers queue.
+  Each multi-key call is handled in a separate process. This process is
+  responsible for: collecting values, invoking callback, returning a result, and
+  dealing with possible errors.
+
+  Computation can starts after all the related values are known. If a call is a
+  value-changing (`get_and_update/4`, `update/4`, `cast/4`), for every involved
+  `key` will be created worker and a special "return me a value and wait for a
+  new one" request will be added to the end of the workers queue.
 
   When performing `get/4` with option `!: :now`, values are fetched immediately,
   without sending any requests and creating workers.

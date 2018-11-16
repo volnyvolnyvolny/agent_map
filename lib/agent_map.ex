@@ -1104,7 +1104,7 @@ defmodule AgentMap do
   any sequence of `get/3` calls. Sequence ends when a call that change state
   arrive (`get_and_update/3`, `update/3`, etc.)
 
-  Use `max_processes: 1` to execute `get` calls one after another.
+  Use `max_processes: 1` to execute `get` calls for this `key` sequentially.
 
   ## Examples
 
