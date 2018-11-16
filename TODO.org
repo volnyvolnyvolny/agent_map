@@ -1,0 +1,6 @@
+* TODO
+** Optimize handling of multi-key calls;
+** Provide Worker.accept_value with timeout;
+** Simplify docs;
+** Make nice diagram;
+** Provide batch multi-key calls.

@@ -4,7 +4,60 @@ defmodule AgentMap.Multi do
   import AgentMap, only: [_call: 3, _prep: 2]
 
   @moduledoc """
-  This module contains functions for making multi-key calls.
+  Functions for making multi-key calls.
+
+  ## Examples
+
+  To swap balances of Alice and Bob:
+
+      iex> %{Alice: 42, Bob: 24}
+      ...> |> AgentMap.new()
+      ...> |> update([:Alice, :Bob], &Enum.reverse/1)
+      ...> |> get([:Alice, :Bob])
+      [24, 42]
+
+  To sum them:
+
+      iex> %{Alice: 1, Bob: 999_999}
+      ...> |> AgentMap.new()
+      ...> |> get([:Alice, :Bob], &Enum.sum/1)
+      1_000_000
+
+  Initial value can be provided:
+
+      iex> %{Bob: 999_999}
+      ...> |> AgentMap.new()
+      ...> |> get([:Bob, :Chris], & &1, initial: 0)
+      [999_999, 0]
+
+  More complex example:
+
+      iex> am = AgentMap.new(Alice: 10, Bob: 999_990)
+      ...>
+      iex> get_and_update(am, [:Alice, :Bob], fn [a, b] ->
+      ...>   if a >= 10 do
+      ...>     a = a - 10
+      ...>     b = b + 10
+      ...>     [{a, a}, {b, b}]  # [{get, new value}]
+      ...>   else
+      ...>     msg = {:error, "Alice is too poor!"}
+      ...>     {msg, [a, b]}     # {get, [new_state]}
+      ...>   end
+      ...> end)
+      [0, 1_000_000]
+
+  More on `get_and_update` syntax:
+
+      iex> am = AgentMap.new(Alice: 0, Bob: 1_000_000)
+      ...>
+      iex> get_and_update(am, [:Alice, :Bob], fn _ ->
+      ...>   [:pop, :id]
+      ...> end)
+      [0, 1_000_000]
+      iex> get(am, [:Alice, :Bob])
+      [nil, 1_000_000]
+
+  ## How it works
 
   Each multi-key callback is executed in a separate process, which is
   responsible for collecting values, invoking callback, returning a result, and
@@ -31,52 +84,37 @@ defmodule AgentMap.Multi do
   ##
 
   @doc """
-  Gets a values via the given `fun`.
+  Gets `keys` values via the given `fun`.
 
-  The `fun` is sent to an instance of `AgentMap` which invokes it, passing the
-  values associated with the `keys` (`nil`s for missing keys). The result of the
-  invocation is returned from this function.
-
-  The default priority for this call is `:now`, which means that the current
-  values will be used as an argument for `fun`. If different priority is given,
-  call will wait before taking the corresponding values, until requests with a
-  higher priorities will be fulfilled for every key from `keys`.
+  `AgentMap` invokes `fun` passing `keys` **current** values (change
+  [priority](AgentMap.html#module-priority) to bypass).
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — to set the initial value for missing keys;
+    * `:initial` (`term`, `nil`) — value for missing keys;
 
-    * `:!` (`priority`, `:now`) — to set
-      [priority](AgentMap.html#module-priority);
+    * `:!` (`priority`, `:now`);
 
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
 
-  To sum balances of Alice and Bob:
+      iex> AgentMap.new(a: 1)
+      ...> |> sleep(:a, 10)                   # 1
+      ...> |> put(:a, 2)                      #   3
+      ...> |> get([:a, :b], & &1, initial: 1) #  2
+      [1, 1]
 
-      get(account, [:Alice, :Bob], &Enum.sum/1)
-
-  #
-
-      iex> %{Alice: 42}
-      ...> |> AgentMap.new()
-      ...> |> get([:Alice, :Bob], & &1, initial: 0)
-      [42, 0]
-
-      iex> AgentMap.new()
-      ...> |> update([:Alice, :Bob], fn _ -> [43, 42] end)
-      ...> |> get([:Alice, :Bob], fn [a, b] -> a - b end, !: :avg)
-      1
+      but:
 
       iex> AgentMap.new(a: 1, b: 1)
-      ...> |> AgentMap.sleep(:a, 20)
-      ...> |> AgentMap.put(:a, 2)
-      ...> |> get([:a, :b], & &1)
+      ...> |> sleep(:a, 10)                   # 1
+      ...> |> put(:a, 2)                      #  2
+      ...> |> get([:a, :b], & &1, !: :avg)    #   3
       [2, 1]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
-  def get(am, keys, fun, opts \\ [!: :avg]) do
+  def get(am, keys, fun, opts \\ [!: :now]) do
     opts = _prep(opts, !: :avg)
     req = %Req{act: :get, keys: keys, fun: fun, data: opts[:initial]}
 
@@ -84,44 +122,26 @@ defmodule AgentMap.Multi do
   end
 
   @doc """
-  Returns the values for the given `keys`.
-
-  Syntactic sugar for `get(am, keys, & &1, !: :min)`.
-
-  This call executed with a minimum (`0`) priority. As so, execution will start
-  only after all other calls for all the related `keys` are completed.
-
-  See `get/4`.
+  Returns `keys` values. Sugar for `get(am, keys, & &1, !: :min)`.
 
   ## Examples
 
-      iex> am = AgentMap.new(Alice: 42)
-      iex> get(am, [:Alice, :Bob])
-      [42, nil]
-
-      iex> %{Alice: 42, Bob: 42}
-      ...> |> AgentMap.new()
-      ...> |> AgentMap.sleep(:Alice, 10)
-      ...> |> AgentMap.put(:Alice, 0)
-      ...> |> get([:Alice, :Bob])
-      [0, 42]
+      iex> AgentMap.new(a: 42)
+      ...> |> sleep(:a, 10)    # 1
+      ...> |> put(:a, 0)       #  2
+      ...> |> get([:a, :b])    #   3
+      [0, nil]
   """
   @spec get(am, [key]) :: [value | nil]
   def get(am, keys), do: get(am, keys, & &1, !: :min)
 
   @doc """
-  Gets the values for `keys` and updates it, all in one pass.
+  Gets and updates `keys` values.
 
-  The `fun` is sent to an `AgentMap` that invokes it, passing the values for
-  `keys` (`nil`s for missing values). This `fun` must produce "get"-value and a
-  new values list for `keys`. For example, `get_and_update(account, [:Alice,
-  :Bob], fn [a,b] -> {:swapped, [b,a]} end)` produces `:swapped` "get"-value
-  while swapes Alice's and Bob's balances.
+  `AgentMap` invokes `fun` passing `keys` values. Callback may return:
 
-  A `fun` can return:
-
-    * a list with values `[{"get"-value, new value} | {"get"-value} | :id | :pop]`.
-      This returns a list of "get"-values. For ex.:
+    * `[{get, new value} | {get} | :id | :pop]`
+      :
 
           iex> keys = [:a, :b, :c, :d]
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
@@ -133,8 +153,8 @@ defmodule AgentMap.Multi do
           iex> get(am, keys)
           [:new_value, 2, nil, nil]
 
-    * a tuple `{"get"-value, [new value] | :id | :drop}`.
-      For ex.:
+    * `{get, [new value] | :id | :drop}`
+      :
 
           iex> keys = [:a, :b, :c, :d]
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
@@ -145,52 +165,19 @@ defmodule AgentMap.Multi do
           :get
           iex> get(am, keys)
           [4, 3, 2, 1]
-          #
-          iex> get_and_update(am, keys, fn _ ->
-          ...>   {:get, :id}
-          ...> end)
-          :get
-          iex> get(am, keys)
-          [4, 3, 2, 1]
-          #
-          iex> get_and_update(am, [:b, :c], fn _ ->
-          ...>   {:get, :drop}
-          ...> end)
-          :get
-          iex> get(am, keys)
-          [4, nil, nil, 1]
 
-    * a one element tuple `{"get"-value}`, that is an alias for the `{"get"
-      value, :id}`.
-      For ex.:
+    * `{get}`, that is a sugar for `{get, :id}`;
 
-          iex> keys = [:a, :b, :c, :d]
-          iex> am = AgentMap.new(a: 1, b: 2, c: 3)
-          ...>
-          iex> get_and_update(am, keys, fn _ -> {:get} end)
-          :get
-          iex> get(am, keys)
-          [1, 2, 3, nil]
-          # — no changes.
+    * `:id`, to return values, while not changing them;
 
-    * `:id` to return list of values while not changing them.
-      For ex.:
+    * `:pop` to return values, while deleting them
+      :
 
           iex> keys = [:a, :b, :c, :d]
           iex> am = AgentMap.new(a: 1, b: 2, c: 3)
           ...>
           iex> get_and_update(am, keys, fn _ -> :id end)
           [1, 2, 3, nil]
-          iex> get(am, keys)
-          [1, 2, 3, nil]
-          # — no changes.
-
-    * `:pop` to return values while removing them from `agentmap`.
-      For ex.:
-
-          iex> keys = [:a, :b, :c, :d]
-          iex> am = AgentMap.new(a: 1, b: 2, c: 3)
-          ...>
           iex> get_and_update(am, keys, fn _ -> :pop end)
           [1, 2, 3, nil]
           iex> get(am, keys)
@@ -198,88 +185,38 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — if value does not exist it is considered to
-      be the one given as initial;
+    * `:initial` (`term`, `nil`) — value for missing keys;
 
-    * `:!` (`priority`, `:avg`) — to set
-      [priority](AgentMap.html#module-priority);
+    * `:!` (`priority`, `:avg`);
 
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
 
-      iex> am = AgentMap.new(Alice: 42, Bob: 24)
-      ...>
-      iex> get_and_update(am, [:Alice, :Bob], fn [a, b] ->
-      ...>   if a > 10 do
-      ...>     a = a - 10
-      ...>     b = b + 10
-      ...>     [{a, a}, {b, b}] # [{get, new_state}]
-      ...>   else
-      ...>     {{:error, "Alice does not have 10$ to give to Bob!"}, [a, b]} # {get, [new_state]}
-      ...>   end
-      ...> end)
-      [32, 34]
-
-  #
-
-      iex> am = AgentMap.new(Alice: 42, Bob: 24)
-      ...>
-      iex> get_and_update(am, [:Alice, :Bob], fn _ ->
-      ...>   [:pop, :id]
-      ...> end)
-      [42, 24]
-      iex> get(am, [:Alice, :Bob])
-      [nil, 24]
-
-  (!) Value-changing calls (`get_and_update/4`, `update/4`, `cast/4`) will block
-  execution for all the involving `keys`. For ex.:
-
-      iex> am = AgentMap.new(Alice: 42, Bob: 24, Chris: 0)
-      ...>
-      iex> am
-      ...> |> cast([:Alice, :Bob], fn _ -> sleep(10); :id end)
-      ...> |> get([:Chris], fn _ -> "now" end)
-      "now"
-      iex> am
-      ...> |> get([:Chris, :Bob], fn _ -> "10 ms later" end)
-      "10 ms later"
-
-  will delay for `10` ms any execution involved `:Alice` or `:Bob` keys.
-  `:Chris` key is not influenced.
-
-      iex> am = AgentMap.new(a: 1, b: 2)
-      ...>
-      iex> get_and_update(am, [:a, :b], fn [u, d] ->
-      ...>   [{u, d}, {d, u}]
-      ...> end)
-      [1, 2]
-      iex> get(am, [:a, :b])
-      [2, 1]
-
-      iex> keys = [:a, :b, :c, :d]
-      iex> am = AgentMap.new(a: 1, b: 2)
-      ...>
-      iex> get_and_update(am, keys, fn _ ->
-      ...>   [:id, :pop, {3, 0}, {4, 0}]
-      ...> end)
-      [1, 2, 3, 4]
-      iex> get(am, keys)
-      [1, nil, 0, 0]
-
       iex> am = AgentMap.new(a: 1)
       ...>
       iex> get_and_update(am, [:a, :b], fn [1, 1] ->
-      ...>   {"get", [2, 2]}
+      ...>   {:get, [2, 2]}
       ...> end, initial: 1)
-      "get"
+      :get
       #
       iex> get_and_update(am, [:a, :b], fn [2, 2] ->
-      ...>   {"get", :drop}
+      ...>   {:get, :drop}
       ...> end)
-      "get"
+      :get
       iex> get(am, [:a, :b])
       [nil, nil]
+
+  (!) `get_and_update/4`, `update/4` and `cast/4` calls are blocking execution
+  for all `keys`. For ex.:
+
+      iex> am = AgentMap.new()
+      iex> cast(am, [:a, :b], fn _ -> sleep(10); :id end)
+      ...>
+      iex> get(am, [:c], fn _ -> "now" end, !: :avg)
+      "now"
+      iex> get(am, [:c, :b], fn _ -> "10 ms later" end, !: :avg)
+      "10 ms later"
   """
 
   @typedoc """
@@ -314,66 +251,37 @@ defmodule AgentMap.Multi do
   @doc """
   Updates `keys` with the given `fun`.
 
-  Syntactic sugar for `get_and_update(am, keys, &{am, fun.(&1)}, opts)`. As so,
-  callback (`fun`) can return:
+  Callback `fun` may return:
 
-    * a list of new values;
-    * `:id` — instructs to leave values as they are;
-    * `:drop` — instructs to drop `keys`.
-
-  See `get_and_update/4`.
+    * `[new values]`;
+    * `:id` — to leave values as they are;
+    * `:drop` — to drop `keys`.
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — if value does not exist it is considered to
-      be the one given as initial;
+    * `:initial` (`term`, `nil`) — value for missing keys;
 
-    * `:!` (`priority`, `:avg`) — to set
-      [priority](AgentMap.html#module-priority);
+    * `:!` (`priority`, `:avg`);
 
     * `:timeout` (`timeout`, `5000`).
 
   ## Examples
 
-  To swap balances of Alice and Bob:
-
-      update(account, [:Alice, :Bob], fn [a, b] -> [b, a] end)
-
-  #
-
-      iex> %{Alice: 24}
-      ...> |> AgentMap.new()
-      ...> |> update([:Alice, :Bob], fn [24, nil] -> [1024, 42] end)
-      ...> |> get([:Alice, :Bob])
-      [1024, 42]
+      iex> AgentMap.new()
+      ...> |> update([:a, :b], fn _ -> [1, 2] end)
+      ...> |> update([:a, :b], fn _ -> :id end)
+      ...> |> update([:a], fn _ -> :drop end)
+      ...> |> get([:a, :b])
+      [nil, 2]
 
       iex> AgentMap.new()
-      ...> |> AgentMap.sleep(:Alice, 20)                                                 # 0
-      ...> |> AgentMap.put(:Alice, 3)                                                    # 2
-      ...> |> AgentMap.put(:Bob, 0)                                                      # 2
-      ...> |> update([:Alice, :Bob], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1) # 1
-      ...> |> update([:Alice, :Bob], fn [3, 2] -> [4, 4] end)                            # 3
-      ...> |> get([:Alice, :Bob])
+      ...> |> sleep(:a, 20)                                                        # 0
+      ...> |> put(:a, 3)                                                           #   2
+      ...> |> put(:b, 0)                                                           #   2
+      ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1) #  1
+      ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                            #    3
+      ...> |> get([:a, :b])
       [4, 4]
-
-      iex> %{a: 42, b: 24}
-      ...> |> AgentMap.new()
-      ...> |> update([:a, :b], &Enum.reverse/1)
-      ...> |> get([:a, :b])
-      [24, 42]
-
-      iex> %{a: 42, b: 24}
-      ...> |> AgentMap.new()
-      ...> |> update([:a, :b], fn _ -> :drop end)
-      ...> |> AgentMap.keys()
-      []
-
-      iex> %{a: 42, b: 24}
-      ...> |> AgentMap.new()
-      ...> |> update([:a], fn _ -> :drop end)
-      ...> |> AgentMap.update(:b, fn _ -> :drop end)
-      ...> |> get([:a, :b])
-      [nil, :drop]
   """
   @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword | timeout) :: am
   def update(am, keys, fun, opts \\ []) do
@@ -381,28 +289,23 @@ defmodule AgentMap.Multi do
   end
 
   @doc """
-  Performs "fire and forget" `update/4` call, using `GenServer.cast/2`.
+  Performs "fire and forget" `update/4` call with `GenServer.cast/2`.
 
-  Returns *immediately*, without waiting for the actual update occur.
-
-  See `update/4`.
+  Returns without waiting for the actual update.
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — to set initial value for missing keys;
+    * `:initial` (`term`, `nil`) — value for missing keys;
 
-    * `:!` (`priority`, `:avg`) — to set
-      [priority](AgentMap.html#module-priority);
-
-    * `:timeout` (`timeout`, `5000`).
+    * `:!` (`priority`, `:avg`).
 
   ## Examples
 
       iex> AgentMap.new(a: 1)
-      ...> |> AgentMap.sleep(:a, 20)
-      ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)                      # 2
+      ...> |> sleep(:a, 20)
+      ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)                      #  2
       ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, !: :max, initial: 1) # 1
-      ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             # 3
+      ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             #   3
       ...> |> get([:a, :b])
       [4, 4]
   """
