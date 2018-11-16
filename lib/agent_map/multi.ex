@@ -208,7 +208,7 @@ defmodule AgentMap.Multi do
       [nil, nil]
 
   (!) `get_and_update/4`, `update/4` and `cast/4` calls are blocking execution
-  for all `keys`. For ex.:
+  for `keys`:
 
       iex> am = AgentMap.new()
       iex> cast(am, [:a, :b], fn _ -> sleep(10); :id end)
