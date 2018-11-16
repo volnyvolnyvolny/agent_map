@@ -253,7 +253,7 @@ defmodule AgentMap.Multi do
 
   Callback `fun` may return:
 
-    * `[new values]`;
+    * `[new value]`;
     * `:id` — to leave values as they are;
     * `:drop` — to drop `keys`.
 
