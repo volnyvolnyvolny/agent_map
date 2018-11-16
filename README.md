@@ -42,22 +42,13 @@ iex> AgentMap.get(am, :b)
 
 in around of `10` ms, because of parallelization.
 
-Underneath it's a `GenServer` that holds a `Map`. When a state changing call is
-first made for a key (`update/4`, `update!/4`, `get_and_update/4`, …), a special
-temporary process called "worker" is spawned. All subsequent calls for that key
-will be forwarded to the message queue of this worker. This process respects the
-order of incoming new calls, executing them in a sequence, except for `get/4`
-calls, which are processed as a parallel `Task`s. For each key, the degree of
-parallelization can be tweaked using `max_processes/3` function. The worker will
-die after about `10` ms of inactivity.
-
 The `AgentMap` supports multi-key calls — operations made on a group of keys.
 See `AgentMap.Multi`.
 
 Basically, `AgentMap` can be used as a cache, memoization, computational
 framework and, sometimes, as a `GenServer` replacement.
 
-See documentation for [AgentMap](https://hexdocs.pm/agent_map).
+See documentation for [AgentMap](https://hexdocs.pm/agent_map) for details.
 
 ## Examples
 
