@@ -21,10 +21,10 @@ defmodule AgentMap.Server.State do
 
   @type worker :: pid
 
-  @typedoc "Maximum get-tasks can be used per key."
+  @typedoc "Maximum number of get tasks can be used per key."
   @type max_p :: pos_integer | :infinity
 
-  @typedoc "Number of get-tasks is spawned."
+  @typedoc "Number of get tasks is spawned at the moment."
   @type p :: pos_integer
 
   @type key :: term
@@ -42,21 +42,36 @@ defmodule AgentMap.Server.State do
   @typedoc "Map with values."
   @type state :: %{required(key) => pack}
 
-  def put(state, key, {_b, {_p, _mp}} = pack) do
-    case pack do
-      {nil, {0, nil}} ->
-        Map.delete(state, key)
+  def put_value(state, key, value, old)
 
-      {b, {0, nil}} ->
-        Map.put(state, key, b)
-
-      {b, {p, nil}} ->
-        Map.put(state, key, {b, p})
-
-      _ ->
-        Map.put(state, key, pack)
-    end
+  def put_value(state, key, value, {nil, info}) do
+    Worker.inc(:size)
+    put(state, key, {{:value, value}, info})
   end
+
+  def put_value(state, key, value, {_old, info}) do
+    put(state, key, {{:value, value}, info})
+  end
+
+  #
+
+  def put(state, key, {nil, {0, nil}}) do
+    Map.delete(state, key)
+  end
+
+  def put(state, key, {v, {0, nil}}) do
+    Map.put(state, key, v)
+  end
+
+  def put(state, key, {v, {p, nil}}) do
+    Map.put(state, key, {v, p})
+  end
+
+  def put(state, key, pack) do
+    Map.put(state, key, pack)
+  end
+
+  #
 
   def get(state, key) do
     case state[key] do

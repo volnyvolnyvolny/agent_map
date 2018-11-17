@@ -527,7 +527,7 @@ defmodule AgentMap do
     * `:spawn_opt` — is passed as options to the underlying process as in
       `Process.spawn/4`;
 
-    * `:timeout` (`timeout`, `5000`) — `AgentMap` is allowed to spend at most
+    * `:timeout`, `5000` — `AgentMap` is allowed to spend at most
       the given number of milliseconds on the whole process of initialization or
       it will be terminated;
 
@@ -635,13 +635,13 @@ defmodule AgentMap do
   @doc """
   Sleeps the given `key` for `t` ms.
 
-  Returns *immediately*, as `GenServer.cast/2` is used.
+  Returns without waiting for the actual sleep to happen and end.
 
   ## Options
 
-    * `cast: false` — to return only when the actual sleep is ended;
+    * `cast: false` — to return after the actual sleep;
 
-    * `:!` (`priority`, `:avg`) — to postpone sleep until calls with a lower or
+    * `!: priority`, `:avg` — to postpone sleep until calls with a lower or
       equal [priorities](#module-priority) are executed.
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
@@ -659,36 +659,34 @@ defmodule AgentMap do
   Gets a value via the given `fun`.
 
   The function `fun` is sent to an instance of `AgentMap` which invokes it,
-  passing the value associated with `key` (or `nil`). The result of the
-  invocation is returned from this function. This call does not change value, so
-  a series of `get`-calls can and will be executed as a parallel `Task`s (see
+  passing the value associated with `key`. The result of the invocation is
+  returned from this function. This call does not change value, so a series of
+  `get`-calls can and will be executed as a parallel `Task`s (see
   `max_processes/3`).
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — to set initial value;
+    * `initial: value`, `nil` — value for `key` if it's missing;
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: :now` — to execute call in a separate `Task` (passing a current
+      value).
 
-    * `!: :now` — to *immediately* execute this call in a separate `Task`
-      (passing a current value).
-
-      This call is not counted in a number of processes allowed to run in
-      parallel (see `max_processes/3`):
+      With this option, any number of `get`-calls could be fired, bypassing the
+      instructions given with `:max_processes`:
 
           iex> am = AgentMap.new()
-          iex> info(am, :k)[:max_processes]
-          5
           iex> for _ <- 1..100 do
           ...>   Task.async(fn ->
           ...>     get(am, :k, fn nil -> sleep(40) end, !: :now)
           ...>   end)
           ...> end
           iex> sleep(10)
-          iex> info(am, :k)[:processes]
-          100
+          iex> info(am, :k)
+          [processes: 100, max_processes: 5]
 
-    * `:timeout` (`timeout, 5000`).
+    * `!: priority`, `:avg`;
+
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -713,10 +711,10 @@ defmodule AgentMap do
   @doc """
   Returns the value for the given `key`.
 
-  Syntactic sugar for `get(am, key, & &1, !: :min)`.
+  Sugar for `get(am, key, & &1, !: :min)`.
 
-  This call executed with a minimum (`0`) priority. As so, execution will start
-  only after all other calls for this `key` are completed.
+  This call is executed with a minimum (`0`) priority. As so, it will start only
+  after all other calls awaiting for execution for this `key` are completed.
 
   See `get/4`.
 
@@ -751,13 +749,13 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority` :avg) — to wait until calls with a lower or equal
+    * `!: priority` `:avg` — to return when calls with a lower or equal
       [priorities](#module-priority) are executed;
 
-    * `!: :now` — to *immediately* execute this call in a separate `Task`
-      (passing a current value);
+    * `!: :now` — to execute this call in a separate `Task` (passing a current
+      value);
 
-    * `:timeout` (`timeout, 5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -783,14 +781,14 @@ defmodule AgentMap do
   @doc """
   Fetches the value for a specific `key`.
 
-  Returns *immediately* `{:ok, value}` or `:error` if `key` is not present.
+  Returns `{:ok, value}` or `:error` if `key` is not present.
 
   ## Options
 
-    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
+    * `!: priority`, `:now` — to return when calls with a lower or equal
       [priorities](#module-priority) are executed for `key`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -817,17 +815,16 @@ defmodule AgentMap do
   @doc """
   Fetches the value for a specific `key`, erroring out otherwise.
 
-  Returns current value *immediately*. Raises a `KeyError` if `key` is not
-  present.
+  Returns current value. Raises a `KeyError` if `key` is not present.
 
   See `fetch/3`.
 
   ## Options
 
-    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
+    * `!: priority`, `:now` — to return when calls with a lower or equal
       [priorities](#module-priority) are executed for `key`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -862,11 +859,10 @@ defmodule AgentMap do
   Gets the value for `key` and updates it, all in one pass.
 
   The `fun` is sent to an `AgentMap` that invokes it, passing the value for
-  `key` (or `nil`). A `fun` can return:
+  `key`. A `fun` can result in:
 
-    * a two element tuple: `{get, new value}` — to return "get" value and set
-      new value;
-    * a one element tuple `{get}` — to return "get" value;
+    * `{get, new value}` — to return "get" value and set new value;
+    * `{get}` — to return "get" value;
     * `:pop` — to return current value and remove `key`;
     * `:id` — to just return current value.
 
@@ -883,12 +879,11 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:initial` — (`term`, `nil`) if value does not exist it is considered to
-      be the one given as initial;
+    * `initial: value`, `nil` — value for `key` if it's missing;
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -932,18 +927,15 @@ defmodule AgentMap do
   @doc """
   Updates `key` with the given `fun`.
 
-  Syntactic sugar for `get_and_update(am, key, &{am, fun.(&1)}, opts)`.
-
   See `get_and_update/4`.
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — if value does not exist it is considered to
-      be the one given as initial;
+    * `initial: value`, `nil` — value for `key` if it's missing;
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -981,9 +973,9 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Example
 
@@ -1016,9 +1008,9 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1057,10 +1049,9 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
-      used.
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1302,8 +1293,7 @@ defmodule AgentMap do
   `AgentMap` depends on `:max_processes` key which defines the default maximum
   amount of processes can be used per key.
 
-  The reserved keys are `:processes` and `:size` — they can be readed via
-  `get_prop/2`, but could not be set.
+  Keys `:processes` and `:size` are reserved — it's impossible to set them.
 
   See `get_prop/3`.
 
@@ -1333,12 +1323,12 @@ defmodule AgentMap do
   @spec set_prop(am, :max_processes, :infinity) :: am
   @spec set_prop(am, term, term) :: am
   def set_prop(_am, key, _value) when key in [:processes, :size] do
-    throw "Cannot set values for keys :size and :processes."
+    throw("Cannot set values for keys :size and :processes.")
   end
 
   def set_prop(am, key, value) do
     req = %Req{act: :set_prop, key: key, data: value}
-    _call(am, req, timeout: 5000)
+    _call(am, req, cast: true)
     am
   end
 
@@ -1347,17 +1337,15 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns *immediately* whether the given `key` exists.
-
-  Syntactic sugar for `match?({:ok, _}, fetch(am, key, opts))`.
+  Returns whether the given `key` exists at the moment.
 
   See `fetch/3`.
 
   ## Options
 
-    * `:!` (`priority`, `:now`) — to set [priority](#module-priority);
+    * `!: priority`, `:now`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1398,14 +1386,14 @@ defmodule AgentMap do
   def keys(am), do: _call(am, %Req{act: :keys, !: :now}, timeout: 5000)
 
   @doc """
-  Returns *immediately* all the current values of an `AgentMap`.
+  Returns all the current values of an `AgentMap`.
 
   ## Options
 
-    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
+    * `!: priority`, `:now` — to return after calls with a lower or equal
       [priorities](#module-priority) are executed;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1439,18 +1427,17 @@ defmodule AgentMap do
   @doc """
   Puts the given `value` under `key`.
 
-  Returns *immediately*, without waiting for the actual put to occur.
+  Returns without waiting for the actual put.
 
   Default [priority](#module-priority) for this call is `:max`.
 
   ## Options
 
-    * `:!` (`priority`, `:max`) — to set [priority](#module-priority);
+    * `cast: false` — to return after the actual put;
 
-    * `cast: false` — to return only when the actual put occur;
+    * `:!` (`priority`, `:max`);
 
-    * `:timeout` (`timeout`, `5000`). This option is ignored if `cast: true` is
-      used (by default).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1471,7 +1458,7 @@ defmodule AgentMap do
   @doc """
   Puts the given `value` under `key`, unless the entry already exists.
 
-  Returns *immediately*, without waiting for the actual put to occur.
+  Returns without waiting for the actual put.
 
   Default [priority](#module-priority) for this call is `:max`.
 
@@ -1479,12 +1466,11 @@ defmodule AgentMap do
 
   ## Options
 
-    * `cast: false` — to return only when the actual put occur;
+    * `cast: false` — to return after the actual put;
 
-    * `:!` (`priority`, `:max`) — to set [priority](#module-priority);
+    * `:!` (`priority`, `:max`);
 
-    * `:timeout` (`timeout`, `5000`). The option is ignored if `cast: true` is
-      used (by default).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1505,7 +1491,7 @@ defmodule AgentMap do
   @doc """
   Evaluates `fun` and puts the result under `key`, unless it is already present.
 
-  Returns *immediately*, without waiting for the actual put to occur.
+  Returns without waiting for the actual put.
 
   This function is useful in case you want to compute the value to put under
   `key` only if it is not already present (e.g., the value is expensive to
@@ -1517,11 +1503,11 @@ defmodule AgentMap do
 
   ## Options
 
-    * `cast: false` — to return only when the actual put occur;
+    * `cast: false` — to return after the actual put;
 
-    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`;
+    * `:!` (`priority`, `:max`);
 
-    * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1555,9 +1541,9 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1591,17 +1577,17 @@ defmodule AgentMap do
   @doc """
   Deletes the entry for `key`.
 
-  Returns *immediately*, without waiting for the actual delete to occur.
+  Returns without waiting for the actual delete.
 
   Default [priority](#module-priority) for this call is `:max`.
 
   ## Options
 
-    * `cast: false` — to return only when the actual drop occur;
+    * `cast: false` — to return after the actual drop;
 
-    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`;
+    * `!: priority`, `:max`;
 
-    * `:!` (`priority`, `:max`) — to set [priority](#module-priority).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1628,18 +1614,13 @@ defmodule AgentMap do
   @doc """
   Drops given `keys`.
 
-  Returns *immediately*, without waiting for the actual drop to occur.
-
-  Default [priority](#module-priority) for this call is `:max`.
+  Returns without waiting for the actual drop.
 
   ## Options
 
-    * `cast: false` — to return only when the actual drop occur;
+    * `cast: false` — to return after the actual drop;
 
-    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`;
-
-    * `:!` (`priority`, `:max`) — to set [priorities](#module-priority) for
-      delete calls.
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1658,7 +1639,7 @@ defmodule AgentMap do
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [!: :max, cast: true]) do
     req = %Multi.Req{act: :drop, keys: keys}
-    _call(am, req, opts, !: :max, cast: true)
+    _call(am, req, opts, cast: true)
     am
   end
 
@@ -1671,10 +1652,10 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:!` (`priority`, `:now`) — to wait until calls with a lower or equal
+    * `!: priority`, `:now` — to wait until calls with a lower or equal
       priorities are executed;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1699,17 +1680,13 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns a key-value pairs.
-
-  Keys that do not exist will be missed in resulting map.
+  Returns a map with `keys` and values.
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: :now` — to return a snapshot with current keys and values;
 
-    * `!: :now` — to return *immediately* a snapshot with keys and values;
-
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -1739,25 +1716,22 @@ defmodule AgentMap do
   @doc """
   Increments value with given `key`.
 
-  By default, returns *immediately*, without waiting for the actual increment to
-  occur.
+  By default, returns without waiting for the actual increment.
 
   ### Options
 
-    * `:step` (`number`, `1`) — increment step;
+    * `step: number`, `1` — increment step;
 
-    * `:initial` (`number`, `0`) — if value does not exist it is considered to
-      be the one given as initial;
+    * `initial: number`, `0` — value if `key` is missing;
 
-    * `initial: false` — to exit instance, rasing `KeyError` if value does not
-      exist;
+    * `initial: false` — to raise `KeyError` on server if value does not exist;
 
 
-    * `cast: false` — to return only when the actual increment occur;
+    * `cast: false` — to return after the actual increment;
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`). Works only with `cast: false`.
+    * `:timeout`, `5000`.
 
   ### Examples
 
@@ -1791,7 +1765,7 @@ defmodule AgentMap do
   @doc """
   Decrements value for `key`.
 
-  All the same as `inc/3`.
+  See `inc/3`.
   """
   @spec dec(am, key, keyword) :: am
   def dec(am, key, opts \\ [step: 1, cast: true, initial: 0, !: :avg]) do
@@ -1804,14 +1778,13 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Performs `cast` ("fire and forget"). Works the same as `update/4`, but uses
-  `GenServer.cast/2` internally.
+  Performs "fire and forget" `update/4` call with `GenServer.cast/2`.
 
-  Returns *immediately*, without waiting for the actual update to occur.
+  Returns without waiting for the actual update.
 
   ## Options
 
-    * `:!` (`priority`, `:avg`) — to set [priority](#module-priority).
+    * `!: priority`, `:avg` — to set [priority](#module-priority).
 
   ## Examples
 

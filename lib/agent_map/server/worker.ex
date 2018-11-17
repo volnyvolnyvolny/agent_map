@@ -53,9 +53,9 @@ defmodule AgentMap.Worker do
     dict(worker)[:processes] + ps
   end
 
-  defp dec(key), do: put(key, get(key) - 1)
+  def dec(key), do: put(key, get(key) - 1)
 
-  defp inc(key), do: put(key, get(key) + 1)
+  def inc(key), do: put(key, get(key) + 1)
 
   ##
   ## CALLBACKS

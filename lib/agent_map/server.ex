@@ -60,6 +60,7 @@ defmodule AgentMap.Server do
       max_p = args[:max_processes]
 
       Process.put(:max_processes, max_p)
+      Process.put(:size, 0)
 
       {:ok, map}
     else

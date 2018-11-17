@@ -87,16 +87,16 @@ defmodule AgentMap.Multi do
   @doc """
   Gets `keys` values via the given `fun`.
 
-  `AgentMap` invokes `fun` passing `keys` **current** values (change
+  `AgentMap` invokes `fun` passing **current** values for `keys` (change
   [priority](AgentMap.html#module-priority) to bypass).
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — value for missing keys;
+    * `initial: value`, `nil` — value for missing keys;
 
-    * `:!` (`priority`, `:now`);
+    * `!: priority`, `:now`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -186,11 +186,11 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — value for missing keys;
+    * `initial: value`, `nil` — value for missing keys;
 
-    * `:!` (`priority`, `:avg`);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -260,11 +260,11 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — value for missing keys;
+    * `initial: value`, `nil` — value for missing keys;
 
-    * `:!` (`priority`, `:avg`);
+    * `!: priority`, `:avg`;
 
-    * `:timeout` (`timeout`, `5000`).
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -296,9 +296,9 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `:initial` (`term`, `nil`) — value for missing keys;
+    * `initial: value`, `nil` — value for missing keys;
 
-    * `:!` (`priority`, `:avg`).
+    * `!: priority`, `:avg`.
 
   ## Examples
 

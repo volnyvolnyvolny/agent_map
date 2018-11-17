@@ -8,6 +8,7 @@ defmodule AgentMap.Req do
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Server.State
 
+  @compile {:inline, reply_ok: 1}
   @enforce_keys [:act]
 
   defstruct [
@@ -41,25 +42,27 @@ defmodule AgentMap.Req do
     %{req | act: :get_and_update, fun: fun, data: nil}
   end
 
+  #
+
+  defp reply_ok(st), do: {:reply, :_ok, st}
+
   ##
-  ## HANDLERS
+  ## HANDLER
   ##
 
-  def handle(%{act: :to_map} = req, state) do
-    keys = Map.keys(state)
+  def handle(%{act: :to_map} = req, st) do
+    keys = Map.keys(st)
+
     fun = fn _ -> Process.get(:map) end
-
     req = struct(Multi.Req, Map.from_struct(req))
-
     req = %{req | act: :get, fun: fun, keys: keys}
 
-    Multi.Req.handle(req, state)
+    Multi.Req.handle(req, st)
   end
 
-  def handle(%{act: :inc} = req, state) do
+  def handle(%{act: :inc, key: key} = req, st) do
     step = req.data[:step]
 
-    k = req.key
     i = req.data[:initial]
 
     inc = fn
@@ -67,7 +70,7 @@ defmodule AgentMap.Req do
         v + step
 
       {:value, v} ->
-        k = inspect(k)
+        k = inspect(key)
         v = inspect(v)
 
         m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
@@ -76,27 +79,27 @@ defmodule AgentMap.Req do
         raise ArithmeticError, message: m
 
       nil ->
-        if i, do: i + step, else: raise(KeyError, key: k)
+        if i, do: i + step, else: raise(KeyError, key: key)
     end
 
-    case get(state, req.key) do
-      {box, p_info} ->
-        pack = {{:value, inc.(box)}, p_info}
-        state = put(state, req.key, pack)
-        {:reply, :_done, state}
+    case get(st, key) do
+      {v, _info} = old ->
+        st
+        |> put_value(key, inc.(v), old)
+        |> reply_ok()
 
       _worker ->
         req
         |> get_and_update(fn _value ->
-          {:_done, inc.(Process.get(:value))}
+          {:_ok, inc.(Process.get(:value))}
         end)
-        |> handle(state)
+        |> handle(st)
     end
   end
 
-  def handle(%{act: :processes} = req, state) do
+  def handle(%{act: :processes, key: key}, st) do
     p =
-      case get(state, req.key) do
+      case get(st, key) do
         {_box, {p, _max_p}} ->
           p
 
@@ -104,118 +107,117 @@ defmodule AgentMap.Req do
           processes(worker)
       end
 
-    {:reply, p, state}
+    {:reply, p, st}
   end
 
   # per key:
-  def handle(%{act: :max_processes, data: nil} = req, state) do
+  def handle(%{act: :max_processes, key: key, data: nil}, st) do
     max_p =
-      case get(state, req.key) do
-        {_box, {_p, max_p}} ->
+      case get(st, key) do
+        {_, {_, max_p}} ->
           max_p
 
         worker ->
           Worker.dict(worker)[:max_processes]
       end || Process.get(:max_processes)
 
-    {:reply, max_p, state}
+    {:reply, max_p, st}
   end
 
-  def handle(%{act: :max_processes} = req, state) do
-    case get(state, req.key) do
+  def handle(%{act: :max_processes, key: key} = req, st) do
+    case get(st, key) do
       {box, {p, _max_p}} ->
-        pack = {box, {p, req.data}}
-        {:reply, :_ok, put(state, req.key, pack)}
+        st
+        |> put(key, {box, {p, req.data}})
+        |> reply_ok()
 
       worker ->
         req = compress(%{req | !: :now, from: nil})
         send(worker, req)
-        {:noreply, state}
+        {:noreply, st}
     end
   end
 
   # per server:
-  def handle(%{act: :def_max_processes} = req, state) do
+  def handle(%{act: :def_max_processes} = req, st) do
     Process.put(:max_processes, req.data)
-    {:reply, :_ok, state}
+
+    reply_ok(st)
   end
 
   #
 
-  def handle(%{act: :keys}, state) do
-    has_v? = &match?({:ok, _}, fetch(state, &1))
-    keys = Enum.filter(Map.keys(state), has_v?)
+  def handle(%{act: :keys}, st) do
+    has_v? = &match?({:ok, _}, fetch(st, &1))
+    keys = Enum.filter(Map.keys(st), has_v?)
 
-    {:reply, keys, state}
+    {:reply, keys, st}
   end
 
   #
 
-  def handle(%{act: :get, !: :now} = req, state) do
-    case get(state, req.key) do
-      {b, {p, max_p}} ->
-        spawn_get_task(req, {req.key, b})
+  def handle(%{act: :get, key: key, !: :now} = req, st) do
+    case get(st, key) do
+      {v, {p, max_p}} ->
+        spawn_get_task(req, {key, v})
+        pack = {v, {p + 1, max_p}}
 
-        pack = {b, {p + 1, max_p}}
-        state = put(state, req.key, pack)
-        {:noreply, state}
+        {:noreply, put(st, key, pack)}
 
       w ->
-        b = Worker.dict(w)[:value]
-        spawn_get_task(req, {req.key, b})
+        v = Worker.dict(w)[:value]
+        spawn_get_task(req, {key, v})
 
         send(w, %{info: :get!})
-        {:noreply, state}
+        {:noreply, st}
     end
   end
 
-  def handle(%{act: :get} = req, state) do
+  def handle(%{act: :get, key: key} = req, st) do
     g_max_p = Process.get(:max_processes)
 
-    case get(state, req.key) do
+    case get(st, key) do
       # Cannot spawn more Task's.
       {_, {p, nil}} when p + 1 >= g_max_p ->
-        state = spawn_worker(state, req.key)
-        handle(req, state)
+        handle(req, spawn_worker(st, key))
 
       {_, {p, max_p}} when p + 1 >= max_p ->
-        state = spawn_worker(state, req.key)
-        handle(req, state)
+        handle(req, spawn_worker(st, key))
 
       # Can spawn.
-      {b, {p, max_p}} ->
-        spawn_get_task(req, {req.key, b})
-        pack = {b, {p + 1, max_p}}
-        state = put(state, req.key, pack)
-        {:noreply, state}
+      {v, {p, max_p}} ->
+        spawn_get_task(req, {key, v})
+        pack = {v, {p + 1, max_p}}
+
+        {:noreply, put(st, key, pack)}
 
       worker ->
         send(worker, compress(req))
-        {:noreply, state}
+        {:noreply, st}
     end
   end
 
   #
 
-  def handle(%{act: :get_and_update} = req, state) do
-    case get(state, req.key) do
-      {_box, _p_info} ->
-        state = spawn_worker(state, req.key)
-        handle(req, state)
+  def handle(%{act: :get_and_update, key: key} = req, st) do
+    case get(st, key) do
+      {_box, _info} ->
+        handle(req, spawn_worker(st, key))
 
       worker ->
         send(worker, compress(req))
-        {:noreply, state}
+        {:noreply, st}
     end
   end
 
   #
 
-  def handle(%{act: :put} = req, state) do
-    case get(state, req.key) do
-      {_box, p_info} ->
-        pack = {box(req.data), p_info}
-        {:reply, :ok, put(state, req.key, pack)}
+  def handle(%{act: :put, key: key} = req, st) do
+    case get(st, key) do
+      {_, _} = old ->
+        st
+        |> put_value(key, req.data, old)
+        |> reply_ok()
 
       worker ->
         req =
@@ -224,49 +226,47 @@ defmodule AgentMap.Req do
           end)
 
         send(worker, compress(req))
-        {:noreply, state}
+
+        {:noreply, st}
     end
   end
 
-  def handle(%{act: :put_new} = req, state) do
-    case get(state, req.key) do
-      {nil, p_info} ->
+  def handle(%{act: :put_new, key: key} = req, st) do
+    case get(st, key) do
+      {nil, _} = old ->
         if req.fun do
-          state = spawn_worker(state, req.key)
-          handle(req, state)
+          handle(req, spawn_worker(st, key))
         else
-          pack = {box(req.data), p_info}
-          {:reply, :_ok, put(state, req.key, pack)}
+          st
+          |> put_value(key, req.data, old)
+          |> reply_ok()
         end
 
-      {_box, _p_info} ->
-        {:reply, :_ok, state}
+      {_, _} ->
+        reply_ok(st)
 
       worker ->
         req =
           get_and_update(req, fn _ ->
             unless Process.get(:value) do
-              if req.fun do
-                {:_ok, req.fun.()}
-              else
-                {:_ok, req.data}
-              end
+              fun = req.fun
+              {:_ok, (fun && fun.()) || req.data}
             end || {:_ok}
           end)
 
         send(worker, compress(req))
-        {:noreply, state}
+        {:noreply, st}
     end
   end
 
   #
 
-  def handle(%{act: :fetch, !: :now} = req, state) do
-    {:reply, fetch(state, req.key), state}
+  def handle(%{act: :fetch, key: key, !: :now}, st) do
+    {:reply, fetch(st, key), st}
   end
 
-  def handle(%{act: :fetch} = req, state) do
-    if is_pid(get(state, req.key)) do
+  def handle(%{act: :fetch, key: key} = req, st) do
+    if is_pid(get(st, key)) do
       fun = fn value ->
         if Process.get(:value) do
           {:ok, value}
@@ -275,63 +275,70 @@ defmodule AgentMap.Req do
         end
       end
 
-      handle(%{req | act: :get, fun: fun}, state)
+      handle(%{req | act: :get, fun: fun}, st)
     else
-      handle(%{req | act: :fetch, !: :now}, state)
+      handle(%{req | act: :fetch, !: :now}, st)
     end
   end
 
   #
 
-  def handle(%{act: :delete} = req, state) do
-    case get(state, req.key) do
-      {_box, p_info} ->
-        pack = {nil, p_info}
-        state = put(state, req.key, pack)
-        {:reply, :_done, state}
+  def handle(%{act: :delete, key: key} = req, st) do
+    case get(st, key) do
+      {value, info} ->
+        if value, do: Worker.dec(:size)
+
+        st
+        |> put(key, {nil, info})
+        |> reply_ok()
 
       _worker ->
         req
         |> get_and_update(fn _ -> :pop end)
-        |> handle(state)
+        |> handle(st)
     end
   end
 
   #
 
-  def handle(%{act: :sleep} = req, state) do
-    req
-    |> get_and_update(fn _ ->
+  def handle(%{act: :sleep} = req, st) do
+    fun = fn _ ->
       :timer.sleep(req.data)
       :id
-    end)
-    |> handle(state)
+    end
+
+    req
+    |> get_and_update(fun)
+    |> handle(st)
   end
 
   #
 
-  def handle(%{act: :get_prop, key: :size}, state) do
-    has_v? = &match?({:ok, _}, fetch(state, &1))
-    size = Enum.count(Map.keys(state), has_v?)
+  def handle(%{act: :get_prop, key: :size}, st) do
+    # has_v? = &match?({:ok, _}, fetch(state, &1))
+    # size = Enum.count(Map.keys(state), has_v?)
 
-    {:reply, size, state}
+    {:reply, Process.get(:size), st}
   end
 
-  def handle(%{act: :get_prop, key: :processes}, state) do
-    keys = Map.keys(state)
-    {_map, workers} = separate(state, keys)
+  def handle(%{act: :get_prop, key: :processes}, st) do
+    ws = separate(st, Map.keys(st)) |> elem(1)
 
-    ps = for {_, pid} <- workers, do: Worker.processes(pid)
+    ps =
+      for {_, pid} <- ws do
+        Worker.processes(pid)
+      end
 
-    {:reply, Enum.sum(ps) + 1, state}
+    {:reply, Enum.sum(ps) + 1, st}
   end
 
-  def handle(%{act: :get_prop} = req, state) do
-    {:reply, Process.get(req.key, req.data), state}
+  def handle(%{act: :get_prop, key: key} = req, st) do
+    prop = Process.get(key, req.data)
+    {:reply, prop, st}
   end
 
-  def handle(%{act: :set_prop} = req, state) do
-    Process.put(req.key, req.data)
-    {:reply, :_done, state}
+  def handle(%{act: :set_prop, key: key} = req, st) do
+    Process.put(key, req.data)
+    {:noreply, st}
   end
 end

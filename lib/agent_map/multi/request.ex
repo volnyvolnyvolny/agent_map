@@ -163,7 +163,7 @@ defmodule AgentMap.Multi.Req do
           {:noreply, state} ->
             state
 
-          {:reply, :_done, state} ->
+          {:reply, _, state} ->
             state
         end
       end)
