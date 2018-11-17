@@ -90,6 +90,8 @@ defmodule AgentMap.Multi do
   `AgentMap` invokes `fun` passing **current** values for `keys` (change
   [priority](AgentMap.html#module-priority) to bypass).
 
+  For this call `{:max, -2}` priority is used.
+
   ## Options
 
     * `initial: value`, `nil` — value for missing keys;
@@ -184,11 +186,11 @@ defmodule AgentMap.Multi do
           iex> get(am, keys)
           [nil, nil, nil, nil]
 
+  For this call `{:max, -2}` priority is used.
+
   ## Options
 
     * `initial: value`, `nil` — value for missing keys;
-
-    * `!: priority`, `:avg`;
 
     * `:timeout`, `5000`.
 
@@ -258,11 +260,11 @@ defmodule AgentMap.Multi do
     * `:id` — to leave values as they are;
     * `:drop` — to drop `keys`.
 
+  For this call `{:max, -2}` priority is used.
+
   ## Options
 
     * `initial: value`, `nil` — value for missing keys;
-
-    * `!: priority`, `:avg`;
 
     * `:timeout`, `5000`.
 
@@ -294,11 +296,11 @@ defmodule AgentMap.Multi do
 
   Returns without waiting for the actual update.
 
+  For this call `{:max, -2}` priority is used.
+
   ## Options
 
-    * `initial: value`, `nil` — value for missing keys;
-
-    * `!: priority`, `:avg`.
+    * `initial: value`, `nil` — value for missing keys.
 
   ## Examples
 
@@ -313,6 +315,6 @@ defmodule AgentMap.Multi do
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
   def cast(am, keys, fun, opts \\ []) do
-    update(am, keys, fun, _prep(opts, !: :avg, cast: true))
+    update(am, keys, fun, _prep(opts, !: {:max, -2}, cast: true))
   end
 end
