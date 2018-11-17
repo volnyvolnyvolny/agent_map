@@ -14,13 +14,15 @@ defimpl Enumerable, for: AgentMap do
   end
 
   def slice(am) do
-    map = take(am, keys(am))
+    map = to_map(am)
     {:ok, map_size(map), &Enumerable.List.slice(:maps.to_list(map), &1, &2)}
   end
 
   def reduce(am, acc, fun) do
-    map = take(am, keys(am))
-    reduce_list(:maps.to_list(map), acc, fun)
+    am
+    |> to_map()
+    |> :maps.to_list()
+    |> reduce_list(acc, fun)
   end
 
   defp reduce_list(_, {:halt, acc}, _fun), do: {:halted, acc}

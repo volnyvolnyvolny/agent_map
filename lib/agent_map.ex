@@ -1307,6 +1307,8 @@ defmodule AgentMap do
 
   See `get_prop/3`.
 
+  ## Examples
+
       iex> am = AgentMap.new()
       iex> am
       ...> |> set_prop(:key, 42)
