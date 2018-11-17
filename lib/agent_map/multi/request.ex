@@ -66,20 +66,20 @@ defmodule AgentMap.Multi.Req do
   end
 
   # on server
-  defp prepair(%{act: :get, !: :now} = req, state) do
-    map = take(state, req.keys)
-    {state, {map, %{}}}
+  defp prepair(%{act: :get, !: :now} = req, st) do
+    map = take(st, req.keys)
+    {st, {map, %{}}}
   end
 
-  defp prepair(%{act: :get} = req, state) do
-    {state, separate(state, req.keys)}
+  defp prepair(%{act: :get} = req, st) do
+    {st, separate(st, req.keys)}
   end
 
   # act: :get_and_update
-  defp prepair(req, state) do
-    state = Enum.reduce(req.keys, state, &spawn_worker(&2, &1))
+  defp prepair(req, st) do
+    st = Enum.reduce(req.keys, st, &spawn_worker(&2, &1))
 
-    {state, separate(state, req.keys)}
+    {st, separate(st, req.keys)}
   end
 
   ##
@@ -152,35 +152,33 @@ defmodule AgentMap.Multi.Req do
   ##
   ##
 
-  def handle(%{act: :drop, from: nil} = req, state) do
+  def handle(%{act: :drop, from: nil} = req, st) do
     keys = req.keys
 
     req = %{to_req(req) | act: :delete}
 
-    state =
-      Enum.reduce(keys, state, fn key, state ->
-        case Req.handle(%{req | key: key}, state) do
-          {:noreply, state} ->
-            state
+    st =
+      Enum.reduce(keys, st, fn key, st ->
+        case Req.handle(%{req | key: key}, st) do
+          {_, _, st} -> st
 
-          {:reply, _, state} ->
-            state
+          {_, st} -> st
         end
       end)
 
-    {:noreply, state}
+    {:noreply, st}
   end
 
-  def handle(%{act: :drop} = req, state) do
+  def handle(%{act: :drop} = req, st) do
     req
     |> get_and_update(fn _ -> :pop end)
-    |> handle(state)
+    |> handle(st)
   end
 
   #
 
-  def handle(req, state) do
-    {state, {map, workers}} = prepair(req, state)
+  def handle(req, st) do
+    {st, {map, workers}} = prepair(req, st)
 
     pids = Map.values(workers)
 
@@ -225,7 +223,7 @@ defmodule AgentMap.Multi.Req do
 
     receive do
       {^ref, :go!} ->
-        {:noreply, state}
+        {:noreply, st}
     end
   end
 end
