@@ -1,16 +1,12 @@
 defimpl Enumerable, for: AgentMap do
   import AgentMap
 
-  def count(am), do: {:ok, get_prop(am, :size)}
+  def count(am) do
+    {:ok, get_prop(am, :size)}
+  end
 
   def member?(am, {key, value}) do
-    case fetch(am, key) do
-      {:ok, ^value} ->
-        {:ok, true}
-
-      _ ->
-        {:ok, false}
-    end
+    {:ok, match?({:ok, ^value}, fetch(am, key))}
   end
 
   def slice(am) do
