@@ -251,22 +251,7 @@ defmodule AgentMap.Worker do
         place(heap, req) |> flush()
     after
       0 ->
-        # Special hack for multi_key case.
-        if Heap.size(heap) == 1 do
-          {_, _, req} = Heap.root(heap)
-
-          if req[:multi_key] && req[:act] == :get_and_update do
-            :timer.sleep(2)
-
-            receive do
-              req ->
-                place(heap, req) |> flush()
-            after
-              0 ->
-                heap
-            end
-          end
-        end || heap
+        heap
     end
   end
 

@@ -62,7 +62,7 @@ defmodule AgentMap.Multi.Req do
 
     req = %{req | from: nil, fun: fun}
 
-    for w <- pids, do: send(w, compress(req) |> Map.put(:multi_key, true))
+    for w <- pids, do: send(w, compress(req))
   end
 
   # on server

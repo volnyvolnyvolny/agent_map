@@ -306,11 +306,10 @@ defmodule AgentMap.Multi do
 
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
-      ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)                      #  2
-      ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, !: :max, initial: 1) # 1
-      ...> |> cast([:a, :b], fn [3, 3] -> [4, 4] end, !: :min)             #   3
+      ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, initial: 1) # 1
+      ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)             #  2
       ...> |> get([:a, :b])
-      [4, 4]
+      [3, 3]
   """
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
