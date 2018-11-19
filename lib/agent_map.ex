@@ -219,12 +219,11 @@ defmodule AgentMap do
 
   Underneath it's a `GenServer` that holds a `Map`. When a state changing call
   is first made for a key (`update/4`, `update!/4`, `get_and_update/4`, …), a
-  special temporary process called "worker" is spawned. All subsequent calls for
-  that key will be forwarded to the message queue of this worker. This process
-  respects the order of incoming new calls, executing them in a sequence, except
-  for `get/4` calls, which are processed as a parallel `Task`s. For each key,
-  the degree of parallelization can be tweaked using `max_processes/3` function.
-  The worker will die after about `10` ms of inactivity.
+  special temporary worker-process is spawned. All subsequent calls will be
+  forwarded to the message queue of this worker. A process respects the order of
+  incoming new calls, executing them in a sequence, except for `get/4` calls,
+  which are processed as a parallel `Task`s (see `max_processes/3`). A worker
+  will die after about `10` ms of inactivity.
   """
 
   @max_processes 5
