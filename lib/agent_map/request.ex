@@ -259,32 +259,33 @@ defmodule AgentMap.Req do
 
   #
 
-  # def handle(%{act: :update, key: key, tiny: true} = req, state = st) do
-  #   case get(state, key) do
-  #     {value?, _info} ->
-  #       Process.put(:key, key)
-  #       Process.put(:value?, value?)
-
-  #       req.fun.(unbox(value?))
-
-  #       # {new_value?, ret} =
-  #       #   Worker.interpret(req, arg, )
-
-  #       Process.delete(:key)
-  #       Process.delete(:value?)
-
-  #       handle(req, spawn_worker(st, key))
-
-  #     worker ->
-  #       send(worker, compress(req))
-  #       {:noreply, state}
-  #   end
-  # end
-
-  def handle(%{act: :update, key: key} = req, state = st) do
+  def handle(%{act: :update, key: key} = req, state) do
     case get(state, key) do
-      {_value?, _info} ->
-        handle(req, spawn_worker(st, key))
+      {v?, info} ->
+        if req.tiny do
+          Process.put(:key, key)
+          Process.put(:value?, v?)
+
+          run(req)
+
+          state =
+            case Process.get(:value?) do
+              {:v, v} ->
+                unless v?, do: Worker.inc(:size)
+                put(state, key, {{:v, v}, info})
+
+              nil ->
+                if v?, do: Worker.dec(:size)
+                put(state, key, {nil, info})
+            end
+
+          Process.delete(:key)
+          Process.delete(:value?)
+
+          {:noreply, state}
+        else
+          handle(req, spawn_worker(state, key))
+        end
 
       worker ->
         send(worker, compress(req))
