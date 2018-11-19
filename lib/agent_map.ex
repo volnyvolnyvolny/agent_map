@@ -169,9 +169,9 @@ defmodule AgentMap do
       iex> %{state: :ready}
       ...> |> AgentMap.new()
       ...> |> sleep(:state, 10)
-      ...> |> cast(:state, fn :go! -> :stop end)                     # 3
-      ...> |> cast(:state, fn :steady -> :go! end, !: :max)          # 2
-      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1
+      ...> |> cast(:state, fn :go! -> :stop end)                     # | | 3
+      ...> |> cast(:state, fn :steady -> :go! end, !: :max)          # | 2 |
+      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1 | |
       ...> |> get(:state)
       :stop
 
@@ -690,8 +690,16 @@ defmodule AgentMap do
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
   def sleep(am, key, t, opts \\ [!: :avg, cast: true]) do
-    req = %Req{act: :sleep, key: key, data: t}
-    _call(am, req, opts, !: :avg, cast: true)
+    get_and_update(
+      am,
+      key,
+      fn _ ->
+        :timer.sleep(t)
+        :id
+      end,
+      _prep(opts, !: :avg, cast: true)
+    )
+
     am
   end
 
@@ -997,10 +1005,10 @@ defmodule AgentMap do
       %{Alice: 1024, Bob: 42}
 
       iex> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                                        # 0
-      ...> |> put(:Alice, 3)                                           #   2
-      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1) #  1
-      ...> |> update(:Alice, fn 3 -> 4 end)                            #    3
+      ...> |> sleep(:Alice, 20)                                        # 0 | | |
+      ...> |> put(:Alice, 3)                                           # | | 2 |
+      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1) # | 1 | |
+      ...> |> update(:Alice, fn 3 -> 4 end)                            # | | | 3
       ...> |> values()
       [4]
   """
@@ -1072,10 +1080,10 @@ defmodule AgentMap do
 
       iex> %{Alice: 1}
       ...> |> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                              # 0
-      ...> |> put(:Alice, 3)                                 # 2
-      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # 1
-      ...> |> update!(:Alice, fn 3 -> 4 end)                 # 3
+      ...> |> sleep(:Alice, 20)                              # 0 | | |
+      ...> |> put(:Alice, 3)                                 # | | 2 |
+      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # | 1 | |
+      ...> |> update!(:Alice, fn 3 -> 4 end)                 # | | | 3
       ...> |> update!(:Bob, & &1)
       ** (KeyError) key :Bob not found
   """
@@ -1143,8 +1151,8 @@ defmodule AgentMap do
       iex> task = fn ->
       ...>   get(am, :k, fn _ -> sleep(10) end)
       ...> end
-      iex> for _ <- 1..4, do: spawn(task) # +4
-      iex> task.()                        # +1
+      iex> for _ <- 1..4, do: spawn(task)  # +4
+      iex> task.()                         # +1
       :ok
 
   will be executed in around of `10` ms, not `50`. `AgentMap` can parallelize
@@ -1165,17 +1173,19 @@ defmodule AgentMap do
       ...> end
       ...>
       iex> for _ <- 1..250 do
-      ...>   sleep(1)                   # every ms
-      ...>   info(am, :key)[:processes] # take the amount of processes being used
+      ...>   sleep(1)                    # every ms
+      ...>   info(am, :key)[:processes]  # take the amount of processes being used
       ...> end
       ...> |> Enum.max()
       42
       iex> get(am, :key, & &1)
       nil
   """
-  @spec max_processes(am, key, pos_integer | :infinity) :: am
+  @spec max_processes(am, key, pos_integer | :infinity | nil) :: am
   def max_processes(am, key, value)
-      when (is_integer(value) and value > 0) or value == :infinity do
+      when is_integer(value) and value > 0
+      when value == :infinity
+      when is_nil(value) do
     #
     _call(am, %Req{act: :max_processes, key: key, data: value}, timeout: 5000)
     am
@@ -1269,7 +1279,7 @@ defmodule AgentMap do
   @doc """
   Returns prop with given `key` or `default` if `key` is not there.
 
-  See `set_prop/3`.
+  See `set_prop/3`, `upd_prop/3`.
   """
   @spec get_prop(am, term, term) :: term
   def get_prop(am, key, default) do
@@ -1328,7 +1338,7 @@ defmodule AgentMap do
       1
   """
   @spec get_prop(am, :processes) :: pos_integer
-  @spec get_prop(am, :max_processes) :: pos_integer | :infinit
+  @spec get_prop(am, :max_processes) :: pos_integer | :infinity
   @spec get_prop(am, :size) :: non_neg_integer
   def get_prop(am, key) do
     req = %Req{act: :get_prop, key: key}
@@ -1336,49 +1346,74 @@ defmodule AgentMap do
   end
 
   @doc """
-  Stores key-value pair in a process dictionary of instance.
+  Stores prop in a process dictionary of instance.
 
-  The return value of this function is the value that was previously stored
-  under `key`, or `nil` in case no value was stored under `key`.
+  The special `:max_processes` value (default maximum number of processes can be
+  used per key) is tweaked here.
 
-  `AgentMap` depends on `:max_processes` key which defines the default maximum
-  amount of processes can be used per key.
-
-  Keys `:processes` and `:size` are reserved — it's impossible to set them.
-
-  See `get_prop/3`.
+  See `get_prop/3`, `upd_prop/4`.
 
   ## Examples
 
       iex> am = AgentMap.new()
       iex> am
       ...> |> set_prop(:key, 42)
-      ...> |> get(:b, fn _ -> get_prop(am, :key) end)
+      ...> |> get_prop(:key)
       42
+
+      iex> am = AgentMap.new()
+      iex> get_prop(am, :bar)
+      nil
+      iex> get_prop(am, :bar, :baz)
+      :baz
+      iex> get_prop(am, :max_processes)
+      5
+
+  Also, properties could be used inside callbacks:
 
       iex> am = AgentMap.new()
       iex> am
       ...> |> get(:a, fn _ -> set_prop(am, :foo, :bar) end)
       ...> |> get(:b, fn _ -> get_prop(am, :foo) end)
       :bar
-
-      iex> am = AgentMap.new()
-      iex> get(am, :c, fn _ -> get_prop(am, :bar) end)
-      nil
-      iex> get(am, :c, fn _ -> get_prop(am, :bar, :baz) end)
-      :baz
-      iex> get(am, :d, fn _ -> get_prop(am, :max_processes) end)
-      5
   """
   @spec set_prop(am, :max_processes, pos_integer) :: am
   @spec set_prop(am, :max_processes, :infinity) :: am
   @spec set_prop(am, term, term) :: am
-  def set_prop(_am, key, _value) when key in [:processes, :size] do
-    throw("Cannot set values for keys :size and :processes.")
+  def set_prop(am, key, value) do
+    upd_prop(am, key, fn _ -> value end)
   end
 
-  def set_prop(am, key, value) do
-    req = %Req{act: :set_prop, key: key, data: value}
+  @doc """
+  Updates prop in a process dictionary of instance.
+
+  The special `:max_processes` value (default maximum number of processes can be
+  used per key) is tweaked here.
+
+  See `get_prop/3`, `set_prop/3`.
+
+  ## Examples
+
+      iex> AgentMap.new()
+      ...> |> set_prop(:key, 42)
+      ...> |> upd_prop(:key, fn 42 -> 24 end)
+      ...> |> get_prop(:key)
+      24
+
+      iex> AgentMap.new()
+      ...> |> upd_prop(:key, fn 0 -> 24 end, 0)
+      ...> |> get_prop(:key)
+      24
+  """
+  @spec upd_prop(am, term, fun, term) :: am
+  def upd_prop(am, key, fun, default \\ nil)
+
+  def upd_prop(_am, key, _fun, _default) when key in [:processes, :size] do
+    throw("Cannot update #{inspect(key)} prop.")
+  end
+
+  def upd_prop(am, key, fun, default) do
+    req = %Req{act: :upd_prop, key: key, fun: fun, data: default}
     _call(am, req, cast: true)
     am
   end
@@ -1486,7 +1521,7 @@ defmodule AgentMap do
 
     * `cast: false` — to return after the actual put;
 
-    * `:!` (`priority`, `:max`);
+    * `!: priority`, `:max`;
 
     * `:timeout`, `5000`.
 
@@ -1501,9 +1536,9 @@ defmodule AgentMap do
   """
   @spec put(am, key, value, keyword) :: am
   def put(am, key, value, opts \\ [!: :max, cast: true]) do
-    req = %Req{act: :put, key: key, data: value}
-    _call(am, req, opts, !: :max, cast: true)
-    am
+    opts = _prep(opts, !: :max, cast: true)
+
+    update(am, key, fn _ -> value end, opts)
   end
 
   @doc """
@@ -1519,7 +1554,7 @@ defmodule AgentMap do
 
     * `cast: false` — to return after the actual put;
 
-    * `:!` (`priority`, `:max`);
+    * `!: priority`, `:max`;
 
     * `:timeout`, `5000`.
 
@@ -1534,9 +1569,20 @@ defmodule AgentMap do
   """
   @spec put_new(am, key, value, keyword) :: am
   def put_new(am, key, value, opts \\ [!: :max, cast: true]) do
-    req = %Req{act: :put_new, key: key, data: value}
-    _call(am, req, opts, !: :max, cast: true)
-    am
+    opts = _prep(opts, !: :max, cast: true)
+
+    get_and_update(
+      am,
+      key,
+      fn _ ->
+        unless Process.get(:value?) do
+          {am, value}
+        else
+          {am}
+        end
+      end,
+      opts
+    )
   end
 
   @doc """
@@ -1558,6 +1604,9 @@ defmodule AgentMap do
 
     * `:!` (`priority`, `:max`);
 
+    * `tiny: true`, `false` — to execute `fun` on
+      [server](#module-how-it-works);
+
     * `:timeout`, `5000`.
 
   ## Examples
@@ -1576,9 +1625,20 @@ defmodule AgentMap do
   """
   @spec put_new_lazy(am, key, (() -> value()), keyword) :: am
   def put_new_lazy(am, key, fun, opts \\ [!: :max, cast: true]) do
-    req = %Req{act: :put_new, key: key, fun: fun}
-    _call(am, req, opts, !: :max, cast: true)
-    am
+    opts = _prep(opts, !: :max, cast: true)
+
+    get_and_update(
+      am,
+      key,
+      fn _ ->
+        if Process.get(:value?) do
+          {am}
+        else
+          {am, fun.()}
+        end
+      end,
+      opts
+    )
   end
 
   ##
@@ -1650,8 +1710,9 @@ defmodule AgentMap do
   """
   @spec delete(am, key, keyword) :: am
   def delete(am, key, opts \\ [!: :max, cast: true]) do
-    req = %Req{act: :delete, key: key}
-    _call(am, req, opts, !: :max, cast: true)
+    opts = _prep(opts, !: :max, cast: true, tiny: true)
+
+    get_and_update(am, key, fn _ -> :pop end, opts)
     am
   end
 
@@ -1684,10 +1745,8 @@ defmodule AgentMap do
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [cast: true]) do
-    #    Multi.update(am, {[], keys}, fn [] -> :drop end)
-    req = %Multi.Req{act: :drop, keys: keys}
-    _call(am, req, opts, cast: true)
-    am
+    opts = _prep(opts, cast: true)
+    Multi.update(am, {[], keys}, fn [] -> :drop end, opts)
   end
 
   ##
@@ -1708,16 +1767,16 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: nil}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)        # 0
-      ...> |> put(:a, 42, !: :avg) # 2
-      ...> |> to_map()             # 1
+      ...> |> sleep(:a, 20)         # 0 | |
+      ...> |> put(:a, 42, !: :avg)  # | | 2
+      ...> |> to_map()              # | 1 |
       %{a: 1, b: 2, c: nil}
 
       iex> %{a: 1}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)        # 0
-      ...> |> put(:a, 42, !: :avg) # 1
-      ...> |> to_map(!: :min)      # 2
+      ...> |> sleep(:a, 20)         # 0 | |
+      ...> |> put(:a, 42, !: :avg)  # | 1 |
+      ...> |> to_map(!: :min)       # | | 2
       %{a: 42}
   """
   @spec to_map(am, keyword | timeout) :: %{required(key) => value}
@@ -1793,20 +1852,42 @@ defmodule AgentMap do
 
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)
-      ...> |> put(:a, 1)              # 1
-      ...> |> cast(:a, fn 2 -> 3 end) # 3
-      ...> |> inc(:a, !: :max)        # 2
+      ...> |> put(:a, 1)               # 1 | |
+      ...> |> cast(:a, fn 2 -> 3 end)  # | | 3
+      ...> |> inc(:a, !: :max)         # | 2 |
       ...> |> get(:a)
       3
   """
   @spec inc(am, key, keyword) :: am
   def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true]) do
-    defs = [step: 1, initial: 0, !: :avg, cast: true]
-    opts = _prep(opts, defs)
-    req = %Req{act: :inc, key: key, data: opts}
+    opts = _prep(opts, step: 1, initial: 0, !: :avg, cast: true, tiny: true)
 
-    _call(am, req, opts)
-    am
+    step = opts[:step]
+    init = opts[:initial]
+
+    get_and_update(
+      am,
+      key,
+      fn _value ->
+        case Process.get(:value?) do
+          {:v, v} when is_number(v) ->
+            {am, v + step}
+
+          {:v, v} ->
+            k = inspect(key)
+            v = inspect(v)
+
+            m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
+            m = m.((step > 0 && "inc") || "dec")
+
+            raise ArithmeticError, message: m
+
+          nil ->
+            if init, do: {am, init + step}, else: raise(KeyError, key: key)
+        end
+      end,
+      opts
+    )
   end
 
   @doc """
@@ -1840,9 +1921,9 @@ defmodule AgentMap do
 
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
-      ...> |> cast(:a, fn 2 -> 3 end)          #  2
-      ...> |> cast(:a, fn 1 -> 2 end, !: :max) # 1
-      ...> |> cast(:a, fn 3 -> 4 end, !: :min) #   3
+      ...> |> cast(:a, fn 2 -> 3 end)           # | 2 |
+      ...> |> cast(:a, fn 1 -> 2 end, !: :max)  # 1 | |
+      ...> |> cast(:a, fn 3 -> 4 end, !: :min)  # | | 3
       ...> |> get(:a)
       4
   """

@@ -39,8 +39,6 @@ defmodule AgentMap.Req do
     end
   end
 
-  #
-
   def run(%{act: :get} = req) do
     arg = collect(req)
     ret = apply(req.fun, [arg])
@@ -79,6 +77,7 @@ defmodule AgentMap.Req do
 
   #
 
+  # Compress before sending to worker.
   def compress(%_{} = req) do
     req
     |> Map.from_struct()
@@ -92,12 +91,6 @@ defmodule AgentMap.Req do
     |> Map.delete(:tiny)
     |> Enum.reject(&match?({_, nil}, &1))
     |> Enum.into(%{})
-  end
-
-  #
-
-  def get_and_update(req, fun) do
-    %{req | act: :update, fun: fun, data: nil}
   end
 
   #
@@ -116,43 +109,6 @@ defmodule AgentMap.Req do
     req = %{req | act: :get, fun: fun, keys: keys}
 
     Multi.Req.handle(req, state)
-  end
-
-  def handle(%{act: :inc, key: key} = req, state) do
-    step = req.data[:step]
-
-    i = req.data[:initial]
-
-    inc = fn
-      {:v, v} when is_number(v) ->
-        v + step
-
-      {:v, v} ->
-        k = inspect(key)
-        v = inspect(v)
-
-        m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
-        m = m.((step > 0 && "inc") || "dec")
-
-        raise ArithmeticError, message: m
-
-      nil ->
-        if i, do: i + step, else: raise(KeyError, key: key)
-    end
-
-    case get(state, key) do
-      {v, _info} = old ->
-        state
-        |> put_value(key, inc.(v), old)
-        |> reply_ok()
-
-      _worker ->
-        req
-        |> get_and_update(fn _value ->
-          {:_ok, inc.(Process.get(:value?))}
-        end)
-        |> handle(state)
-    end
   end
 
   def handle(%{act: :processes, key: key}, state) do
@@ -196,13 +152,6 @@ defmodule AgentMap.Req do
     end
   end
 
-  # per server:
-  def handle(%{act: :def_max_processes} = req, state) do
-    Process.put(:max_processes, req.data)
-
-    reply_ok(state)
-  end
-
   #
 
   def handle(%{act: :keys}, state) do
@@ -232,16 +181,18 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(%{act: :get, key: key} = req, state = st) do
+  def handle(%{act: :get, key: key} = req, state) do
     g_max_p = Process.get(:max_processes)
 
-    case get(st, key) do
+    case get(state, key) do
       # Cannot spawn more Task's.
       {_, {p, nil}} when p + 1 >= g_max_p ->
-        handle(req, spawn_worker(st, key))
+        state = spawn_worker(state, key)
+        handle(req, state)
 
       {_, {p, max_p}} when p + 1 >= max_p ->
-        handle(req, spawn_worker(st, key))
+        state = spawn_worker(state, key)
+        handle(req, state)
 
       # Can spawn.
       {v, {p, max_p}} ->
@@ -295,60 +246,11 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%{act: :put, key: key} = req, state) do
-    case get(state, key) do
-      {_, _} = old ->
-        state
-        |> put_value(key, req.data, old)
-        |> reply_ok()
-
-      worker ->
-        req =
-          get_and_update(req, fn _ ->
-            {:ok, req.data}
-          end)
-
-        send(worker, compress(req))
-
-        {:noreply, state}
-    end
+  def handle(%{act: :fetch, key: key, !: :now}, state) do
+    {:reply, fetch(state, key), state}
   end
 
-  def handle(%{act: :put_new, key: key} = req, state = st) do
-    case get(state, key) do
-      {nil, _} = old ->
-        if req.fun do
-          handle(req, spawn_worker(st, key))
-        else
-          st
-          |> put_value(key, req.data, old)
-          |> reply_ok()
-        end
-
-      {_, _} ->
-        reply_ok(state)
-
-      worker ->
-        req =
-          get_and_update(req, fn _ ->
-            unless Process.get(:value?) do
-              fun = req.fun
-              {:_ok, (fun && fun.()) || req.data}
-            end || {:_ok}
-          end)
-
-        send(worker, compress(req))
-        {:noreply, state}
-    end
-  end
-
-  #
-
-  def handle(%{act: :fetch, key: key, !: :now}, _state = st) do
-    {:reply, fetch(st, key), st}
-  end
-
-  def handle(%{act: :fetch, key: key} = req, state = st) do
+  def handle(%{act: :fetch, key: key} = req, state) do
     if is_pid(get(state, key)) do
       fun = fn value ->
         if Process.get(:value?) do
@@ -358,48 +260,21 @@ defmodule AgentMap.Req do
         end
       end
 
-      handle(%{req | act: :get, fun: fun}, st)
+      handle(%{req | act: :get, fun: fun}, state)
     else
-      handle(%{req | act: :fetch, !: :now}, st)
+      handle(%{req | act: :fetch, !: :now}, state)
     end
   end
 
   #
 
-  def handle(%{act: :delete, key: key} = req, state) do
-    case get(state, key) do
-      {value, info} ->
-        if value, do: Worker.dec(:size)
-
-        state
-        |> put(key, {nil, info})
-        |> reply_ok()
-
-      _worker ->
-        req
-        |> get_and_update(fn _ -> :pop end)
-        |> handle(state)
-    end
+  def handle(%{act: :upd_prop, key: key, fun: fun} = req, state) do
+    arg = Process.get(key, req.data)
+    Process.put(key, apply(IO.inspect(fun), [arg]))
+    {:reply, :_ok, state}
   end
 
   #
-
-  def handle(%{act: :sleep} = req, state) do
-    fun = fn _ ->
-      :timer.sleep(req.data)
-      :id
-    end
-
-    req
-    |> get_and_update(fun)
-    |> handle(state)
-  end
-
-  #
-
-  # def handle(%{act: :get_prop, key: :size}, state) do
-  #   {:reply, Process.get(:size), state}
-  # end
 
   def handle(%{act: :get_prop, key: :processes}, state) do
     ks = Map.keys(state)
@@ -416,10 +291,5 @@ defmodule AgentMap.Req do
   def handle(%{act: :get_prop, key: key} = req, state) do
     prop = Process.get(key, req.data)
     {:reply, prop, state}
-  end
-
-  def handle(%{act: :set_prop, key: key} = req, state) do
-    Process.put(key, req.data)
-    {:noreply, state}
   end
 end

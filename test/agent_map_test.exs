@@ -24,4 +24,16 @@ defmodule AgentMapTest do
            |> put(:a, 2)
            |> get(:a) == nil
   end
+
+  test "max_processes" do
+    am = AgentMap.new()
+
+    assert info(am, :key)[:max_processes] == 5
+
+    max_processes(am, :key, 3)
+    assert info(am, :key)[:max_processes] == 3
+
+    max_processes(am, :key, nil)
+    assert info(am, :key)[:max_processes] == 5
+  end
 end

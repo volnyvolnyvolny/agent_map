@@ -19,7 +19,9 @@ defmodule AgentMap.Multi.Req do
   #
   defdelegate compress(req), to: Req
 
-  defdelegate get_and_update(req, fun), to: Req
+  def get_and_update(req, fun) do
+    %{req | act: :update, fun: fun, data: nil}
+  end
 
   #
   defp to_req(m_req) do
