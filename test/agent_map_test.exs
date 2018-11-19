@@ -16,4 +16,12 @@ defmodule AgentMapTest do
     sleep(100)
     assert get_prop(am, :size) == 0
   end
+
+  test "delete" do
+    assert AgentMap.new(a: 1)
+           |> sleep(:a, 20)
+           |> delete(:a, !: :min)
+           |> put(:a, 2)
+           |> get(:a) == nil
+  end
 end

@@ -66,7 +66,7 @@ defmodule AgentMap do
 
   Take a look at the `test/memo.ex`.
 
-  `AgentMap` provides possibility to make "multi-key" calls:
+  `AgentMap` provides a possibility to make "multi-key" calls:
 
       defmodule Account do
         def start_link() do
@@ -192,12 +192,66 @@ defmodule AgentMap do
       iex> get(am, :state, & &1 * 99)
       4158
 
-  ## Name registration
+  ## How it works
+
+  Underneath it's a `GenServer` that holds a `Map`. When a state changing call
+  (`update/4`, `get_and_update/4`, …) is first made for a key, a special
+  temporary worker-process is spawned. All subsequent calls are forwarded to the
+  message queue of this worker, which respects the order of incoming new calls.
+  Worker executes them in a sequence, except for `get/4` calls, which are
+  processed as a parallel `Task`s (see `max_processes/3`). A worker will die
+  after about `10` ms of inactivity.
+
+  For example:
+
+      iex> am = AgentMap.new(a: 1)
+      iex> am
+      ...> |> cast(:a, & &1 + 1)              # new worker is spawned for `:a` and …
+      ...>                                    # callback `& &1 + 1` is added to its queue
+      ...> |> get(:a)                         # callback `& &1` is added to the same queue
+      2                                       # now all callbacks are invoked
+      iex> sleep(20)                          # worker is inactive for > 10 ms…
+      ...>                                    # …so it dies
+      iex> get(am, :a, & &1 + 1)              # `& &1 + 1` is executed in a Task process…
+      ...>                                    # …no worker is spawned
+      3
+
+  Sometimes, like in the above example, it's more expensive to spawn a new
+  worker/handle its death than to execute callback on server. For this
+  particular case `tiny: true` option can be provided to `get_and_update/4`,
+  `update/4`, `update!/4`, `put_new_lazy/4` and `cast/4` calls. When it's given,
+  callback is invoked inside `GenServer`'s loop and no additional workers are
+  spawned.
+
+      iex> am = AgentMap.new(a: 1)
+      iex> am
+      ...> |> cast(:a, & &1 + 1, tiny: true)  # callback `& &1 + 1` is executed by server
+      ...> |> get(:a)                         # server returns the current value
+      2                                       #
+      iex> get(am, :a, & &1 + 1)              # `& &1 + 1` is executed in a Task process
+      3
+
+  Be aware, that when invoking callbacks, server could not handle any other
+  requests. For example, this:
+
+      iex> am = AgentMap.new(key_a: 42)       # |  {:ok, pid} = Agent.start(fn -> %{a: 42} end)
+      iex> am                                 # |  pid
+      ...> |> cast(:key_b, fn _ ->            # |  |> Agent.cast(fn _ ->
+      ...>      sleep(50)                     # |       sleep(50)
+      ...>      24                            # |       %{a: 42, b: 24}
+      ...>    end, tiny: true)                # |     end)
+      ...> |> get(:key_a)                     # |
+      42                                      # |
+      iex> get(am, :key_b)                    # |  Agent.get(pid, & &1)
+      24                                      # |  %{a: 42, b: 24}
+
+  will be handled in around of `50` ms. In this case `AgentMap` behaves exactly
+  like `Agent` with a map state.
+
+  ## Other
 
   `AgentMap` is bound to the same name registration rules as `GenServers`, see
   `GenServer` documentation for details.
-
-  ## Other
 
   Finally, note that `use AgentMap` defines a `child_spec/1` function, allowing
   the defined module to be put under a supervision tree. The generated
@@ -214,16 +268,6 @@ defmodule AgentMap do
       use AgentMap, restart: :transient, shutdown: 10_000
 
   See `Supervisor` docs.
-
-  ## How it works
-
-  Underneath it's a `GenServer` that holds a `Map`. When a state changing call
-  is first made for a key (`update/4`, `update!/4`, `get_and_update/4`, …), a
-  special temporary worker-process is spawned. All subsequent calls will be
-  forwarded to the message queue of this worker. A process respects the order of
-  incoming new calls, executing them in a sequence, except for `get/4` calls,
-  which are processed as a parallel `Task`s (see `max_processes/3`). A worker
-  will die after about `10` ms of inactivity.
   """
 
   @max_processes 5
@@ -881,6 +925,9 @@ defmodule AgentMap do
 
     * `initial: value`, `nil` — value for `key` if it's missing;
 
+    * `tiny: true`, `false` — to execute `fun` on
+      [server](#module-how-it-works);
+
     * `!: priority`, `:avg`;
 
     * `:timeout`, `5000`.
@@ -933,6 +980,9 @@ defmodule AgentMap do
 
     * `initial: value`, `nil` — value for `key` if it's missing;
 
+    * `tiny: true`, `false` — to execute `fun` on
+      [server](#module-how-it-works);
+
     * `!: priority`, `:avg`;
 
     * `:timeout`, `5000`.
@@ -948,9 +998,9 @@ defmodule AgentMap do
 
       iex> AgentMap.new()
       ...> |> sleep(:Alice, 20)                                        # 0
-      ...> |> put(:Alice, 3)                                           # 2
-      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1) # 1
-      ...> |> update(:Alice, fn 3 -> 4 end)                            # 3
+      ...> |> put(:Alice, 3)                                           #   2
+      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1) #  1
+      ...> |> update(:Alice, fn 3 -> 4 end)                            #    3
       ...> |> values()
       [4]
   """
@@ -974,6 +1024,9 @@ defmodule AgentMap do
   ## Options
 
     * `!: priority`, `:avg`;
+
+    * `tiny: true`, `false` — to execute `fun` on
+      [server](#module-how-it-works);
 
     * `:timeout`, `5000`.
 
@@ -1009,6 +1062,9 @@ defmodule AgentMap do
   ## Options
 
     * `!: priority`, `:avg`;
+
+    * `tiny: true`, `false` — to execute `fun` on
+      [server](#module-how-it-works);
 
     * `:timeout`, `5000`.
 
@@ -1066,7 +1122,7 @@ defmodule AgentMap do
   @spec replace!(am, key, value, keyword | timeout) :: am
   def replace!(am, key, value, opts \\ [!: :avg]) do
     fun = fn _ -> value end
-    update!(am, key, fun, _prep(opts, !: :avg))
+    update!(am, key, fun, _prep(opts, !: :avg, tiny: true))
   end
 
   ##
@@ -1570,7 +1626,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Deletes the entry for `key`.
+  Deletes entry for `key`.
 
   Returns without waiting for the actual delete.
 
@@ -1591,13 +1647,6 @@ defmodule AgentMap do
       ...> |> delete(:a)
       ...> |> take([:a, :b])
       %{b: 2}
-
-      iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 20)
-      ...> |> delete(:a, !: :min) # 2
-      ...> |> put(:a, 2)          # 1
-      ...> |> get(:a)             # 3
-      nil
   """
   @spec delete(am, key, keyword) :: am
   def delete(am, key, opts \\ [!: :max, cast: true]) do
@@ -1610,6 +1659,8 @@ defmodule AgentMap do
   Drops given `keys`.
 
   Returns without waiting for the actual drop.
+
+  This call has a fixed priority `{:avg, +1}`.
 
   ## Options
 
@@ -1632,7 +1683,8 @@ defmodule AgentMap do
       %{a: 1, c: 3}
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
-  def drop(am, keys, opts \\ [!: :max, cast: true]) do
+  def drop(am, keys, opts \\ [cast: true]) do
+#    Multi.update(am, {[], keys}, fn [] -> :drop end)
     req = %Multi.Req{act: :drop, keys: keys}
     _call(am, req, opts, cast: true)
     am
@@ -1643,7 +1695,7 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns *immediately* a map representation of an `AgentMap`.
+  Returns a current map representation of an `AgentMap`.
 
   ## Options
 
@@ -1779,15 +1831,18 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority`, `:avg` — to set [priority](#module-priority).
+    * `!: priority`, `:avg` — to set [priority](#module-priority);
+
+    * `tiny: true`, `false` — to execute `fun` on
+      [server](#module-how-it-works).
 
   ## Examples
 
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
-      ...> |> cast(:a, fn 2 -> 3 end)          # 2
+      ...> |> cast(:a, fn 2 -> 3 end)          #  2
       ...> |> cast(:a, fn 1 -> 2 end, !: :max) # 1
-      ...> |> cast(:a, fn 3 -> 4 end, !: :min) # 3
+      ...> |> cast(:a, fn 3 -> 4 end, !: :min) #   3
       ...> |> get(:a)
       4
   """
@@ -1803,7 +1858,7 @@ defmodule AgentMap do
   @doc """
   Returns current size of `AgentMap`.
   """
-  # TODO: Remove on 2.0.
+  # TODO: Remove on 1.1
   @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead."
   @spec size(am) :: non_neg_integer
   def size(am), do: get_prop(am, :size)

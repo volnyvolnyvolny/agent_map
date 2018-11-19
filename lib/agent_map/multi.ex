@@ -76,6 +76,19 @@ defmodule AgentMap.Multi do
   If it's a `get/4` call with an option `!: :now` given, nothing is specially
   collected, callback is invoked immediately, passing current values as an
   argument.
+
+  ### `:%` option
+
+  But sometimes you want collected keys to differs from updated
+
+  By default, it's wise to update the same keys that were collected. But
+  sometimes, like in the `AgentMap.drop/3` case, you are not interested in the
+  values, but only in
+
+  Multi-key calls `get_and_update/4`, `update/4` and `cast/4` supports special
+  option to update 
+
+
   """
 
   @type name :: atom | {:global, term} | {:via, module, term}
@@ -95,8 +108,6 @@ defmodule AgentMap.Multi do
 
   `AgentMap` invokes `fun` passing **current** values for `keys` (change
   [priority](AgentMap.html#module-priority) to bypass).
-
-  For this call `{:max, -2}` priority is used.
 
   ## Options
 
@@ -124,7 +135,7 @@ defmodule AgentMap.Multi do
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
   def get(am, keys, fun, opts \\ [!: :now]) do
-    opts = _prep(opts, !: :avg)
+    opts = _prep(opts, !: :now)
     req = %Req{act: :get, keys: keys, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
@@ -195,6 +206,8 @@ defmodule AgentMap.Multi do
   For this call `{:max, -2}` priority is used.
 
   ## Options
+
+    * `%: [key]`, `keys` — keys that will be updated;
 
     * `initial: value`, `nil` — value for missing keys;
 
@@ -272,6 +285,8 @@ defmodule AgentMap.Multi do
 
     * `initial: value`, `nil` — value for missing keys;
 
+    * `%: [key]`, `keys` — keys that will be updated;
+
     * `:timeout`, `5000`.
 
   ## Examples
@@ -306,7 +321,9 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `initial: value`, `nil` — value for missing keys.
+    * `initial: value`, `nil` — value for missing keys;
+
+    * `%: [key]`, `keys` — keys that will be updated.
 
   ## Examples
 

@@ -17,7 +17,8 @@ defmodule AgentMap.Req do
     :from,
     :key,
     :fun,
-    !: 256
+    !: 256,
+    tiny: false
   ]
 
   #
@@ -201,7 +202,7 @@ defmodule AgentMap.Req do
 
   def handle(%{act: :get_and_update, key: key} = req, state = st) do
     case get(state, key) do
-      {_box, _info} ->
+      {_value?, _info} ->
         handle(req, spawn_worker(st, key))
 
       worker ->
