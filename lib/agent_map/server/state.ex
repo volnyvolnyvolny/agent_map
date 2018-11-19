@@ -7,17 +7,11 @@ defmodule AgentMap.Server.State do
   ## BOXING
   ##
 
-  @typedoc "Value or no value."
-  @type box :: {:value, term} | nil
-
-  defguard is_box(b) when is_nil(b) or (is_tuple(b) and elem(b, 0) == :value)
-
-  def box(v), do: {:value, v}
+  @typedoc "Value or not."
+  @type value? :: {:value, term} | nil
 
   def unbox(nil), do: nil
   def unbox({:value, v}), do: v
-
-  def un(box), do: unbox(box)
 
   @type worker :: pid
 
@@ -29,15 +23,15 @@ defmodule AgentMap.Server.State do
 
   @type key :: term
 
-  @type pack :: worker | {box, {p, max_p}} | compressed_pack
+  @type pack :: worker | {value?, {p, max_p}} | compressed_pack
 
   @typedoc """
   Compressed pack is:
 
-    * {box, p} :: {box, {p, default max_p}}
+    * {value?, p} :: {value?, {p, default max_p}}
     * {:value, term} :: {{:value, term}, {0, default max_p}}
   """
-  @type compressed_pack :: {box, p} | {:value, term}
+  @type compressed_pack :: {value?, p} | {:value, term}
 
   @typedoc "Map with values."
   @type state :: %{required(key) => pack}
@@ -72,6 +66,9 @@ defmodule AgentMap.Server.State do
   end
 
   #
+
+  defguardp is_box(b)
+            when is_nil(b) or (is_tuple(b) and elem(b, 0) == :value)
 
   def get(state, key) do
     case state[key] do
@@ -110,7 +107,7 @@ defmodule AgentMap.Server.State do
 
   def spawn_worker(state, key) do
     case get(state, key) do
-      {_box, _p_info} = pack ->
+      {value?, _p_info} = pack ->
         ref = make_ref()
         server = self()
 
@@ -123,6 +120,8 @@ defmodule AgentMap.Server.State do
           {^ref, :ok} ->
             :continue
         end
+
+        unless value?, do: Worker.inc(:size)
 
         Map.put(state, key, worker)
 

@@ -42,11 +42,9 @@ iex> AgentMap.get(am, :b)
 
 in around of `10` ms, because of parallelization.
 
-The `AgentMap` supports multi-key calls — operations made on a group of keys.
-See `AgentMap.Multi`.
-
 Basically, `AgentMap` can be used as a cache, memoization, computational
-framework and, sometimes, as an alternative to `GenServer`.
+framework and, sometimes, as a `GenServer` alternative. `AgentMap` supports
+operations made on a group of keys (["multi-key" calls](AgentMap.Multi.html)).
 
 See documentation for [AgentMap](https://hexdocs.pm/agent_map) for details.
 

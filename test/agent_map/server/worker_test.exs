@@ -1,6 +1,5 @@
 defmodule AgentMapWorkerTest do
-  alias AgentMap.{Worker, Server.State}
-  import State
+  alias AgentMap.Worker
 
   use ExUnit.Case
 
@@ -19,7 +18,7 @@ defmodule AgentMapWorkerTest do
 
     msg = %{act: :get, from: {self(), :_}, fun: fun}
 
-    b = box(42)
+    b = {:value, 42}
     Worker.spawn_get_task(msg, {:key, b})
     assert_receive {:_, {42, {:key, ^b}}}
     assert_receive %{info: :done, key: :key}

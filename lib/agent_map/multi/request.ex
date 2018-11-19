@@ -71,8 +71,8 @@ defmodule AgentMap.Multi.Req do
     {st, {map, %{}}}
   end
 
-  defp prepair(%{act: :get} = req, st) do
-    {st, separate(st, req.keys)}
+  defp prepair(%{act: :get} = req, state) do
+    {state, separate(state, req.keys)}
   end
 
   # act: :get_and_update
@@ -107,7 +107,7 @@ defmodule AgentMap.Multi.Req do
         {:ok, {get, List.duplicate(:drop, n)}}
 
       {get, values} when length(values) == n ->
-        {:ok, {get, Enum.map(values, &box/1)}}
+        {:ok, {get, Enum.map(values, &{:value, &1})}}
 
       {get} ->
         {:ok, {get, List.duplicate(:id, n)}}
@@ -117,7 +117,7 @@ defmodule AgentMap.Multi.Req do
           for {old_v, v} <- Enum.zip(values, lst) do
             case v do
               {g, v} ->
-                {:ok, {g, box(v)}}
+                {:ok, {g, {:value, v}}}
 
               {g} ->
                 {:ok, {g, :id}}
@@ -161,7 +161,6 @@ defmodule AgentMap.Multi.Req do
       Enum.reduce(keys, st, fn key, st ->
         case Req.handle(%{req | key: key}, st) do
           {_, _, st} -> st
-
           {_, st} -> st
         end
       end)
@@ -169,16 +168,16 @@ defmodule AgentMap.Multi.Req do
     {:noreply, st}
   end
 
-  def handle(%{act: :drop} = req, st) do
+  def handle(%{act: :drop} = req, state) do
     req
     |> get_and_update(fn _ -> :pop end)
-    |> handle(st)
+    |> handle(state)
   end
 
   #
 
-  def handle(req, st) do
-    {st, {map, workers}} = prepair(req, st)
+  def handle(req, state) do
+    {state, {map, workers}} = prepair(req, state)
 
     pids = Map.values(workers)
 
@@ -223,7 +222,7 @@ defmodule AgentMap.Multi.Req do
 
     receive do
       {^ref, :go!} ->
-        {:noreply, st}
+        {:noreply, state}
     end
   end
 end

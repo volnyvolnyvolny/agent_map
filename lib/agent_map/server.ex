@@ -60,7 +60,7 @@ defmodule AgentMap.Server do
       max_p = args[:max_processes]
 
       Process.put(:max_processes, max_p)
-      Process.put(:size, 0)
+      Process.put(:size, map_size(map))
 
       {:ok, map}
     else
@@ -120,10 +120,12 @@ defmodule AgentMap.Server do
       #!
       m = dict[:max_processes]
       p = dict[:processes]
-      b = dict[:value]
+      v = dict[:value]
       k = dict[:key]
 
-      pack = {b, {p - 1, m}}
+      pack = {v, {p - 1, m}}
+
+      unless v, do: Worker.dec(:size)
 
       {:noreply, put(state, k, pack)}
     else

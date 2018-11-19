@@ -4,6 +4,8 @@ defmodule AgentMapServerStateTest do
 
   use ExUnit.Case
 
+  def box(v), do: {:value, v}
+
   test "put" do
     assert put(%{}, :key, {nil, {0, nil}}) == %{}
     assert put(%{}, :key, {box(42), {0, nil}}) == %{key: box(42)}
@@ -27,6 +29,8 @@ defmodule AgentMapServerStateTest do
       |> put(:c, {box(42), {1, 6}})
       |> put(:d, {nil, {2, 5}})
 
+    Process.put(:size, 3)
+
     assert fetch(state, :a) == {:ok, 42}
     assert fetch(state, :b) == {:ok, 42}
     assert fetch(state, :c) == {:ok, 42}
@@ -45,6 +49,8 @@ defmodule AgentMapServerStateTest do
   end
 
   test "take" do
+    Process.put(:size, 3)
+
     state =
       %{}
       |> put(:a, {box(42), {4, 6}})
@@ -59,6 +65,8 @@ defmodule AgentMapServerStateTest do
   end
 
   test "separate" do
+    Process.put(:size, 3)
+
     state =
       %{}
       |> put(:a, {box(42), {4, 6}})

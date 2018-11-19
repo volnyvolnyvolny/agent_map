@@ -9,12 +9,12 @@ defmodule AgentMap do
   import Time, only: [now: 0, to_ms: 1]
 
   @moduledoc """
+
   `AgentMap` can be seen as a stateful `Map` that parallelize operations made on
   different keys. Basically, it can be used as a cache, memoization,
   computational framework and, sometimes, as a `GenServer` alternative.
-
-  `AgentMap` supports multi-key calls — operations made on a group of keys. See
-  `AgentMap.Multi`.
+  `AgentMap` supports operations made on a group of keys (["multi-key"
+  calls](AgentMap.Multi.html)).
 
   ## Examples
 
@@ -30,27 +30,12 @@ defmodule AgentMap do
       ...> |> AgentMap.update(:b, & &1 - 1)
       ...> |> AgentMap.take([:a, :b])
       %{a: 43, b: 23}
+      #
+      iex> Enum.count(am)
+      2
 
-  The special struct `%AgentMap{}` can be created via `new/1` function. This
-  [allows](#module-enumerable-protocol-and-access-behaviour) to use the
-  `Enumerable` protocol.
-
-  Also, `AgentMap` can be started in an `Agent` manner:
-
-      iex> {:ok, pid}
-      ...>   = AgentMap.start_link()
-      iex> pid
-      ...> |> AgentMap.put(:a, 1)
-      ...> |> AgentMap.get(:a)
-      1
-      iex> pid
-      ...> |> AgentMap.new()
-      ...> |> Enum.empty?()
-      false
-      iex> am = AgentMap.new(pid)
-      iex> Enum.into(%{a: 2, b: 3}, am)
-      iex> to_map(am)
-      %{a: 2, b: 3}
+  A special struct `%AgentMap{}` is created via `new/1`. It allows to use the
+  `Enumerable` protocol. See also `start/2` and `start_link/2`.
 
   More complicated example involves memoization:
 
@@ -81,8 +66,7 @@ defmodule AgentMap do
 
   Take a look at the `test/memo.ex`.
 
-  `AgentMap` provides possibility to make multi-key calls (operations on
-  multiple keys). Let's see an accounting demo:
+  `AgentMap` provides possibility to make "multi-key" calls:
 
       defmodule Account do
         def start_link() do
@@ -446,10 +430,11 @@ defmodule AgentMap do
   @doc """
   Starts an `AgentMap` via `start_link/1` function.
 
-  Returns a new instance of `AgentMap` wrapped in a `%AgentMap{}`.
-
   As an argument, enumerable with keys and values may be provided or the PID of
   an already started `AgentMap`.
+
+  Returns a new instance of `AgentMap` wrapped in a `%AgentMap{}`. This struct
+  allows to use `Enumerable` and `Collectable` protocols.
 
   ## Examples
 
@@ -459,12 +444,28 @@ defmodule AgentMap do
       iex> keys(am)
       [:a, :b]
 
-      iex> {:ok, pid} = AgentMap.start_link()
+      iex> {:ok, pid}
+      ...>   = AgentMap.start_link()
       iex> pid
       ...> |> AgentMap.new()
       ...> |> put(:a, 1)
       ...> |> get(:a)
       1
+
+      iex> {:ok, pid}
+      ...>   = AgentMap.start_link()
+      iex> pid
+      ...> |> AgentMap.new()
+      ...> |> Enum.empty?()
+      true
+
+      iex> {:ok, pid}
+      ...>   = AgentMap.start_link()
+      ...>
+      iex> %{a: 2, b: 3}
+      ...> |> Enum.into(AgentMap.new(pid))
+      ...> |> to_map()
+      %{a: 2, b: 3}
   """
   @spec new(Enumerable.t() | am) :: am
   def new(enumerable)
@@ -511,10 +512,10 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Starts an `AgentMap` instance linked to the current process.
+  Starts a linked `AgentMap` instance.
 
-  The `funs` keyword must contain pairs `{key, fun/0}`. Each `fun` is executed
-  in a separate `Task` and return an initial value for `key`.
+  Argument `funs` is a keyword that contains pairs `{key, fun/0}`. Each `fun` is
+  executed in a separate `Task` and return an initial value for `key`.
 
   ## Options
 
@@ -593,7 +594,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Starts an `AgentMap` instance as an unlinked process.
+  Starts an unlinked `AgentMap` instance.
 
   See `start_link/2` for details.
 
@@ -1266,14 +1267,9 @@ defmodule AgentMap do
 
   #
 
-      iex> am = AgentMap.new()
-      iex> am
-      ...> |> sleep(:a, 20)
+      iex> AgentMap.new()
       ...> |> cast(:a, fn nil -> 42 end)
       ...> |> get_prop(:size)
-      0
-      iex> sleep(40)
-      iex> get_prop(am, :size)
       1
   """
   @spec get_prop(am, :processes) :: pos_integer
@@ -1808,6 +1804,7 @@ defmodule AgentMap do
   @doc """
   Returns current size of `AgentMap`.
   """
+  # TODO: Remove on 2.0.
   @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead."
   @spec size(am) :: non_neg_integer
   def size(am), do: get_prop(am, :size)

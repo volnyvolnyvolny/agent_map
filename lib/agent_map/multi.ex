@@ -4,7 +4,7 @@ defmodule AgentMap.Multi do
   import AgentMap, only: [_call: 3, _prep: 2]
 
   @moduledoc """
-  Functions for making multi-key calls.
+  `AgentMap` supports "multi-key" operations.
 
   ## Examples
 
@@ -38,10 +38,10 @@ defmodule AgentMap.Multi do
       ...>   if a >= 10 do
       ...>     a = a - 10
       ...>     b = b + 10
-      ...>     [{a, a}, {b, b}]  # [{get, new value}]
+      ...>     [{a, a}, {b, b}]  # [{get, new value}, …]
       ...>   else
       ...>     msg = {:error, "Alice is too poor!"}
-      ...>     {msg, [a, b]}     # {get, [new_state]}
+      ...>     {msg, [a, b]}     # {get, [new_state, …]}
       ...>   end
       ...> end)
       [0, 1_000_000]
@@ -59,17 +59,23 @@ defmodule AgentMap.Multi do
 
   ## How it works
 
-  Each multi-key call is handled in a separate process. This process is
-  responsible for: collecting values, invoking callback, returning a result, and
-  dealing with possible errors.
+  Each multi-key call is handled in a dedicated process. This process is
+  responsible for collecting values, invoking callback, updating values,
+  returning a result and dealing with possible errors.
 
-  Computation can starts after all the related values are known. If a call is a
-  value-changing (`get_and_update/4`, `update/4`, `cast/4`), for every involved
-  `key` will be created worker and a special "return me a value and wait for a
-  new one" request will be added to the end of the workers queue.
+  Computation can start only after all the values are known. If it's a
+  `get_and_update/4`, `update/4` or a `cast/4` call, to each `key` involved will
+  be sent request "return me a value and wait for a new one". This request will
+  have a fixed priority `{:avg, +1}`. If it's a `get/4` call with a priority ≠
+  `:now`, to each `key` involved will be sent request "return me a value".
 
-  When performing `get/4` with option `!: :now`, values are fetched immediately,
-  without sending any requests and creating workers.
+  When values are collected, callback can be invoked. If it's a `get/4` call, a
+  result of invocation can be returned straight to a caller. Otherwise, updated
+  values are sent to a corresponding workers.
+
+  If it's a `get/4` call with an option `!: :now` given, nothing is specially
+  collected, callback is invoked immediately, passing current values as an
+  argument.
   """
 
   @type name :: atom | {:global, term} | {:via, module, term}

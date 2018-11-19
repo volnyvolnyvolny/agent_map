@@ -4,7 +4,6 @@ defmodule AgentMap.Worker do
   alias AgentMap.{Time, CallbackError, Server.State}
 
   import Process, only: [get: 1, put: 2, delete: 1]
-  import State, only: [un: 1, box: 1]
   import Time, only: [now: 0]
 
   @moduledoc false
@@ -84,12 +83,14 @@ defmodule AgentMap.Worker do
   ## REQUEST
   ##
 
-  defp run(req, box) do
+  defp run(req, value) do
     arg =
-      if box do
-        un(box)
-      else
-        Map.get(req, :data)
+      case value do
+        {:value, v} ->
+          v
+
+        nil ->
+          Map.get(req, :data)
       end
 
     interpret(req, arg, apply(req.fun, [arg]))
@@ -112,7 +113,7 @@ defmodule AgentMap.Worker do
         reply(from, get)
 
       {get, v} ->
-        put(:value, box(v))
+        put(:value, {:value, v})
         reply(from, get)
 
       :id ->
