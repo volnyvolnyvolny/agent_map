@@ -1,7 +1,7 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Time, CallbackError, Server.State}
+  alias AgentMap.{Time, CallbackError}
 
   import Process, only: [get: 1, put: 2, delete: 1]
   import Time, only: [now: 0]
