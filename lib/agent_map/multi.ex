@@ -251,7 +251,7 @@ defmodule AgentMap.Multi do
             |> String.replace("\n", " ")
     end
 
-    opts = _prep(opts, !: :avg)
+    opts = _prep(opts, !: {:avg, +1})
     req = %Req{act: :get_and_update, keys: keys, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
@@ -266,7 +266,7 @@ defmodule AgentMap.Multi do
     * `:id` — to leave values as they are;
     * `:drop` — to drop `keys`.
 
-  For this call `{:max, -2}` priority is used.
+  For this call `{:avg, +1}` priority is used.
 
   ## Options
 
@@ -302,7 +302,7 @@ defmodule AgentMap.Multi do
 
   Returns without waiting for the actual update.
 
-  For this call `{:max, -2}` priority is used.
+  For this call `{:avg, +1}` priority is used.
 
   ## Options
 
@@ -320,6 +320,6 @@ defmodule AgentMap.Multi do
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
   def cast(am, keys, fun, opts \\ []) do
-    update(am, keys, fun, _prep(opts, !: {:max, -2}, cast: true))
+    update(am, keys, fun, _prep(opts, !: {:avg, +1}, cast: true))
   end
 end
