@@ -113,7 +113,7 @@ end
 Take a look at the
 [test/memo.ex](https://github.com/zergera/agent_map/blob/master/test/memo.ex).
 
-The `AgentMap` provides possibility to make multi-key calls (operations on
+The `AgentMap` provides a possibility to make multi-key calls (operations on
 multiple keys). Let's see an accounting demo:
 
 ```elixir

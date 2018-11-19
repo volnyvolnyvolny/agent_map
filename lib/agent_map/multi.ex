@@ -265,7 +265,7 @@ defmodule AgentMap.Multi do
     end
 
     opts = _prep(opts, !: {:avg, +1})
-    req = %Req{act: :get_and_update, keys: keys, fun: fun, data: opts[:initial]}
+    req = %Req{act: :update, keys: keys, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
   end

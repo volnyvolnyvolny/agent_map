@@ -816,7 +816,7 @@ defmodule AgentMap do
   @spec get_lazy(am, key, (() -> a), keyword | timeout) :: value | a when a: var
   def get_lazy(am, key, fun, opts \\ [!: :avg]) do
     fun = fn value ->
-      if Process.get(:value), do: value, else: fun.()
+      if Process.get(:value?), do: value, else: fun.()
     end
 
     get(am, key, fun, opts)
@@ -962,7 +962,7 @@ defmodule AgentMap do
         when get: var
   def get_and_update(am, key, fun, opts \\ [!: :avg]) do
     opts = _prep(opts, !: :avg)
-    req = %Req{act: :get_and_update, key: key, fun: fun, data: opts[:initial]}
+    req = %Req{act: :update, key: key, fun: fun, data: opts[:initial]}
 
     _call(am, req, opts)
   end
@@ -1042,7 +1042,7 @@ defmodule AgentMap do
   @spec update(am, key, value, (value -> value), keyword | timeout) :: am
   def update(am, key, initial, fun, opts) do
     fun = fn value ->
-      if Process.get(:value) do
+      if Process.get(:value?) do
         fun.(value)
       end || initial
     end
@@ -1082,7 +1082,7 @@ defmodule AgentMap do
   @spec update!(am, key, (value -> value), keyword | timeout) :: am | no_return
   def update!(am, key, fun, opts \\ [!: :avg]) do
     fun = fn value ->
-      if Process.get(:value) do
+      if Process.get(:value?) do
         {:ok, fun.(value)}
       end || {:error}
     end
@@ -1617,7 +1617,7 @@ defmodule AgentMap do
   @spec pop(am, key, any, keyword | timeout) :: value | any
   def pop(am, key, default \\ nil, opts \\ [!: :avg]) do
     fun = fn _ ->
-      if Process.get(:value) do
+      if Process.get(:value?) do
         :pop
       end || {default}
     end
@@ -1684,7 +1684,7 @@ defmodule AgentMap do
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [cast: true]) do
-#    Multi.update(am, {[], keys}, fn [] -> :drop end)
+    #    Multi.update(am, {[], keys}, fn [] -> :drop end)
     req = %Multi.Req{act: :drop, keys: keys}
     _call(am, req, opts, cast: true)
     am

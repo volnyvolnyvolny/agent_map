@@ -3,7 +3,7 @@ defmodule AgentMap.Req do
 
   require Logger
 
-  alias AgentMap.{Worker, Server, Multi}
+  alias AgentMap.{Worker, Server, Multi, CallbackError}
 
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Server.State
@@ -23,6 +23,62 @@ defmodule AgentMap.Req do
 
   #
 
+  def reply(nil, _msg), do: :nothing
+  def reply({_p, _ref} = from, msg), do: GenServer.reply(from, msg)
+  def reply(from, msg), do: send(from, msg)
+
+  #
+
+  defp collect(req) do
+    case Process.get(:value?) do
+      {:v, v} ->
+        v
+
+      nil ->
+        Map.get(req, :data)
+    end
+  end
+
+  #
+
+  def run(%{act: :get} = req) do
+    arg = collect(req)
+    ret = apply(req.fun, [arg])
+
+    req
+    |> Map.get(:from)
+    |> reply(ret)
+  end
+
+  # :get_and_update
+  def run(req) do
+    arg = collect(req)
+    ret = apply(req.fun, [arg])
+
+    from = Map.get(req, :from)
+
+    case ret do
+      {get} ->
+        reply(from, get)
+
+      {get, v} ->
+        Process.put(:value?, {:v, v})
+        reply(from, get)
+
+      :id ->
+        reply(from, arg)
+
+      :pop ->
+        Process.delete(:value?)
+        reply(from, arg)
+
+      reply ->
+        raise CallbackError, got: reply
+    end
+  end
+
+  #
+
   def compress(%_{} = req) do
     req
     |> Map.from_struct()
@@ -33,6 +89,7 @@ defmodule AgentMap.Req do
     map
     |> Map.delete(:key)
     |> Map.delete(:keys)
+    |> Map.delete(:tiny)
     |> Enum.reject(&match?({_, nil}, &1))
     |> Enum.into(%{})
   end
@@ -40,7 +97,7 @@ defmodule AgentMap.Req do
   #
 
   def get_and_update(req, fun) do
-    %{req | act: :get_and_update, fun: fun, data: nil}
+    %{req | act: :update, fun: fun, data: nil}
   end
 
   #
@@ -67,10 +124,10 @@ defmodule AgentMap.Req do
     i = req.data[:initial]
 
     inc = fn
-      {:value, v} when is_number(v) ->
+      {:v, v} when is_number(v) ->
         v + step
 
-      {:value, v} ->
+      {:v, v} ->
         k = inspect(key)
         v = inspect(v)
 
@@ -92,7 +149,7 @@ defmodule AgentMap.Req do
       _worker ->
         req
         |> get_and_update(fn _value ->
-          {:_ok, inc.(Process.get(:value))}
+          {:_ok, inc.(Process.get(:value?))}
         end)
         |> handle(state)
     end
@@ -166,10 +223,11 @@ defmodule AgentMap.Req do
         {:noreply, put(state, key, pack)}
 
       w ->
-        v = Worker.dict(w)[:value]
+        v = Worker.dict(w)[:value?]
         spawn_get_task(req, {key, v})
 
         send(w, %{info: :get!})
+
         {:noreply, state}
     end
   end
@@ -194,13 +252,36 @@ defmodule AgentMap.Req do
 
       worker ->
         send(worker, compress(req))
+
         {:noreply, state}
     end
   end
 
   #
 
-  def handle(%{act: :get_and_update, key: key} = req, state = st) do
+  # def handle(%{act: :update, key: key, tiny: true} = req, state = st) do
+  #   case get(state, key) do
+  #     {value?, _info} ->
+  #       Process.put(:key, key)
+  #       Process.put(:value?, value?)
+
+  #       req.fun.(unbox(value?))
+
+  #       # {new_value?, ret} =
+  #       #   Worker.interpret(req, arg, )
+
+  #       Process.delete(:key)
+  #       Process.delete(:value?)
+
+  #       handle(req, spawn_worker(st, key))
+
+  #     worker ->
+  #       send(worker, compress(req))
+  #       {:noreply, state}
+  #   end
+  # end
+
+  def handle(%{act: :update, key: key} = req, state = st) do
     case get(state, key) do
       {_value?, _info} ->
         handle(req, spawn_worker(st, key))
@@ -249,7 +330,7 @@ defmodule AgentMap.Req do
       worker ->
         req =
           get_and_update(req, fn _ ->
-            unless Process.get(:value) do
+            unless Process.get(:value?) do
               fun = req.fun
               {:_ok, (fun && fun.()) || req.data}
             end || {:_ok}
@@ -269,7 +350,7 @@ defmodule AgentMap.Req do
   def handle(%{act: :fetch, key: key} = req, state = st) do
     if is_pid(get(state, key)) do
       fun = fn value ->
-        if Process.get(:value) do
+        if Process.get(:value?) do
           {:ok, value}
         else
           :error
@@ -315,9 +396,9 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%{act: :get_prop, key: :size}, state) do
-    {:reply, Process.get(:size), state}
-  end
+  # def handle(%{act: :get_prop, key: :size}, state) do
+  #   {:reply, Process.get(:size), state}
+  # end
 
   def handle(%{act: :get_prop, key: :processes}, state) do
     ks = Map.keys(state)

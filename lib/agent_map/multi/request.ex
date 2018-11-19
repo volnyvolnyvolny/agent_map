@@ -34,7 +34,7 @@ defmodule AgentMap.Multi.Req do
 
   def collect(values, keys) do
     receive do
-      {key, {:value, v}} ->
+      {key, {:v, v}} ->
         keys = List.delete(keys, key)
 
         values
@@ -55,7 +55,7 @@ defmodule AgentMap.Multi.Req do
     fun = fn _ ->
       Worker.share_value(to: me)
 
-      if req.act == :get_and_update do
+      if req.act == :update do
         Worker.accept_value()
       end
     end
@@ -66,16 +66,16 @@ defmodule AgentMap.Multi.Req do
   end
 
   # on server
-  defp prepair(%{act: :get, !: :now} = req, st) do
-    map = take(st, req.keys)
-    {st, {map, %{}}}
+  defp prepair(%{act: :get, !: :now} = req, state) do
+    map = take(state, req.keys)
+    {state, {map, %{}}}
   end
 
   defp prepair(%{act: :get} = req, state) do
     {state, separate(state, req.keys)}
   end
 
-  # act: :get_and_update
+  # :get_and_update
   defp prepair(req, st) do
     st = Enum.reduce(req.keys, st, &spawn_worker(&2, &1))
 
@@ -107,7 +107,7 @@ defmodule AgentMap.Multi.Req do
         {:ok, {get, List.duplicate(:drop, n)}}
 
       {get, values} when length(values) == n ->
-        {:ok, {get, Enum.map(values, &{:value, &1})}}
+        {:ok, {get, Enum.map(values, &{:v, &1})}}
 
       {get} ->
         {:ok, {get, List.duplicate(:id, n)}}
@@ -117,7 +117,7 @@ defmodule AgentMap.Multi.Req do
           for {old_v, v} <- Enum.zip(values, lst) do
             case v do
               {g, v} ->
-                {:ok, {g, {:value, v}}}
+                {:ok, {g, {:v, v}}}
 
               {g} ->
                 {:ok, {g, :id}}

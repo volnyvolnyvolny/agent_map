@@ -4,29 +4,27 @@ defmodule AgentMapServerStateTest do
 
   use ExUnit.Case
 
-  def box(v), do: {:value, v}
-
   test "put" do
     assert put(%{}, :key, {nil, {0, nil}}) == %{}
-    assert put(%{}, :key, {box(42), {0, nil}}) == %{key: box(42)}
-    assert put(%{}, :key, {box(42), {0, 5}}) == %{key: {box(42), {0, 5}}}
-    assert put(%{}, :key, {box(42), {3, nil}}) == %{key: {box(42), 3}}
+    assert put(%{}, :key, {{:v, 42}, {0, nil}}) == %{key: {:v, 42}}
+    assert put(%{}, :key, {{:v, 42}, {0, 5}}) == %{key: {{:v, 42}, {0, 5}}}
+    assert put(%{}, :key, {{:v, 42}, {3, nil}}) == %{key: {{:v, 42}, 3}}
   end
 
   test "get" do
     assert get(%{}, :key) == {nil, {0, nil}}
-    assert get(%{key: box(42)}, :key) == {box(42), {0, nil}}
-    assert get(%{key: {box(42), 3}}, :key) == {box(42), {3, nil}}
-    assert get(%{key: {box(42), {0, 6}}}, :key) == {box(42), {0, 6}}
-    assert get(%{key: {box(42), {4, 6}}}, :key) == {box(42), {4, 6}}
+    assert get(%{key: {:v, 42}}, :key) == {{:v, 42}, {0, nil}}
+    assert get(%{key: {{:v, 42}, 3}}, :key) == {{:v, 42}, {3, nil}}
+    assert get(%{key: {{:v, 42}, {0, 6}}}, :key) == {{:v, 42}, {0, 6}}
+    assert get(%{key: {{:v, 42}, {4, 6}}}, :key) == {{:v, 42}, {4, 6}}
   end
 
   test "fetch" do
     state =
       %{}
-      |> put(:a, {box(42), {4, 6}})
-      |> put(:b, {box(42), {4, 6}})
-      |> put(:c, {box(42), {1, 6}})
+      |> put(:a, {{:v, 42}, {4, 6}})
+      |> put(:b, {{:v, 42}, {4, 6}})
+      |> put(:c, {{:v, 42}, {1, 6}})
       |> put(:d, {nil, {2, 5}})
 
     Process.put(:size, 3)
@@ -53,9 +51,9 @@ defmodule AgentMapServerStateTest do
 
     state =
       %{}
-      |> put(:a, {box(42), {4, 6}})
-      |> put(:b, {box(42), {4, 6}})
-      |> put(:c, {box(42), {1, 6}})
+      |> put(:a, {{:v, 42}, {4, 6}})
+      |> put(:b, {{:v, 42}, {4, 6}})
+      |> put(:c, {{:v, 42}, {1, 6}})
       |> put(:d, {nil, {2, 5}})
       |> spawn_worker(:c)
       |> spawn_worker(:d)
@@ -69,9 +67,9 @@ defmodule AgentMapServerStateTest do
 
     state =
       %{}
-      |> put(:a, {box(42), {4, 6}})
-      |> put(:b, {box(42), {4, 6}})
-      |> put(:c, {box(42), {1, 6}})
+      |> put(:a, {{:v, 42}, {4, 6}})
+      |> put(:b, {{:v, 42}, {4, 6}})
+      |> put(:c, {{:v, 42}, {1, 6}})
       |> put(:d, {nil, {2, 5}})
       |> spawn_worker(:c)
       |> spawn_worker(:d)

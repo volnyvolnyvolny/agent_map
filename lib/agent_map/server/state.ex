@@ -3,15 +3,11 @@ defmodule AgentMap.Server.State do
 
   alias AgentMap.Worker
 
-  ##
-  ## BOXING
-  ##
-
   @typedoc "Value or not."
-  @type value? :: {:value, term} | nil
+  @type value? :: {:v, term} | nil
 
   def unbox(nil), do: nil
-  def unbox({:value, v}), do: v
+  def unbox({:v, v}), do: v
 
   @type worker :: pid
 
@@ -23,15 +19,15 @@ defmodule AgentMap.Server.State do
 
   @type key :: term
 
-  @type pack :: worker | {value?, {p, max_p}} | compressed_pack
+  @type pack :: worker | {value?, {p, max_p}} | compressed
 
   @typedoc """
   Compressed pack is:
 
     * {value?, p} :: {value?, {p, default max_p}}
-    * {:value, term} :: {{:value, term}, {0, default max_p}}
+    * {:v, term} :: {{:v, term}, {0, default max_p}}
   """
-  @type compressed_pack :: {value?, p} | {:value, term}
+  @type compressed :: {value?, p} | {:v, term}
 
   @typedoc "Map with values."
   @type state :: %{required(key) => pack}
@@ -40,11 +36,11 @@ defmodule AgentMap.Server.State do
 
   def put_value(state, key, value, {nil, info}) do
     Worker.inc(:size)
-    put(state, key, {{:value, value}, info})
+    put(state, key, {{:v, value}, info})
   end
 
   def put_value(state, key, value, {_old, info}) do
-    put(state, key, {{:value, value}, info})
+    put(state, key, {{:v, value}, info})
   end
 
   #
@@ -67,19 +63,19 @@ defmodule AgentMap.Server.State do
 
   #
 
-  defguardp is_box(b)
-            when is_nil(b) or (is_tuple(b) and elem(b, 0) == :value)
+  defguardp is_value(v)
+            when is_nil(v) or (is_tuple(v) and elem(v, 0) == :v)
 
   def get(state, key) do
     case state[key] do
-      {b, {_p, _max_p}} = pack when is_box(b) ->
+      {v?, {_p, _max_p}} = pack when is_value(v?) ->
         pack
 
-      {b, p} when is_box(b) ->
-        {b, {p, nil}}
+      {v?, p} when is_value(v?) ->
+        {v?, {p, nil}}
 
-      b when is_box(b) ->
-        {b, {0, nil}}
+      v? when is_value(v?) ->
+        {v?, {0, nil}}
 
       worker ->
         worker
@@ -87,17 +83,17 @@ defmodule AgentMap.Server.State do
   end
 
   def fetch(state, key) do
-    box =
+    value? =
       case get(state, key) do
-        {box, {_, _}} ->
-          box
+        {v?, {_, _}} ->
+          v?
 
         w ->
-          Worker.dict(w)[:value]
+          Worker.dict(w)[:value?]
       end
 
-    case box do
-      {:value, v} ->
+    case value? do
+      {:v, v} ->
         {:ok, v}
 
       nil ->
@@ -137,13 +133,13 @@ defmodule AgentMap.Server.State do
   end
 
   #
-  # %{a: {{:value, v}, _}, b: {nil, _}, c: {:pid, w}}
+  # %{a: {{:v, v}, _}, b: {nil, _}, c: {:pid, w}}
   # =>
   # {%{a: v}, %{c: w}}
   def separate(state, keys) do
     Enum.reduce(keys, {%{}, %{}}, fn key, {map, workers} ->
       case get(state, key) do
-        {{:value, v}, _} ->
+        {{:v, v}, _} ->
           {Map.put(map, key, v), workers}
 
         {nil, _} ->

@@ -1,9 +1,9 @@
 defmodule AgentMap.Worker do
   require Logger
 
-  alias AgentMap.{Time, CallbackError}
+  alias AgentMap.{Time, Req}
 
-  import Process, only: [get: 1, put: 2, delete: 1]
+  import Process, only: [get: 1, put: 2]
   import Time, only: [now: 0]
 
   @moduledoc false
@@ -12,12 +12,6 @@ defmodule AgentMap.Worker do
 
   # ms
   @wait 10
-
-  #
-
-  def reply(nil, _msg), do: :nothing
-  def reply({_p, _ref} = from, msg), do: GenServer.reply(from, msg)
-  def reply(from, msg), do: send(from, msg)
 
   #
 
@@ -62,8 +56,7 @@ defmodule AgentMap.Worker do
 
   def share_value(to: me) do
     key = Process.get(:key)
-    box = Process.get(:value)
-    reply(me, {key, box})
+    send(me, {key, Process.get(:value?)})
   end
 
   def accept_value() do
@@ -74,8 +67,8 @@ defmodule AgentMap.Worker do
       :id ->
         :id
 
-      {:value, v} ->
-        {:_get, v}
+      {:v, value} ->
+        {:_get, value}
     end
   end
 
@@ -83,59 +76,16 @@ defmodule AgentMap.Worker do
   ## REQUEST
   ##
 
-  defp run(req, value) do
-    arg =
-      case value do
-        {:value, v} ->
-          v
-
-        nil ->
-          Map.get(req, :data)
-      end
-
-    interpret(req, arg, apply(req.fun, [arg]))
-  end
+  #
 
   #
 
-  defp interpret(%{act: :get} = req, _arg, get) do
-    from = Map.get(req, :from)
-
-    reply(from, get)
-  end
-
-  # act: :get_and_update
-  defp interpret(req, arg, ret) do
-    from = Map.get(req, :from)
-
-    case ret do
-      {get} ->
-        reply(from, get)
-
-      {get, v} ->
-        put(:value, {:value, v})
-        reply(from, get)
-
-      :id ->
-        reply(from, arg)
-
-      :pop ->
-        delete(:value)
-        reply(from, arg)
-
-      reply ->
-        raise CallbackError, got: reply
-    end
-  end
-
-  #
-
-  def spawn_get_task(req, {key, box}, opts \\ [server: self()]) do
+  def spawn_get_task(req, {key, value?}, opts \\ [server: self()]) do
     Task.start_link(fn ->
       put(:key, key)
-      put(:value, box)
+      put(:value?, value?)
 
-      run(req, box)
+      Req.run(req)
 
       done = %{info: :done, key: key}
       worker = opts[:worker]
@@ -153,24 +103,24 @@ defmodule AgentMap.Worker do
   ##
 
   defp handle(%{act: :get} = req) do
-    box = get(:value)
+    value? = get(:value?)
 
     if get(:processes) < max_processes() do
       spawn_get_task(
         req,
-        {get(:key), box},
+        {get(:key), value?},
         server: get(:gen_server),
         worker: self()
       )
 
       inc(:processes)
     else
-      run(req, box)
+      Req.run(req)
     end
   end
 
-  defp handle(%{act: :get_and_update} = req) do
-    run(req, get(:value))
+  defp handle(%{act: :update} = req) do
+    Req.run(req)
   end
 
   defp handle(%{act: :max_processes} = req) do
@@ -192,9 +142,9 @@ defmodule AgentMap.Worker do
   ## MAIN
   ##
 
-  # box = {:value, any} | nil
-  def loop({ref, server}, key, {box, {p, max_p}}) do
-    put(:value, box)
+  # v? = {:v, any} | nil
+  def loop({ref, server}, key, {v?, {p, max_p}}) do
+    put(:value?, v?)
 
     # One (1) process is for loop.
     put(:processes, p + 1)

@@ -54,7 +54,7 @@ defmodule AgentMap.Server do
     if Enum.empty?(errors) do
       map =
         for {{:ok, v}, key} <- results, into: %{} do
-          {key, {:value, v}}
+          {key, {:v, v}}
         end
 
       max_p = args[:max_processes]
@@ -120,7 +120,7 @@ defmodule AgentMap.Server do
       #!
       m = dict[:max_processes]
       p = dict[:processes]
-      v = dict[:value]
+      v = dict[:value?]
       k = dict[:key]
 
       pack = {v, {p - 1, m}}
