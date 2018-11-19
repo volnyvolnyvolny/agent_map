@@ -685,8 +685,9 @@ defmodule AgentMap do
 
     * `cast: false` — to return after the actual sleep;
 
-    * `!: priority`, `:avg` — to postpone sleep until calls with a lower or
-      equal [priorities](#module-priority) are executed.
+    * `!: priority`, `:avg` — to postpone sleep until calls with a `≥`
+      [priorities](#module-priority) are executed.
+
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
   def sleep(am, key, t, opts \\ [!: :avg, cast: true]) do
@@ -801,7 +802,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority` `:avg` — to return when calls with a lower or equal
+    * `!: priority` `:avg` — to return when calls with a `≥`
       [priorities](#module-priority) are executed;
 
     * `!: :now` — to execute this call in a separate `Task` (passing a current
@@ -837,7 +838,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority`, `:now` — to return when calls with a lower or equal
+    * `!: priority`, `:now` — to return when calls with a `≥`
       [priorities](#module-priority) are executed for `key`;
 
     * `:timeout`, `5000`.
@@ -873,7 +874,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority`, `:now` — to return when calls with a lower or equal
+    * `!: priority`, `:now` — to return when calls with a `≥`
       [priorities](#module-priority) are executed for `key`;
 
     * `:timeout`, `5000`.
@@ -1385,7 +1386,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Updates prop in a process dictionary of instance.
+  Updates prop stored in a process dictionary of instance.
 
   The special `:max_processes` value (default maximum number of processes can be
   used per key) is tweaked here.
@@ -1476,7 +1477,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority`, `:now` — to return after calls with a lower or equal
+    * `!: priority`, `:now` — to return after calls with a `≥`
       [priorities](#module-priority) are executed;
 
     * `:timeout`, `5000`.
@@ -1754,12 +1755,12 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns a current map representation of an `AgentMap`.
+  Returns a current map representation.
 
   ## Options
 
-    * `!: priority`, `:now` — to wait until calls with a lower or equal
-      priorities are executed;
+    * `!: priority`, `:now` — to wait until calls with a `≥`
+      [priorities](#module-priority) are executed;
 
     * `:timeout`, `5000`.
 
@@ -1940,7 +1941,7 @@ defmodule AgentMap do
   Returns current size of `AgentMap`.
   """
   # TODO: Remove on 1.1
-  @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead."
+  @deprecated "Use `Enum.count/1` or `get_prop(am, :size)` instead"
   @spec size(am) :: non_neg_integer
   def size(am), do: get_prop(am, :size)
 
