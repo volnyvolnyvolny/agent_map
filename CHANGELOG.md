@@ -1,4 +1,4 @@
-# Changelog for AgentMap v1.0.0
+# Changelog for AgentMap v1.0.2
 
 ## v1.0.0
 
