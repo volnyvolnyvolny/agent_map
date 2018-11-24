@@ -30,61 +30,58 @@ defmodule AgentMap.Multi.Req do
   #                                    ↓    (req.upd)  ↓
   #                              ┌———————————————┐
   #                              ↓  (M) workers  ↓
-  #                 ┌————————↘         ╔═══════════════╗
-  #                 |    ┌───────┬─────╫─────────┐ (L) ║
-  #                 |    │ known │ get ║ get_upd │ upd ║
-  #                 ┊    │  (M)  │     ╚═════════╪═════╝
-  #                 ↑    └───────┴───────────────┘
-  #                 ┊    ╎  callback argument    ╎
-  #                 ┊    ╎  (req.get)            ╎
-  #                 ↑    └———————————————————————┘
-  #                 ┊
-  #                 └———————————————————————————————————————————————————————————┐
-  #                                                                             ┆
-  #   3. Starts *process* that is responsible for execution.                    ↑
-  #                                                                             ┆
-  #   4. *Server* stays on hold while *process* sends instructions to each      ┆
-  #      `worker` involved.                                                     ┆
-  #                                                                             ↑
-  # + *process*:                                                                ┆
-  #                                                                             ┆
-  #   1. ↳ `prepare_worker(get, get_upd, priority of request)`                  ┆
-  #                                                                             ↑
-  #      This method:                                                           ┆
-  #                                                                             ┆
-  #      * asks `get` workers to share their values with the *process*;         ↑
-  #                                                                             ┆
-  #      * asks `get_and_upd` workers to share their values and wait for a      ┆
-  #        further instructions.                                                ↑
-  #                                                                             ┆
-  #   2. *Server* removes from hold.                                            ┆
-  #                                                                             ┆
-  #   3. ↳ `collect(keys)`                                                      ↑
-  #                                                                             ┆
-  #      Collecting values shared to *process* by workers (step p. 1). Here     ┆
-  #      *process* waits until values for all the involved keys are collected.  ↑
-  #                                                                             ┆
-  #      This may take some time as some of the workers may be too busy         ┆
-  #      invoking other callbacks. The downside (that bothers a lot) is that    ↑
-  #      `get_upd` workers who have already shared their values are stucked,    ┆
-  #      waiting for values from the busy-workers.                              ┆
-  #                                                                             ┆
-  #   4. Merging collected into the values that we `know`.  ┈┈┈ → ┈┈┈ → ┈┈┈ → ┈┈┘
+  #                                    ╔═══════════════╗
+  #                      ┌───────┬─────╫─────────┐ (L) ║
+  #                      │ known │ get ║ get_upd │ upd ║
+  #                      │  (M)  │     ╚═════════╪═════╝
+  #                      └───────┴───────────────┘
+  #                      ╎  callback argument    ╎
+  #                      ╎  (req.get)            ╎
+  #                      └———————————————————————┘
+  #
+  #   3. Starts *process* that is responsible for execution.
+  #
+  #   4. *Server* stays on hold while *process* sends instructions to each
+  #      `worker` involved.
+  #
+  # + *process*:
+  #
+  #   1. ↳ `prepare_worker(get, get_upd, priority of request)`
+  #
+  #      This method:
+  #
+  #      * asks `get` workers to share their values with the *process*;
+  #
+  #      * asks `get_and_upd` workers to share their values and wait for a
+  #        further instructions.
+  #
+  #   2. *Server* removes from hold.
+  #
+  #   3. ↳ `collect(keys)`
+  #
+  #      Collecting values shared to *process* by workers (step p. 1). Here
+  #      *process* waits until values for all the involved keys are collected.
+  #
+  #      This may take some time as some of the workers may be too busy invoking
+  #      other callbacks. The downside (that bothers a lot) is that `get_upd`
+  #      workers who have already shared their values are stucked, waiting for
+  #      values from the busy-workers.
+  #
+  #   4. Merging collected into the values that we `know`.
   #
   #   5. Finally, `callback` is invoked. It can return:
-  #                                                                            ┈┐
-  #      * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned  ┆
-  #        value (`ret`) and an instruction for each key in `req.upd` to set a  ┆
-  #        new value, drop it, or just leave untouched;                         ┆
-  #                                                                             ┆
-  #      * `[{ret} | {ret, new value} | :pop | :id]` — first, a returned value  ┆
-  #        must be composed from individual values for each key in `req.upd`.   ┆
-  #        Each individual value can be given *explicitly*: `{ret}`, `{ret, _}` ┆
-  #        or is fetched: `:pop`, `:id`;                                        ┆
-  #                                                                             ┆
-  #      * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.   ┆
-  #                                                                            ┈┤
-  #                         ┌┈┈┈┈┈┈┈┈┄┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┄┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┘
+  #
+  #      * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned
+  #        value (`ret`) and an instruction for each key in `req.upd` to set a
+  #        new value, drop it, or just leave untouched;
+  #
+  #      * `[{ret} | {ret, new value} | :pop | :id]` — first, a returned value
+  #        must be composed from individual values for each key in `req.upd`.
+  #        Each individual value can be given *explicitly*: `{ret}`, `{ret, _}`
+  #        or is fetched: `:pop`, `:id`;
+  #
+  #    | * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.   |
+  #    └————————————————————┬———————————————————————————————————————————————————┘
   #                         ⮟
   #   6. ↳ `finalize(req, result, known, {workers (get_upd), upd})`
   #
