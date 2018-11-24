@@ -1,8 +1,7 @@
 defmodule AgentMap.Multi.Req do
   @moduledoc false
 
-  # Logic behind `Multi.get_and_update/4` that is used in all `Multi.*` calls
-  # and `take/3`.
+  # The logic behind `Multi.get_and_update/4` (all `Multi.*` calls + `take/3`).
   #
   # How it works:
   #
@@ -15,27 +14,27 @@ defmodule AgentMap.Multi.Req do
   #
   #   2. ↳ `prepare(req, state)`
   #
-  #      Ensures that workers are spawned for keys in `req.get ∩ req.upd` set
-  #      and returns:
+  #      Ensures that for each key in `req.get ∩ req.upd` set, the worker is
+  #      spawned. Returns:
   #
   #      0. `state` with pids of the workers that were spawned;
   #      1. map (`known`) with values that were explicitly stored in `state`;
-  #      2. a three disjoint sets of keys, holded in two maps (M) and a list (L).
+  #      2. disjoint sets of keys, holded in two maps (M) and a list (L).
   #
   #
-  #                                    ┌———————————————┐
-  #                                    ┊     updating  ┊
-  #                                    ↓    (req.upd)  ↓
-  #                              ┌———————————————┐
-  #                              ↓  (M) workers  ↓
-  #                                    ╔═══════════════╗
-  #                      ┌───────┬─────╫─────────┐ (L) ║
-  #                      │ known │ get ║ get_upd │ upd ║
-  #                      │ (M)   │     ╚═════════╪═════╝
-  #                      └───────┴───────────────┘
-  #                      ↑  callback argument    ↑
-  #                      ┊  (req.get)            ┊
-  #                      └———————————————————————┘
+  #                                         ┌———————————————┐
+  #                                         ┊     updating  ┊
+  #                                         ↓    (req.upd)  ↓
+  #                                   ┌———————————————┐
+  #                                   ↓  (M) workers  ↓
+  #                                         ╔═══════════════╗
+  #               ┌───────┬ ┌───────┬ ┌─────╫─────────┐ (L) ║
+  #               │ state │ │ known │ │ get ║ get_upd │ upd ║
+  #               │  (M)  │ │ (M)   │ │     ╚═════════╪═════╝
+  #               └───────┴ └───────┴ └───────────────┘
+  #                         ↑    callback argument    ↑
+  #                         ┊        (req.get)        ┊
+  #                         └—————————————————————————┘
   #
   #   3. Starts *process* that is responsible for execution.
   #
@@ -57,7 +56,7 @@ defmodule AgentMap.Multi.Req do
   #
   #   3. ↳ `collect(keys)`
   #
-  #      Collecting values shared to *process* by workers (step p. 1). Here
+  #      Collects values shared to *process* by workers (step p. 1). Here
   #      *process* waits until values for all the involved keys are collected.
   #
   #      This may take some time as some of the workers may be too busy. The
@@ -90,9 +89,9 @@ defmodule AgentMap.Multi.Req do
   #
   #      Otherwise, we have to use *server* to collect values and commit changes
   #      for rest of the keys (`req.upd ∖ req.get`). For this purpose we form a
-  #      special `Multi.Req`. This request contain keys needs to be returned
-  #      (`:get` field), to be dropped (`:drop`), a keyword with keys to be
-  #      updated (`:upd`). The same request is used in `values/2` and `drop/3`.
+  #      special `Multi.Req` that contains keys needs to be returned (`:get`
+  #      field), to be dropped (`:drop`) and a keyword with keys to be updated
+  #      (`:upd`).
   #
   #   7. Reply result. Pooh!
   #
