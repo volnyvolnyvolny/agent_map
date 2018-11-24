@@ -1,7 +1,8 @@
 defmodule AgentMap.Multi do
-  alias AgentMap.Multi.Req
+  alias AgentMap.Multi
 
   import AgentMap, only: [_call: 3, _prep: 2]
+  import Enum, only: [uniq: 1]
 
   @moduledoc """
   `AgentMap` supports "multi-key" operations.
@@ -61,13 +62,13 @@ defmodule AgentMap.Multi do
 
   Each multi-key call is handled in a dedicated process. This process is
   responsible for collecting values, invoking callback, updating values,
-  returning a result and dealing with possible errors.
+  returning a result and dealing with a possible errors.
 
   Computation can start only after all the values are known. If it's a
-  `get_and_update/4`, `update/4` or a `cast/4` call, to each `key` involved will
-  be sent request "return me a value and wait for a new one". This request will
-  have a fixed priority `{:avg, +1}`. If it's a `get/4` call with a priority ≠
-  `:now`, to each `key` involved will be sent request "return me a value".
+  `get_and_update/4`, `update/4` or a `cast/4` call, to each key involved will
+  be sent instruction *"return me a value and wait for a new one"*. This request
+  will have a fixed priority `{:avg, +1}`. If it's a `get/4` call with a
+  priority ≠ `:now`, to each `key` involved will be sent *"return me a value"*.
 
   When values are collected, callback can be invoked. If it's a `get/4` call, a
   result of invocation can be returned straight to a caller. Otherwise, updated
@@ -77,18 +78,24 @@ defmodule AgentMap.Multi do
   collected, callback is invoked immediately, passing current values as an
   argument.
 
-  ### `:%` option
+  Most of the time we want to update the same set of keys that were collected.
+  The downside is that any activity for each involved key must be paused until
+  all the values are collected and corresponding callback will finish its
+  execution. It is not a desired behaviour, for example, if we need only part of
+  the values to compute updates, if there is no need in original values at all
+  (think of a drop-call) or even if we compute new values using completely
+  different set of keys.
 
-  But sometimes you want collected keys to differs from updated
+  For this particular case `get_and_update/4`, `update/4` and `cast/4` could
+  handle keys argument in a form of `{get, upd}`, where `get` is a list of keys
+  whose values form the callback argument and `upd` — the keys whose values are
+  updated. For example:
 
-  By default, it's wise to update the same keys that were collected. But
-  sometimes, like in the `AgentMap.drop/3` case, you are not interested in the
-  values, but only in
-
-  Multi-key calls `get_and_update/4`, `update/4` and `cast/4` supports special
-  option to update 
-
-
+      iex> AgentMap.new(a: 1, b: 2, sum: 0)
+      ...> |> update({[:a, :b], [:sum]}, fn [1, 2] -> [1 + 2] end)
+      ...> |> update({[], [:a, :b]}, fn [] -> :drop end)
+      ...> |> get([:a, :b, :sum])
+      [nil, nil, 3]
   """
 
   @type name :: atom | {:global, term} | {:via, module, term}
@@ -120,25 +127,29 @@ defmodule AgentMap.Multi do
   ## Examples
 
       iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 10)                   # 1
-      ...> |> put(:a, 2)                      #   3
-      ...> |> get([:a, :b], & &1, initial: 1) #  2
+      ...> |> sleep(:a, 10)                    # 1 | |
+      ...> |> put(:a, 2)                       # | | 3
+      ...> |> get([:a, :b], & &1, initial: 1)  # | 2 |
       [1, 1]
 
       but:
 
       iex> AgentMap.new(a: 1, b: 1)
-      ...> |> sleep(:a, 10)                   # 1
-      ...> |> put(:a, 2)                      #  2
-      ...> |> get([:a, :b], & &1, !: :avg)    #   3
+      ...> |> sleep(:a, 10)                    # 1 | |
+      ...> |> put(:a, 2)                       # | 2 |
+      ...> |> get([:a, :b], & &1, !: :avg)     # | | 3
       [2, 1]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
   def get(am, keys, fun, opts \\ [!: :now]) do
-    opts = _prep(opts, !: :now)
-    req = %Req{act: :get, keys: keys, fun: fun, data: opts[:initial]}
-
-    _call(am, req, opts)
+    get_and_update(
+      am,
+      {keys, []},
+      fn keys ->
+        {fun.(keys), []}
+      end,
+      opts
+    )
   end
 
   @doc """
@@ -147,9 +158,9 @@ defmodule AgentMap.Multi do
   ## Examples
 
       iex> AgentMap.new(a: 42)
-      ...> |> sleep(:a, 10)    # 1
-      ...> |> put(:a, 0)       #  2
-      ...> |> get([:a, :b])    #   3
+      ...> |> sleep(:a, 10)     # 1 | |
+      ...> |> put(:a, 0)        # | 2 |
+      ...> |> get([:a, :b])     # | | 3
       [0, nil]
   """
   @spec get(am, [key]) :: [value | nil]
@@ -203,13 +214,23 @@ defmodule AgentMap.Multi do
           iex> get(am, keys)
           [nil, nil, nil, nil]
 
-  For this call `{:max, -2}` priority is used.
+  This method can handle `keys` argument in a form of `{get, upd}`, where `get`
+  is a list of keys whose values form the `fun` argument and `upd` — the keys
+  whose values are planned to update:
+
+      iex> AgentMap.new(a: 1, b: 2)
+      ...> |> get_and_update({[:a, :b], []}, fn [1, 2] -> {3, [1 + 2]} end)
+      ...> |> update({[], [:a, :b]}, fn [] -> :drop end)
+      ...> |> get([:a, :b, :sum])
+      [nil, nil, 3]
 
   ## Options
 
-    * `%: [key]`, `keys` — keys that will be updated;
-
     * `initial: value`, `nil` — value for missing keys;
+
+    * `!: priority`, `:now` — [priority](AgentMap.html#module-priority) for keys
+      that only needs [collecting](#module-how-it-works), for keys that need to
+      be updated, `{:avg, +1}` is used.
 
     * `:timeout`, `5000`.
 
@@ -229,8 +250,8 @@ defmodule AgentMap.Multi do
       iex> get(am, [:a, :b])
       [nil, nil]
 
-  (!) `get_and_update/4`, `update/4` and `cast/4` calls are blocking execution
-  for `keys`:
+  Calls `get_and_update/4`, `update/4` and `cast/4` are **blocking execution**
+  for all the keys that are collected and updated:
 
       iex> am = AgentMap.new()
       iex> cast(am, [:a, :b], fn _ -> sleep(10); :id end)
@@ -244,30 +265,36 @@ defmodule AgentMap.Multi do
   @typedoc """
   Callback for multi-key call.
   """
-  @type cb_m(get) ::
+  @type cb_m(ret) ::
           ([value] ->
-             {get}
-             | {get, [value] | :drop | :id}
-             | [{any} | {any, value} | :pop | :id]
+             {ret}
+             | {ret, [value] | :drop | :id}
+             | [{ret} | {ret, value} | :pop | :id]
              | :pop
              | :id)
 
-  @spec get_and_update(am, [key], cb_m(get), keyword | timeout) :: get | [value]
-        when get: var
-  def get_and_update(am, keys, fun, opts \\ []) do
-    unless keys == Enum.uniq(keys) do
+  @spec get_and_update(am, [key] | {[key], [key]}, cb_m(ret), keyword | timeout) :: ret | [ret | value]
+        when ret: var
+  def get_and_update(am, keys, fun, opts \\ [])
+
+  def get_and_update(am, {get, upd}, fun, opts) do
+    unless ks_upd == uniq(ks_upd) do
       raise """
             expected uniq keys for `update`, `get_and_update` and
-            `cast` multi-key calls. Got: #{inspect(keys)}. Please
-            check #{inspect(keys -- Enum.uniq(keys))}.
+            `cast` multi-key calls. Got: #{inspect(ks_upd)}. Please
+            check #{inspect(ks_upd -- uniq(ks_upd))}.
             """
             |> String.replace("\n", " ")
     end
 
-    opts = _prep(opts, !: {:avg, +1})
-    req = %Req{act: :update, keys: keys, fun: fun, data: opts[:initial]}
+    opts = _prep(opts, !: :now)
+    req = %Multi.Req{get: get, upd: upd, fun: fun, initial: opts[:initial]}
 
     _call(am, req, opts)
+  end
+
+  def get_and_update(am, keys, fun, opts) do
+    get_and_update(am, {keys, keys}, fun, opts)
   end
 
   @doc """
@@ -285,8 +312,6 @@ defmodule AgentMap.Multi do
 
     * `initial: value`, `nil` — value for missing keys;
 
-    * `%: [key]`, `keys` — keys that will be updated;
-
     * `:timeout`, `5000`.
 
   ## Examples
@@ -299,11 +324,11 @@ defmodule AgentMap.Multi do
       [nil, 2]
 
       iex> AgentMap.new()
-      ...> |> sleep(:a, 20)                                                        # 0
-      ...> |> put(:a, 3)                                                           #   2
-      ...> |> put(:b, 0)                                                           #   2
-      ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1) #  1
-      ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                            #    3
+      ...> |> sleep(:a, 20)                                                         # 0 | | |
+      ...> |> put(:a, 3)                                                            # | | 2 |
+      ...> |> put(:b, 0)                                                            # | | 2 |
+      ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1)  # | 1 | |
+      ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                             # | | | 3
       ...> |> get([:a, :b])
       [4, 4]
   """
@@ -321,16 +346,14 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `initial: value`, `nil` — value for missing keys;
-
-    * `%: [key]`, `keys` — keys that will be updated.
+    * `initial: value`, `nil` — value for missing keys.
 
   ## Examples
 
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
-      ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, initial: 1) # 1
-      ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)             #  2
+      ...> |> cast([:a, :b], fn [1, 1] -> [2, 2] end, initial: 1)  # 1 |
+      ...> |> cast([:a, :b], fn [2, 2] -> [3, 3] end)              # | 2
       ...> |> get([:a, :b])
       [3, 3]
   """

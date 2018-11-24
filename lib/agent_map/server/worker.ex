@@ -51,34 +51,8 @@ defmodule AgentMap.Worker do
   def inc(key), do: put(key, get(key) + 1)
 
   ##
-  ## CALLBACKS
-  ##
-
-  def share_value(to: me) do
-    key = Process.get(:key)
-    send(me, {key, Process.get(:value?)})
-  end
-
-  def accept_value() do
-    receive do
-      :drop ->
-        :pop
-
-      :id ->
-        :id
-
-      {:v, value} ->
-        {:_get, value}
-    end
-  end
-
-  ##
   ## REQUEST
   ##
-
-  #
-
-  #
 
   def spawn_get_task(req, {key, value?}, opts \\ [server: self()]) do
     Task.start_link(fn ->

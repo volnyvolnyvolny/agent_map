@@ -9,7 +9,6 @@ defmodule AgentMap do
   import Time, only: [now: 0, to_ms: 1]
 
   @moduledoc """
-
   `AgentMap` can be seen as a stateful `Map` that parallelize operations made on
   different keys. Basically, it can be used as a cache, memoization,
   computational framework and, sometimes, as a `GenServer` alternative.
@@ -340,16 +339,16 @@ defmodule AgentMap do
   #
 
   @doc false
-  defp prepair(opts) when is_list(opts), do: opts
+  defp prepare(opts) when is_list(opts), do: opts
 
-  defp prepair(t), do: [timeout: t]
+  defp prepare(t), do: [timeout: t]
 
   #
 
   def _prep(opts, defs) do
     opts =
       opts
-      |> prepair()
+      |> prepare()
       |> Keyword.update(:!, to_num(:avg), &to_num/1)
 
     Keyword.merge(defs, opts)
@@ -619,7 +618,7 @@ defmodule AgentMap do
   """
   @spec start_link([{key, (() -> any)}], GenServer.options() | timeout) :: on_start
   def start_link(funs \\ [], opts \\ [max_processes: @max_processes]) do
-    opts = prepair(opts)
+    opts = prepare(opts)
 
     args = [
       funs: funs,
@@ -655,7 +654,7 @@ defmodule AgentMap do
   """
   @spec start([{key, (() -> any)}], GenServer.options() | timeout) :: on_start
   def start(funs \\ [], opts \\ [max_processes: @max_processes]) do
-    opts = prepair(opts)
+    opts = prepare(opts)
 
     args = [
       funs: funs,
@@ -756,7 +755,7 @@ defmodule AgentMap do
   @spec get(am, key, (value -> get), keyword | timeout) :: get when get: var
   def get(am, key, fun, opts \\ [!: :avg]) do
     opts = _prep(opts, !: :avg)
-    req = %Req{act: :get, key: key, fun: fun, data: opts[:initial]}
+    req = %Req{act: :get, key: key, fun: fun, initial: opts[:initial]}
 
     _call(am, req, opts)
   end
@@ -971,7 +970,8 @@ defmodule AgentMap do
         when get: var
   def get_and_update(am, key, fun, opts \\ [!: :avg]) do
     opts = _prep(opts, !: :avg)
-    req = %Req{act: :update, key: key, fun: fun, data: opts[:initial]}
+
+    req = %Req{act: :update, key: key, fun: fun, initial: opts[:initial]}
 
     _call(am, req, opts)
   end
@@ -1130,8 +1130,11 @@ defmodule AgentMap do
   """
   @spec replace!(am, key, value, keyword | timeout) :: am
   def replace!(am, key, value, opts \\ [!: :avg]) do
+    opts = _prep(opts, !: :avg, tiny: true)
+
     fun = fn _ -> value end
-    update!(am, key, fun, _prep(opts, !: :avg, tiny: true))
+
+    update!(am, key, fun, opts)
   end
 
   ##
@@ -1188,7 +1191,7 @@ defmodule AgentMap do
       when value == :infinity
       when is_nil(value) do
     #
-    _call(am, %Req{act: :max_processes, key: key, data: value}, timeout: 5000)
+    _call(am, %Req{act: :max_processes, key: key, max_p: value}, timeout: 5000)
     am
   end
 
@@ -1284,7 +1287,7 @@ defmodule AgentMap do
   """
   @spec get_prop(am, term, term) :: term
   def get_prop(am, key, default) do
-    req = %Req{act: :get_prop, key: key, data: default}
+    req = %Req{act: :get_prop, key: key, initial: default}
     _call(am, req, timeout: 5000)
   end
 
@@ -1414,7 +1417,7 @@ defmodule AgentMap do
   end
 
   def upd_prop(am, key, fun, default) do
-    req = %Req{act: :upd_prop, key: key, fun: fun, data: default}
+    req = %Req{act: :upd_prop, key: key, fun: fun, initial: default}
     _call(am, req, cast: true)
     am
   end
@@ -1470,7 +1473,9 @@ defmodule AgentMap do
       [:a, :b, :c]
   """
   @spec keys(am) :: [key]
-  def keys(am), do: _call(am, %Req{act: :keys, !: :now}, timeout: 5000)
+  def keys(am) do
+    _call(am, %Req{act: :keys, !: :now}, timeout: 5000)
+  end
 
   @doc """
   Returns all the current values of an `AgentMap`.
@@ -1500,11 +1505,11 @@ defmodule AgentMap do
   """
   @spec values(am, keyword | timeout) :: [value]
   def values(am, opts \\ [!: :now]) do
-    fun = fn _ ->
-      Map.values(Process.get(:map))
+    fun = fn _, map ->
+      Map.values(map)
     end
 
-    Multi.get(am, keys(am), fun, _prep(opts, !: :now))
+    Multi.get(am, keys(am), fun, opts)
   end
 
   ##
@@ -1677,13 +1682,15 @@ defmodule AgentMap do
   """
   @spec pop(am, key, any, keyword | timeout) :: value | any
   def pop(am, key, default \\ nil, opts \\ [!: :avg]) do
+    opts = _prep(opts, !: :avg, tiny: true)
+
     fun = fn _ ->
       if Process.get(:value?) do
         :pop
       end || {default}
     end
 
-    get_and_update(am, key, fun, _prep(opts, !: :avg))
+    get_and_update(am, key, fun, opts)
   end
 
   @doc """
@@ -1747,7 +1754,10 @@ defmodule AgentMap do
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [cast: true]) do
     opts = _prep(opts, cast: true)
-    Multi.update(am, {[], keys}, fn [] -> :drop end, opts)
+
+    fun = fn [] -> :drop end
+
+    Multi.update(am, {[], keys}, fun, opts)
   end
 
   ##
@@ -1782,8 +1792,7 @@ defmodule AgentMap do
   """
   @spec to_map(am, keyword | timeout) :: %{required(key) => value}
   def to_map(am, opts \\ [!: :now]) do
-    req = %Req{act: :to_map}
-    _call(am, req, opts, !: :now)
+    _call(am, %Req{act: :to_map}, !: :now)
   end
 
   @doc """
@@ -1811,7 +1820,7 @@ defmodule AgentMap do
   """
   @spec take(am, [key], keyword | timeout) :: map
   def take(am, keys, opts \\ [!: :avg]) do
-    fun = fn _ -> Process.get(:map) end
+    fun = fn _, map -> map end
 
     Multi.get(am, keys, fun, opts)
   end
@@ -1930,7 +1939,8 @@ defmodule AgentMap do
   """
   @spec cast(am, key, (value -> value), keyword) :: am
   def cast(am, key, fun, opts \\ [!: :avg]) do
-    update(am, key, fun, _prep(opts, !: :avg, cast: true))
+    opts = _prep(opts, !: :avg, cast: true)
+    update(am, key, fun, opts)
   end
 
   ##

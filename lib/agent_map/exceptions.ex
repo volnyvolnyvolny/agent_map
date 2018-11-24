@@ -1,22 +1,54 @@
 defmodule AgentMap.CallbackError do
-  defexception [:got, :len, multi_key?: false]
+  defexception [:got, :pos, :item, :len, :expected, multi_key?: false]
 
-  def message(%{multi_key?: false, got: g}) do
+  # single-key
+
+  def message(%{multi_key?: false, got: got}) do
     """
-    callback may return {get, value} | {get} | :id | :pop | {fun, keys}, value}.
-    got: #{inspect(g)}
+    callback may return:
+
+      * {get, value}
+      * {get}
+      * :pop
+      * :id
+
+    got: #{inspect(got)}
     """
   end
 
-  def message(%{multi_key?: true, got: g}) do
+  # multi-key
+
+  def message(%{got: got, pos: n} = e) when is_integer(n) do
+    message(%{multi_key?: true, got: got})
+    <>
     """
-    callback may return {get, [value] | :id | :drop} | {get} | :id | :pop |
-    [{get, value} | {get} | :id | :pop].
-    got: #{inspect(g)}
+
+    err-item: #{inspect(e.item)}
+    position: #{n}
     """
   end
 
-  def message(%{len: n}) when is_integer(n) do
-    "the number of returned values #{n} does not equal to the number of keys"
+  def message(%{len: n, expected: e}) when is_integer(n) do
+    message(%{multi_key?: true, got: got})
+    <>
+    """
+
+    expected #{e} elements, got #{n}
+    """
+  end
+
+  def message(%{multi_key?: true, got: got}) do
+    """
+    callback may return:
+
+      * {get, [value] | :id | :drop}
+      * [{get, value} | {get} | :id | :pop]
+
+      * {get} = {get, :id}
+      * :id   = [:id, …]
+      * :pop  = [:pop, …]
+
+    got: #{inspect(got)}
+    """
   end
 end

@@ -139,8 +139,8 @@ defmodule AgentMap.Server.State do
   def separate(state, keys) do
     Enum.reduce(keys, {%{}, %{}}, fn key, {map, workers} ->
       case get(state, key) do
-        {{:v, v}, _} ->
-          {Map.put(map, key, v), workers}
+        {{:v, value}, _} ->
+          {Map.put(map, key, value), workers}
 
         {nil, _} ->
           {map, workers}
@@ -150,4 +150,7 @@ defmodule AgentMap.Server.State do
       end
     end)
   end
+
+  def extract({:noreply, state}), do: state
+  def extract({:reply, _get, state}), do: state
 end

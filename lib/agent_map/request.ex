@@ -8,15 +8,15 @@ defmodule AgentMap.Req do
   import Worker, only: [spawn_get_task: 2, processes: 1]
   import Server.State
 
-  @compile {:inline, reply_ok: 1}
   @enforce_keys [:act]
 
   defstruct [
     :act,
-    :data,
+    :initial,
     :from,
     :key,
     :fun,
+    max_p: 5,
     !: 256,
     tiny: false
   ]
@@ -39,63 +39,57 @@ defmodule AgentMap.Req do
     end
   end
 
-  def run(%{act: :get} = req) do
-    arg = collect(req)
-    ret = apply(req.fun, [arg])
+  #
 
-    req
-    |> Map.get(:from)
-    |> reply(ret)
-  end
-
-  # :get_and_update
   def run(req) do
-    arg = collect(req)
-    ret = apply(req.fun, [arg])
+    value = collect(req)
 
+    args =
+      if is_function(req.fun, 2) do
+        exist? = Process.get(:value?) && true
+        [arg, exist?]
+      else
+        [arg]
+      end
+
+    ret = apply(req.fun, args)
     from = Map.get(req, :from)
 
-    case ret do
-      {get} ->
-        reply(from, get)
+    if req.act == :get do
+      reply(from, ret)
+    else
+      case ret do
+        {get} ->
+          reply(from, get)
 
-      {get, v} ->
-        Process.put(:value?, {:v, v})
-        reply(from, get)
+        {get, v} ->
+          Process.put(:value?, {:v, v})
+          reply(from, get)
 
-      :id ->
-        reply(from, arg)
+        :id ->
+          reply(from, arg)
 
-      :pop ->
-        Process.delete(:value?)
-        reply(from, arg)
+        :pop ->
+          Process.delete(:value?)
+          reply(from, arg)
 
-      reply ->
-        raise CallbackError, got: reply
+        malformed ->
+          raise CallbackError, got: malformed
+      end
     end
   end
 
   #
 
   # Compress before sending to worker.
-  def compress(%_{} = req) do
+  defp compress(%_{} = req) do
     req
     |> Map.from_struct()
-    |> compress()
-  end
-
-  def compress(map) do
-    map
     |> Map.delete(:key)
-    |> Map.delete(:keys)
     |> Map.delete(:tiny)
     |> Enum.reject(&match?({_, nil}, &1))
     |> Enum.into(%{})
   end
-
-  #
-
-  defp reply_ok(st), do: {:reply, :_ok, st}
 
   ##
   ## HANDLER
@@ -140,10 +134,9 @@ defmodule AgentMap.Req do
 
   def handle(%{act: :max_processes, key: key} = req, state) do
     case get(state, key) do
-      {box, {p, _max_p}} ->
-        state
-        |> put(key, {box, {p, req.data}})
-        |> reply_ok()
+      {v?, {p, _max_p}} ->
+        state = put(key, {v?, {p, req.max_p}})
+        {:reply, :_ok, state}
 
       worker ->
         req = compress(%{req | !: :now, from: nil})
@@ -269,8 +262,8 @@ defmodule AgentMap.Req do
   #
 
   def handle(%{act: :upd_prop, key: key, fun: fun} = req, state) do
-    arg = Process.get(key, req.data)
-    Process.put(key, apply(IO.inspect(fun), [arg]))
+    arg = Process.get(key, req.initial)
+    Process.put(key, apply(fun, [arg]))
     {:reply, :_ok, state}
   end
 
@@ -289,7 +282,7 @@ defmodule AgentMap.Req do
   end
 
   def handle(%{act: :get_prop, key: key} = req, state) do
-    prop = Process.get(key, req.data)
+    prop = Process.get(key, req.initial)
     {:reply, prop, state}
   end
 end
