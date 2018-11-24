@@ -14,11 +14,11 @@ defmodule AgentMap.Multi.Req do
   #
   #   2. ↳ `prepare(req, state)`
   #
-  #      Ensures that for each key in `req.get ∩ req.upd` set, the worker is
-  #      spawned. Returns:
+  #      Ensures that for each key in `req.get ∩ req.upd`, a worker is spawned.
+  #      Returns:
   #
   #      0. `state` with pids of the workers that were spawned;
-  #      1. map (`known`) with values that were explicitly stored in `state`;
+  #      1. `known` map with values that were explicitly stored in `state`;
   #      2. disjoint sets of keys, holded in two maps (M) and a list (L).
   #
   #
@@ -30,7 +30,7 @@ defmodule AgentMap.Multi.Req do
   #                                         ╔═══════════════╗
   #               ┌───────┬ ┌───────┬ ┌─────╫─────────┐ (L) ║
   #               │ state │ │ known │ │ get ║ get_upd │ upd ║
-  #               │  (M)  │ │ (M)   │ │     ╚═════════╪═════╝
+  #               │  (M)  │ │  (M)  │ │     ╚═════════╪═════╝
   #               └───────┴ └───────┴ └───────────────┘
   #                         ↑    callback argument    ↑
   #                         ┊        (req.get)        ┊
@@ -68,30 +68,25 @@ defmodule AgentMap.Multi.Req do
   #   5. Callback (`req.fun`) is invoked. It can return:
   #
   #      * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned
-  #        value (`ret`) and actions to be taken for all the keys in `req.upd`;
+  #        value (`ret`) and actions to be taken for every key in `req.upd`;
   #
   #      * `[{ret} | {ret, new value} | :pop | :id]` — a composed returned value
-  #        (`[ret | value]`) and the individual actions to be taken;
+  #        (`[ret | value]`) and individual actions to be taken;
   #
   #      * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.
   #    └————————————————————┬———————————————————————————————————————————————————┘
   #                         ⮟
-  #   6. ↳ `finalize(req, result, known, {workers (get_upd), upd})`
+  #   6. ↳ `finalize(req, result, known, {workers (get_upd), only_upd (upd)})`
   #
-  #      Now we need to commit changes for all `req.upd` values and to decide
-  #      about the returned value.
+  #      Commits changes for all values. The value returned from this call is
+  #      later returned from `Multi.get_and_update/4`.
   #
-  #      At the moment, `get_upd` workers are still waiting for instructions to
-  #      continue. From the step p. 4 we `know` values holded by thus workers.
-  #      And so, in case when `get_upd` holds the same keys as asked in
-  #      `req.upd`, the happy end comes — we just need to compose a returned
-  #      value or take the explicitly given.
-  #
-  #      Otherwise, we have to use *server* to collect values and commit changes
-  #      for rest of the keys (`req.upd ∖ req.get`). For this purpose we form a
-  #      special `Multi.Req` that contains keys needs to be returned (`:get`
-  #      field), to be dropped (`:drop`) and a keyword with keys to be updated
-  #      (`:upd`).
+  #      At the moment, `workers` (`get_upd`) are still waiting for instructions
+  #      to continue. From the step p. 4 we already `know` the values holded by
+  #      them and so we have to collect only values for keys in `req.upd ∖
+  #      req.get`. For this purpose we form a special `Multi.Req` that contains
+  #      keys needs to be returned (`:get` field), to be dropped (`:drop`) and a
+  #      keyword with keys to be updated (`:upd`).
   #
   #   7. Reply result. Pooh!
   #
@@ -232,25 +227,25 @@ defmodule AgentMap.Multi.Req do
 
     only_upd = difference(upd, get)
 
-    #               ┈┐        ┌┈
-    # map with pids  ┆        ┆    map with pids for keys
-    # for keys whose ┆        ┆       that are planned to
-    # values will    ┆        ┆   update and whose values
-    # only be        ┆        ┆         will be collected
-    # collected      ┆        ├┈
-    #               ┈┤        ┆      ┌ keys that are only
+    #               —┐        ┌—
+    # map with pids  |        |    map with pids for keys
+    # for keys whose |        |       that are planned to
+    # values will    |        |   update and whose values
+    # only be        |        |         will be collected
+    # collected      |        ├—
+    #               —┤        |      ┌ keys that are only
     #                ┆        ┆      ┆  planned to update
     #                ↓        ↓      ↓
     {state, known, {get, get_upd, only_upd |> to_list()}}
-    #         Ⓜ   ┆┆            ┆    Ⓛ                  ┆
-    #             ┆┆  callback  ┆                       ┆
-    #             ┆┆  argument  ┆                       ┆
-    #             ┆├┈┈┈┈┈┈┈┈┈┈┈┈┤                       ┆
-    #             ┆┊  Ⓜ workers ┊                       ┆
-    #             ┆└┄┄┄┄┄┄┄┄┄┄┄┄┘                       ┆
-    #             ┆                                     ┆
+    #        (M)  ↑              ↑   (L)
+    #             ┆   callback   ┆
+    #             |   argument   |
+    #             ├——————————————┤
+    #             ┆  (M) workers ┊
+    #             ├——————————————┘
+    #             ↑                                     ↑
     #             ┆         sets of keys, s. 2          ┆
-    #             └┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┘
+    #             └—————————————————————————————————————┘
   end
 
   # p. 1
@@ -372,7 +367,7 @@ defmodule AgentMap.Multi.Req do
     raise CallbackError, got: acts, len: n, expected: m
   end
 
-  #    ┌┄┄┄┄┄┄┄┄┄┄┄┄┐
+  #    ┌————————————┐
   #    ┆  explicit  ┆
   #    ↓            ↓
   # [{ret} | {ret, new value} | :id | :pop]
@@ -546,10 +541,10 @@ defmodule AgentMap.Multi.Req do
     end)
 
     # s. 4
-    # This prevents workers with an empty queues to die before getting
-    # instructions. When server receives `{worker, :die?}` from worker, it first
-    # looks if its message queue is empty. And as we send every involved worker
-    # an instructions it cannot be empty.
+    # This prevents workers from dying before getting an instructions. When
+    # server receives `{worker, :die?}` from worker, it first looks if its
+    # message queue is empty. If so — worker can die, otherwise, worker has
+    # to continue its execution.
 
     receive do
       {^ref, :go!} ->
