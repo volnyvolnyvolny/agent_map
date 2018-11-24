@@ -1,8 +1,8 @@
 defmodule AgentMap.Multi.Req do
   @moduledoc false
 
-  # Logic behind `Multi.get_and_update/4` that is used by all the `Multi.*`
-  # calls and `take/3`.
+  # Logic behind `Multi.get_and_update/4` that is used in all `Multi.*` calls
+  # and `take/3`.
   #
   # How it works:
   #
@@ -22,21 +22,21 @@ defmodule AgentMap.Multi.Req do
   #
   #      * map (`known`) with values explicitly stored in `state`;
   #
-  #      * a three disjoint sets of keys, holded in two maps (Ⓜ) and a list (Ⓛ).
+  #      * a three disjoint sets of keys, holded in two maps (M) and a list (L).
   #
   #
   #                                    ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐
-  #                                    ┊     updating  ┊
-  #                                    ┊    (req.upd)  ┊
-  #                              ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐     ┊
-  #                              ┊  Ⓜ  workers   ┊     ┊
-  #                 ┌┈ → ┈┈┈ ↴   ┊     ╔═══════════════╗
-  #                 ↑    ┌───────┬─────╫─────────┐ Ⓛ   ║
+  #                                    ╎     updating  ╎
+  #                                    ╎    (req.upd)  ╎
+  #                              ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐     ╎
+  #                              ╎  (M) workers  ╎     ╎
+  #                 ┌┈ → ┈┈┈ ↴   ╎     ╔═══════════════╗
+  #                 ↑    ┌───────┬─────╫─────────┐ (L) ║
   #                 ┊    │ known │ get ║ get_upd │ upd ║
-  #                 ┊    │     Ⓜ │     ╚═════════╪═════╝
+  #                 ┊    │   (M) │     ╚═════════╪═════╝
   #                 ↑    └───────┴───────────────┘
-  #                 ┊    ┊  callback argument    ┊
-  #                 ┊    ┊  (req.get)            ┊
+  #                 ┊    ╎  callback argument    ╎
+  #                 ┊    ╎  (req.get)            ╎
   #                 ↑    └┈┈┈┈┈┈┈┄┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┘
   #                 ┊
   #                 └┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┐
@@ -106,9 +106,9 @@ defmodule AgentMap.Multi.Req do
   #   7. Reply result. Pooh!
   #
   #
-  # What is possible to improve?
+  # What's possible to improve here?
   #
-  # 1. `collect/1` call. See {p. 3}:
+  # 1. `collect/1` call. See p. 3:
   #
   #        am = AgentMap.new(a: 1, b: 2, c: 3)
   #        sleep(am, :a, 4_000)
@@ -131,23 +131,23 @@ defmodule AgentMap.Multi.Req do
   #
   #    Now:
   #
-  #    * (B → A) if the call from the process B comes a little earlier, process
-  #      A will spend `4 seconds`, but B will begin to save the world almost
-  #      immediatelly;
+  #    * (B → A) if the update-call from B comes a little earlier, this process
+  #      will begin to save the world almost immediatelly [total working time:
+  #      `4` sec.];
   #
-  #    * (A → B) otherwise, saving the world is delayed for `4` seconds.
+  #    * (A → B) otherwise, saving the world is delayed for `4` seconds [total
+  #      working time: `8` sec.].
   #
-  #    Note, that in both cases `AgentMap` will hold `%{a: 2, b: 4, c: 4}`. The
-  #    question is how to optimize performance in this case?
+  #    In both cases the state of `AgentMap` will be `%{a: 2, b: 4, c: 4}`.
   #
-  # 2. I don't like that `prepare/2` and `prepare_workers/3` are executed in
-  #    different processes. It is so because inside `prepare_workers` we send
-  #    callbacks that use *process* `pid`. It would be nice to prepare
+  #    How to optimize performance?
+  #
+  # 2. I don't like that `prepare/2` and `prepare_workers/3` are executed in a
+  #    different processes. This is done so because inside `prepare_workers` we
+  #    send callbacks that capture *process* `pid`. It would be nice to prepare
   #    everything in a single *server* call.
   #
   # 3. It would be nice to implement `tiny: true` option for multi-key calls.
-  #
-  # Thanks for reading :-)
 
   @moduledoc false
 
