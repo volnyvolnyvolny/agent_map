@@ -26,11 +26,11 @@ defmodule AgentMap.Multi.Req do
   #
   #
   #                                    ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐
-  #                                    ╎     updating  ╎
-  #                                    ╎    (req.upd)  ╎
-  #                              ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐     ╎
-  #                              ╎  (M) workers  ╎     ╎
-  #                 ┌┈ → ┈┈┈ ↴   ╎     ╔═══════════════╗
+  #                                    ┊     updating  ┊
+  #                                    ┊    (req.upd)  ┊
+  #                              ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐     ┊
+  #                              ┊  (M) workers  ┊     ┊
+  #                 ┌ — → — ↘    ┊     ╔═══════════════╗
   #                 ↑    ┌───────┬─────╫─────────┐ (L) ║
   #                 ┊    │ known │ get ║ get_upd │ upd ║
   #                 ┊    │   (M) │     ╚═════════╪═════╝
@@ -39,7 +39,7 @@ defmodule AgentMap.Multi.Req do
   #                 ┊    ╎  (req.get)            ╎
   #                 ↑    └┈┈┈┈┈┈┈┄┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┘
   #                 ┊
-  #                 └┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┈┈ ← ┈┐
+  #                 └ ← — — — ← — — — ← — — — ← — — — ← — — — ← — — — ← — — — ← ┐
   #                                                                             ┆
   #   3. Starts *process* that is responsible for execution.                    ↑
   #                                                                             ┆
