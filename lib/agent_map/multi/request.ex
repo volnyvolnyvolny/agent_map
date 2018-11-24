@@ -16,13 +16,11 @@ defmodule AgentMap.Multi.Req do
   #   2. ↳ `prepare(req, state)`
   #
   #      Ensures that workers are spawned for keys in `req.get ∩ req.upd` set
-  #      and extracts triplet with:
+  #      and returns:
   #
-  #      * (maybe) updated `state`;
-  #
-  #      * map (`known`) with values explicitly stored in `state`;
-  #
-  #      * a three disjoint sets of keys, holded in two maps (M) and a list (L).
+  #      0. `state` with pids of the workers that were spawned;
+  #      1. map (`known`) with values that were explicitly stored in `state`;
+  #      2. a three disjoint sets of keys, holded in two maps (M) and a list (L).
   #
   #
   #                                    ┌———————————————┐
@@ -33,10 +31,10 @@ defmodule AgentMap.Multi.Req do
   #                                    ╔═══════════════╗
   #                      ┌───────┬─────╫─────────┐ (L) ║
   #                      │ known │ get ║ get_upd │ upd ║
-  #                      │  (M)  │     ╚═════════╪═════╝
+  #                      │ (M)   │     ╚═════════╪═════╝
   #                      └───────┴───────────────┘
-  #                      ╎  callback argument    ╎
-  #                      ╎  (req.get)            ╎
+  #                      ↑  callback argument    ↑
+  #                      ┊  (req.get)            ┊
   #                      └———————————————————————┘
   #
   #   3. Starts *process* that is responsible for execution.
@@ -55,38 +53,34 @@ defmodule AgentMap.Multi.Req do
   #      * asks `get_and_upd` workers to share their values and wait for a
   #        further instructions.
   #
-  #   2. *Server* removes from hold.
+  #   2. *Server* resumes.
   #
   #   3. ↳ `collect(keys)`
   #
   #      Collecting values shared to *process* by workers (step p. 1). Here
   #      *process* waits until values for all the involved keys are collected.
   #
-  #      This may take some time as some of the workers may be too busy invoking
-  #      other callbacks. The downside (that bothers a lot) is that `get_upd`
-  #      workers who have already shared their values are stucked, waiting for
-  #      values from the busy-workers.
+  #      This may take some time as some of the workers may be too busy. The
+  #      downside is that `get_upd` workers who have already shared their values
+  #      are stucked, waiting for values from the busy-workers.
   #
-  #   4. Merging collected into the values that we `know`.
+  #   4. Collected data is added to the `know` map.
   #
-  #   5. Finally, `callback` is invoked. It can return:
+  #   5. Callback (`req.fun`) is invoked. It can return:
   #
   #      * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned
-  #        value (`ret`) and an instruction for each key in `req.upd` to set a
-  #        new value, drop it, or just leave untouched;
+  #        value (`ret`) and actions to be taken for all the keys in `req.upd`;
   #
-  #      * `[{ret} | {ret, new value} | :pop | :id]` — first, a returned value
-  #        must be composed from individual values for each key in `req.upd`.
-  #        Each individual value can be given *explicitly*: `{ret}`, `{ret, _}`
-  #        or is fetched: `:pop`, `:id`;
+  #      * `[{ret} | {ret, new value} | :pop | :id]` — a composed returned value
+  #        (`[ret | value]`) and the individual actions to be taken;
   #
-  #    | * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.   |
+  #      * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.
   #    └————————————————————┬———————————————————————————————————————————————————┘
   #                         ⮟
   #   6. ↳ `finalize(req, result, known, {workers (get_upd), upd})`
   #
-  #      Now the hardest part begins — we need to commit changes for all
-  #      `req.upd` values and to decide about the returned value.
+  #      Now we need to commit changes for all `req.upd` values and to decide
+  #      about the returned value.
   #
   #      At the moment, `get_upd` workers are still waiting for instructions to
   #      continue. From the step p. 4 we `know` values holded by thus workers.
@@ -145,8 +139,6 @@ defmodule AgentMap.Multi.Req do
   #    everything in a single *server* call.
   #
   # 3. It would be nice to implement `tiny: true` option for multi-key calls.
-
-  @moduledoc false
 
   alias AgentMap.{CallbackError, Server.State, Worker, Req, Multi}
 
