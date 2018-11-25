@@ -1,88 +1,70 @@
 defmodule AgentMap.Multi.Req do
   @moduledoc false
 
-  # The logic behind `Multi.get_and_update/4` (all `Multi.*` calls + `take/3`).
-  #
-  # How it works:
-  #
-  # + *server*:
-  #
-  #   1. ↳ handle(req, state)
-  #
-  #      Catches a request. Here `state` is a map with each key corresponds to
-  #      either a `value` or a pid of the `worker` process.
-  #
-  #   2. Starts a *process* that is responsible for execution.
-  #
-  #   3. ↳ prepare(req, state)
-  #
-  #      Ensures that a worker is spawned for each key in `req.get ∩ req.upd`.
-  #      And also:
-  #
-  #      * asks `get` workers to share their values with the *process*;
-  #      * asks `get_and_upd` workers to share their values and wait for a
-  #        further instructions.
-  #
-  #      Returns:
-  #
-  #      0. `state` with pids of the spawned workers;
-  #      1. `known` map with values that were explicitly stored in `state`;
-  #      2. disjoint sets of keys, holded in two maps (M) and a list (L).
-  #
-  #
-  #                                         ┌———————————————┐
-  #                                         ┊     updating  ┊
-  #                                         ↓    (req.upd)  ↓
-  #                                   ┌———————————————┐
-  #                                   ↓  (M) workers  ↓
-  #                                         ╔═══════════════╗
-  #               ┌───────┬ ┌───────┬ ┌─────╫─────────┐ (L) ║
-  #               │ state │ │ known │ │ get ║ get_upd │ upd ║
-  #               │  (M)  │ │  (M)  │ │     ╚═════════╪═════╝
-  #               └───────┴ └───────┴ └───────────────┘
-  #                         ↑    callback argument    ↑
-  #                         ┊        (req.get)        ┊
-  #                         └—————————————————————————┘
-  #
-  # + *process*:
-  #
-  #   1. ↳ collect(keys)
-  #
-  #      Collects values shared to *process* by workers. Here *process* waits
-  #      until values for all the involved keys are collected.
-  #
-  #      This may take some time as some of the workers may be too busy. The
-  #      downside is that `get_upd` workers who have already shared their values
-  #      are stucked, waiting for values from the busy-workers.
-  #
-  #   2. Collected data is added to the `know` map.
-  #
-  #   3. Callback (`req.fun`) is invoked. It can return:
-  #
-  #      * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned
-  #        value (`ret`) and actions to be taken for every key in `req.upd`;
-  #
-  #      * `[{ret} | {ret, new value} | :pop | :id]` — a composed returned value
-  #        (`[ret | value]`) and individual actions to be taken;
-  #
-  #      * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.
-  #    └————————————————————┬———————————————————————————————————————————————————┘
-  #                         ⮟
-  #   4. ↳ finalize(req, result, known, {workers (get_upd), only_upd (upd)})
-  #
-  #      Commits changes for all values. The value returned from this call is
-  #      later returned from `Multi.get_and_update/4`.
-  #
-  #      At the moment, `workers` (`get_upd`) are still waiting for instructions
-  #      to proceed. From the previos steps we already `know` the values holded
-  #      by them and so we have to collect only values for keys in `req.upd ∖
-  #      req.get`.
-  #
-  #      A special`Multi.Req` is send to *server*. It contains keys needs to be
-  #      collected (`:get` field), to be dropped (`:drop`) and a keyword with
-  #      update data (`:upd`).
-  #
-  #   5. Reply result (or not). Pooh!
+  ##
+  ## *server*
+  ##
+  ## *. ↳ handle(req, state)
+  ##
+  ##    Catches a request. Here `state` is a map with each key corresponds to
+  ##    either a `value` or a pid of the `worker` process.
+  ##
+  ##    1. Starts a *process* that is responsible for execution.
+  ##
+  ##    2. ↳ prepare(req, state)
+  ##
+  ##       Ensures that a worker is spawned for each key in `req.get ∩ req.upd`.
+  ##       For keys in:
+  ##
+  ##       * `req.get ∖ req.upd` asks workers to share their values or fetch
+  ##         them;
+  ##       * `req.get ∩ req.upd` asks workers to "share their values and wait
+  ##         for a further instructions".
+  ##
+  ##       Returns:
+  ##
+  ##                                          ┌———————————————┐
+  ##                                          ┊     updating  ┊
+  ##                                          ↓    (req.upd)  ↓
+  ##                                    ┌———————————————┐
+  ##                                    ↓  (M) workers  ↓
+  ##                                          ╔═══════════════╗
+  ##                ┌───────┬ ┌───────┬ ┌─────╫─────────┐ (L) ║
+  ##                │ state │ │ known │ │ get ║ get_upd │ upd ║
+  ##                │  (M)  │ │  (M)  │ │     ╚═════════╪═════╝
+  ##                └───────┴ └───────┴ └───────────────┘
+  ##                          ↑    callback argument    ↑
+  ##                          ┊        (req.get)        ┊
+  ##                          └—————————————————————————┘
+
+  ## *process*:
+  ##
+  ## 1. ↳ collect(keys)
+  ##
+  ##    Collects data shared by workers and adds it to the `known`.
+  ##
+  ## 2. Callback (`req.fun`) is invoked. It can return:
+  ##
+  ##    * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned
+  ##      value (`ret`) and actions to be taken for every key in `req.upd`;
+  ##
+  ##    * `[{ret} | {ret, new value} | :pop | :id]` — a composed returned value
+  ##      (`[ret | value]`) and individual actions to be taken;
+  ##
+  ##    * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.
+  ##  └————————————————————┬———————————————————————————————————————————————————┘
+  ##                       ⮟
+  ## 3. ↳ finalize(req, result, known, {workers (get_upd), only_upd (upd)})
+  ##
+  ##    Commits changes for all values. Replies.
+  ##
+  ##    At the moment, `get_upd` workers are still waiting for instructions to
+  ##    resume. From the previos steps we already `know` their values and so we
+  ##    have to collect only values for keys in `req.upd ∖ req.get`.
+  ##
+  ##    A special `Multi.Req` is send to *server*. It contains keys needs to be
+  ##    collected (`:get` field), to be dropped (`:drop`) and a keyword with
+  ##    update data (`:upd`).
 
   alias AgentMap.{CallbackError, Server.State, Worker, Req, Multi}
 
@@ -230,13 +212,12 @@ defmodule AgentMap.Multi.Req do
     #             ┆  (M) workers ┊
     #             ├——————————————┘
     #             ↑                                     ↑
-    #             ┆         sets of keys, s. 2          ┆
+    #             ┆            sets of keys             ┆
     #             └—————————————————————————————————————┘
   end
 
   #
 
-  # p. 3
   defp collect(keys), do: collect(%{}, uniq(keys))
 
   defp collect(known, []), do: known
@@ -502,38 +483,3 @@ defmodule AgentMap.Multi.Req do
     {:noreply, state}
   end
 end
-
-## What's possible to improve?
-##
-## 1. `collect/1` call (p. 3):
-##
-##        am = AgentMap.new(a: 1, b: 2, c: 3)
-##        sleep(am, :a, 4_000)
-##
-##        # process A
-##        #
-##        Multi.update(am, [:a, :b], fn [a, b] ->
-##          [a + 1, b + a]
-##        end)
-##
-##        # process B (at the same time)
-##        #
-##        Multi.update(am, [:b, :c], fn [b, c] ->
-##          [b + 1, c + 1]
-##        end)
-##        … save the world …
-##
-##    As we see, any activity is paused for the `:a` key, and `:b` is a common
-##    key for both update calls.
-##
-##    Now:
-##
-##    * (B → A) if the update-call from B comes a little earlier, this process
-##      will begin to save the world almost immediatelly [total: `4` sec.];
-##
-##    * (A → B) otherwise, saving the world is delayed for `4` seconds [total:
-##      `8` sec.].
-##
-##    In both cases the state of `AgentMap` will be `%{a: 2, b: 4, c: 4}`.
-##
-##    How to optimize performance?

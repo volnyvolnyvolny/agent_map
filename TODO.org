@@ -1,3 +1,34 @@
 * TODO
 ** `tiny: true` option for multi-key calls.
-** 
+** improve `Multi.collect/1`
+
+  Example:
+
+      am = AgentMap.new(a: 1, b: 2, c: 3)
+      sleep(am, :a, 4_000)
+
+      # process A
+      #
+      Multi.update(am, [:a, :b], fn [a, b] ->
+        [a + 1, b + a]
+      end)
+
+      # process B (at the same time)
+      #
+      Multi.update(am, [:b, :c], fn [b, c] ->
+        [b + 1, c + 1]
+      end)
+      … save the world …
+
+  Any activity is paused for the `:a` key, and `:b` is a common key for both
+  update calls.
+
+  Now:
+
+  * (B → A) if the update-call from B comes a little earlier, this process
+    will begin to save the world almost immediatelly [total: `4` sec.];
+
+  * (A → B) otherwise, saving the world is delayed for `4` seconds [total:
+    `8` sec.].
+
+  In both cases the state of `AgentMap` will be `%{a: 2, b: 4, c: 4}`.
