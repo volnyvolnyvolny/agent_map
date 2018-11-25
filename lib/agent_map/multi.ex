@@ -273,7 +273,8 @@ defmodule AgentMap.Multi do
              | :pop
              | :id)
 
-  @spec get_and_update(am, [key] | {[key], [key]}, cb_m(ret), keyword | timeout) :: ret | [ret | value]
+  @spec get_and_update(am, [key] | {[key], [key]}, cb_m(ret), keyword | timeout) ::
+          ret | [ret | value]
         when ret: var
   def get_and_update(am, keys, fun, opts \\ [])
 

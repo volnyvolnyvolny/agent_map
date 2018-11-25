@@ -19,22 +19,20 @@ defmodule AgentMap.CallbackError do
   # multi-key
 
   def message(%{got: got, pos: n} = e) when is_integer(n) do
-    message(%{multi_key?: true, got: got})
-    <>
-    """
+    message(%{multi_key?: true, got: got}) <>
+      """
 
-    err-item: #{inspect(e.item)}
-    position: #{n}
-    """
+      err-item: #{inspect(e.item)}
+      position: #{n}
+      """
   end
 
   def message(%{len: n, expected: e}) when is_integer(n) do
-    message(%{multi_key?: true, got: got})
-    <>
-    """
+    message(%{multi_key?: true, got: got}) <>
+      """
 
-    expected #{e} elements, got #{n}
-    """
+      expected #{e} elements, got #{n}
+      """
   end
 
   def message(%{multi_key?: true, got: got}) do

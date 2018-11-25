@@ -7,17 +7,25 @@ defmodule AgentMap.Multi.Req do
   #
   # + *server*:
   #
-  #   1. ↳ `handle(req, state)`
+  #   1. ↳ handle(req, state)
   #
   #      Catches a request. Here `state` is a map with each key corresponds to
   #      either a `value` or a pid of the `worker` process.
   #
-  #   2. ↳ `prepare(req, state)`
+  #   2. Starts a *process* that is responsible for execution.
   #
-  #      Ensures that for each key in `req.get ∩ req.upd`, a worker is spawned.
+  #   3. ↳ prepare(req, state)
+  #
+  #      Ensures that a worker is spawned for each key in `req.get ∩ req.upd`.
+  #      And also:
+  #
+  #      * asks `get` workers to share their values with the *process*;
+  #      * asks `get_and_upd` workers to share their values and wait for a
+  #        further instructions.
+  #
   #      Returns:
   #
-  #      0. `state` with pids of the workers that were spawned;
+  #      0. `state` with pids of the spawned workers;
   #      1. `known` map with values that were explicitly stored in `state`;
   #      2. disjoint sets of keys, holded in two maps (M) and a list (L).
   #
@@ -36,36 +44,20 @@ defmodule AgentMap.Multi.Req do
   #                         ┊        (req.get)        ┊
   #                         └—————————————————————————┘
   #
-  #   3. Starts *process* that is responsible for execution.
-  #
-  #   4. *Server* stays on hold while *process* sends instructions to each
-  #      `worker` involved.
-  #
   # + *process*:
   #
-  #   1. ↳ `prepare_worker(get, get_upd, priority of request)`
+  #   1. ↳ collect(keys)
   #
-  #      This method:
-  #
-  #      * asks `get` workers to share their values with the *process*;
-  #
-  #      * asks `get_and_upd` workers to share their values and wait for a
-  #        further instructions.
-  #
-  #   2. *Server* resumes.
-  #
-  #   3. ↳ `collect(keys)`
-  #
-  #      Collects values shared to *process* by workers (step p. 1). Here
-  #      *process* waits until values for all the involved keys are collected.
+  #      Collects values shared to *process* by workers. Here *process* waits
+  #      until values for all the involved keys are collected.
   #
   #      This may take some time as some of the workers may be too busy. The
   #      downside is that `get_upd` workers who have already shared their values
   #      are stucked, waiting for values from the busy-workers.
   #
-  #   4. Collected data is added to the `know` map.
+  #   2. Collected data is added to the `know` map.
   #
-  #   5. Callback (`req.fun`) is invoked. It can return:
+  #   3. Callback (`req.fun`) is invoked. It can return:
   #
   #      * `{ret, [new value] | :drop | :id}` — an *explicitly* given returned
   #        value (`ret`) and actions to be taken for every key in `req.upd`;
@@ -76,63 +68,21 @@ defmodule AgentMap.Multi.Req do
   #      * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.
   #    └————————————————————┬———————————————————————————————————————————————————┘
   #                         ⮟
-  #   6. ↳ `finalize(req, result, known, {workers (get_upd), only_upd (upd)})`
+  #   4. ↳ finalize(req, result, known, {workers (get_upd), only_upd (upd)})
   #
   #      Commits changes for all values. The value returned from this call is
   #      later returned from `Multi.get_and_update/4`.
   #
   #      At the moment, `workers` (`get_upd`) are still waiting for instructions
-  #      to continue. From the step p. 4 we already `know` the values holded by
-  #      them and so we have to collect only values for keys in `req.upd ∖
-  #      req.get`. For this purpose we form a special `Multi.Req` that contains
-  #      keys needs to be returned (`:get` field), to be dropped (`:drop`) and a
-  #      keyword with keys to be updated (`:upd`).
+  #      to proceed. From the previos steps we already `know` the values holded
+  #      by them and so we have to collect only values for keys in `req.upd ∖
+  #      req.get`.
   #
-  #   7. Reply result. Pooh!
+  #      A special`Multi.Req` is send to *server*. It contains keys needs to be
+  #      collected (`:get` field), to be dropped (`:drop`) and a keyword with
+  #      update data (`:upd`).
   #
-  #
-  # What's possible to improve here?
-  #
-  # 1. `collect/1` call. See p. 3:
-  #
-  #        am = AgentMap.new(a: 1, b: 2, c: 3)
-  #        sleep(am, :a, 4_000)
-  #
-  #        # process A
-  #        #
-  #        Multi.update(am, [:a, :b], fn [a, b] ->
-  #          [a + 1, b + a]
-  #        end)
-  #
-  #        # process B (at the same time)
-  #        #
-  #        Multi.update(am, [:b, :c], fn [b, c] ->
-  #          [b + 1, c + 1]
-  #        end)
-  #        … save the world …
-  #
-  #    As we see, any activity is paused for the `:a` key, and `:b` is a common
-  #    key for both update calls.
-  #
-  #    Now:
-  #
-  #    * (B → A) if the update-call from B comes a little earlier, this process
-  #      will begin to save the world almost immediatelly [total working time:
-  #      `4` sec.];
-  #
-  #    * (A → B) otherwise, saving the world is delayed for `4` seconds [total
-  #      working time: `8` sec.].
-  #
-  #    In both cases the state of `AgentMap` will be `%{a: 2, b: 4, c: 4}`.
-  #
-  #    How to optimize performance?
-  #
-  # 2. I don't like that `prepare/2` and `prepare_workers/3` are executed in a
-  #    different processes. This is done so because inside `prepare_workers` we
-  #    send callbacks that capture *process* `pid`. It would be nice to prepare
-  #    everything in a single *server* call.
-  #
-  # 3. It would be nice to implement `tiny: true` option for multi-key calls.
+  #   5. Reply result (or not). Pooh!
 
   alias AgentMap.{CallbackError, Server.State, Worker, Req, Multi}
 
@@ -140,7 +90,10 @@ defmodule AgentMap.Multi.Req do
   import State, only: [separate: 2, take: 2, spawn_worker: 2]
   import MapSet, only: [intersection: 2, difference: 2, to_list: 1]
   import Map, only: [put: 3, keys: 1, merge: 2, get: 3]
-  import Enum, only: [into: 2, zip: 2, unzip: 1, uniq: 1, reduce: 3, map: 2, split_with: 2, filter: 2]
+
+  import Enum,
+    only: [into: 2, zip: 2, unzip: 1, uniq: 1, reduce: 3, map: 2, split_with: 2, filter: 2]
+
   import List, only: [delete: 2]
 
   #
@@ -177,42 +130,50 @@ defmodule AgentMap.Multi.Req do
   * drop: keys that will be dropped.
   """
 
-  @type key :: AgentMap.key
-  @type value :: AgentMap.value
-  @type cb_m :: AgentMap.cb_m
+  @type key :: AgentMap.key()
+  @type value :: AgentMap.value()
+  @type cb_m :: AgentMap.cb_m()
 
-  @type t :: %__MODULE__{
-    get: [key],
-    upd: [key] | %{required(key) => value},
-    drop: [],
-    fun: cb_m,
-    initial: term,
-    server: pid,
-    from: GenServer.from,
-    !: non_neg_integer | :now
-  } | %__MODULE__{
-    get: [key],
-    upd: %{required(key) => value},
-    drop: [key],
-    fun: nil,
-    initial: term,
-    server: nil,
-    from: pid,
-    !: {:avg, +1} | :now
-  }
+  @type t ::
+          %__MODULE__{
+            get: [key],
+            upd: [key] | %{required(key) => value},
+            drop: [],
+            fun: cb_m,
+            initial: term,
+            server: pid,
+            from: GenServer.from(),
+            !: non_neg_integer | :now
+          }
+          | %__MODULE__{
+              get: [key],
+              upd: %{required(key) => value},
+              drop: [key],
+              fun: nil,
+              initial: term,
+              server: nil,
+              from: pid,
+              !: {:avg, +1} | :now
+            }
 
   #
 
-  # {s. 2}
-  defp prepare(%{get: get, upd: upd} = req, state) do
-                                      # keys whose values …
-    get = MapSet.new(get)             # …form a callback argument
-    upd = MapSet.new(upd)             # …are planned to update
+  defp share(key, value, exist?) do
+    {key, if(exist?, do: {:v, value})}
+  end
 
-    get_upd = intersection(get, upd)  # collect & update
+  #
 
-    state =
-      reduce(get_upd, state, &spawn_worker(&2, &1))
+  defp prepare(req, state, pid) do
+    # collect
+    get = MapSet.new(req.get)
+    # update
+    upd = MapSet.new(req.upd)
+
+    # collect & update
+    get_upd = intersection(get, upd)
+
+    state = reduce(get_upd, state, &spawn_worker(&2, &1))
 
     get_upd = Map.take(state, get_upd)
 
@@ -226,6 +187,31 @@ defmodule AgentMap.Multi.Req do
       end
 
     only_upd = difference(upd, get)
+
+    #
+
+    share_accept = fn key, value, exist? ->
+      send(pid, share(key, value, exist?))
+
+      receive do
+        :drop ->
+          :pop
+
+        :id ->
+          :id
+
+        {:v, new_value} ->
+          {:_set, new_value}
+      end
+    end
+
+    for {key, worker} <- get do
+      send(worker, %{act: :get, fun: &share(key, &1, &2), from: pid, !: req.!})
+    end
+
+    for {key, worker} <- get_upd do
+      send(worker, %{act: :update, fun: &share_accept(key, &1, &2), !: {:avg, +1}})
+    end
 
     #               —┐        ┌—
     # map with pids  |        |    map with pids for keys
@@ -248,62 +234,26 @@ defmodule AgentMap.Multi.Req do
     #             └—————————————————————————————————————┘
   end
 
-  # p. 1
-  defp prepare_workers(get, get_upd, priority) do
-    me = self()
-
-    share = fn value, exist? ->
-      {key, if exist?, do: {:v, value}}
-    end
-
-    share_accept = fn value, exist? ->
-      send me, share.(value, exist?)
-
-      receive do
-        :drop ->
-          :pop
-
-        :id ->
-          :id
-
-        {:v, new_value} ->
-          {:_set, new_value}
-      end
-    end
-
-    #
-
-    for {key, worker} <- get do
-      send worker, %{act: :get, fun: share, from: me, !: priority}
-    end
-
-    for {key, worker} <- get_upd do
-      send worker, %{act: :update, fun: share_accept, !: {:avg, +1}}
-    end
-  end
-
   #
 
   # p. 3
   defp collect(keys), do: collect(%{}, uniq(keys))
 
-  defp collect(map, []), do: map
+  defp collect(known, []), do: known
 
-  defp collect(map, keys) do
+  defp collect(known, keys) do
     receive do
       {key, {:v, value}} ->
-        map
+        known
         |> put(key, value)
         |> collect(delete(keys, key))
 
       {key, nil} ->
-        collect(map, delete(keys, key))
+        collect(known, delete(keys, key))
     end
   end
 
   #
-
-  # p. 6, when return value is explicitly specified
 
   # {ret}
   defp finalize(req, {ret}, known, sets) do
@@ -334,23 +284,20 @@ defmodule AgentMap.Multi.Req do
   end
 
   # {ret, [new values]}
-  defp finalize(req, {ret, new_values}, _ {workers, only_upd}) do
+  defp finalize(req, {ret, new_values}, _({workers, only_upd})) do
     new_values = zip(req.upd, new_values)
 
     for {key, pid} <- workers do
-      send pid, {:v, new_values[key]}
+      send(pid, {:v, new_values[key]})
     end
 
-    only_upd =
-      Keyword.take(new_values, only_upd)
+    only_upd = Keyword.take(new_values, only_upd)
 
     r = %Multi.Req{upd: only_upd |> into(%{})}
     GenServer.cast(req.server, r)
 
     ret
   end
-
-  # p. 6, when return value needs a compose
 
   # :id | :pop
   defp finalize(req, act, known, sets) when act in [:id, :pop] do
@@ -372,7 +319,7 @@ defmodule AgentMap.Multi.Req do
   #    ↓            ↓
   # [{ret} | {ret, new value} | :id | :pop]
   defp finalize(req, acts, known, {workers, only_upd}) do
-    explicit? = & is_tuple(&1) && (tuple_size(&1) in [1, 2])
+    explicit? = &(is_tuple(&1) && tuple_size(&1) in [1, 2])
 
     # checking for malformed actions:
     for {act, i} <- Enum.with_index(acts, 1) do
@@ -387,26 +334,25 @@ defmodule AgentMap.Multi.Req do
       for {key, pid} <- workers, into: %{} do
         case acts[key] do
           {{ret, new_value}, _} ->
-            send pid, {:v, new_value}
+            send(pid, {:v, new_value})
             {key, ret}
 
           {{ret}, _} ->
-            send pid, :id
+            send(pid, :id)
             {key, ret}
 
           {:id, _} ->
-            send pid, :id
+            send(pid, :id)
             {key, Map.get(known, key, req.initial)}
 
           {:pop, _} ->
-            send pid, :drop
+            send(pid, :drop)
             {key, Map.get(known, key, req.initial)}
         end
       end
 
     if req.from do
-      {e_acts, others} =
-        split_with(acts, &explicit?.(elem(&1, 1)))
+      {e_acts, others} = split_with(acts, &explicit?.(elem(&1, 1)))
 
       # for explicit actions:
 
@@ -425,14 +371,13 @@ defmodule AgentMap.Multi.Req do
 
       keys = Keyword.keys(others)
 
-      r =
-        %Multi.Req{
-          get: keys,
-          drop: (for {k, :pop} <- others, do: k),
-          upd: new_values,
-          initial: req.initial,
-          !: req.! == :now && :now || {:avg, +1}
-        }
+      r = %Multi.Req{
+        get: keys,
+        drop: for({k, :pop} <- others, do: k),
+        upd: new_values,
+        initial: req.initial,
+        !: (req.! == :now && :now) || {:avg, +1}
+      }
 
       known =
         req.server
@@ -443,11 +388,10 @@ defmodule AgentMap.Multi.Req do
 
       map(req.upd, &known[&1])
     else
-      r =
-        %Multi.Req{
-          drop: (for {k, :pop} <- acts, do: k),
-          upd: (for {k, {_ret, new_v}} <- acts, do: {k, new_v})
-        }
+      r = %Multi.Req{
+        drop: for({k, :pop} <- acts, do: k),
+        upd: for({k, {_ret, new_v}} <- acts, do: {k, new_v})
+      }
 
       GenServer.cast(req.server, r)
     end
@@ -461,43 +405,57 @@ defmodule AgentMap.Multi.Req do
   ##
   ##
 
-  defp req_pop(key, priority, from \\ nil) do
-    %{act: :update, key: key, fun: fn _ -> :pop end, tiny: true, !: priority, from: from}
-  end
-
-  defp req_put(key, priority, from \\ nil) do
-    %{act: :update, key: key, fun: fn _ -> :pop end, tiny: true, !: priority, from: from}
-  end
-
-  defp get(req, key, from) do
-    %{act: :get, key: k, fun: &{k, &1}, tiny: true, initial: req.initial, from: pid, !: req.priority}
-  end
-
-  #
-
-  # p. 6
+  # %Multi.Req{get: …, upd: …, drop: …}
   def handle(%{fun: nil} = req, state) do
-    req = Map.from_struct(req)
+    {:ok, pid} =
+      Task.start_link(fn ->
+        receive do
+          {:collect, known, keys} ->
+            known = collect(known, keys)
+            ret = map(req.get, &Map.get(known, &1, req.initial))
 
-    state =
-      reduce(req.get, state, fn {k, new_value}, state ->
-        %{req | act: :get, key: k, fun: &{k, &1}, tiny: true}
-        |> Req.handle(state)
-        |> State.extract()
+            reply(req.from, ret)
+        end
       end)
 
-    r = %{act: :update, tiny: true, !: {:avg, +1}}
+    # GET:
+
+    get = %{Map.from_struct(req) | act: :get, tiny: true, from: pid}
+
+    {state, known, keys} =
+      reduce(req.get, {state, %{}, []}, fn k, {state, known, keys} ->
+        req = %{get | key: k, fun: &share(k, &1, &2)}
+
+        case Req.handle(req, state) do
+          {:noreply, state} ->
+            {state, known, [k | keys]}
+
+          {:reply, {key, {:v, value}}, state} ->
+            {state, Map.put(known, key, value), keys}
+
+          {:reply, {_, nil}, state} ->
+            {state, known, keys}
+        end
+      end)
+
+    send(pid, {:collect, known, keys})
+
+    # DROP:
+
+    pop = %{act: :update, fun: fn _ -> :pop end, tiny: true, !: {:avg, +1}}
 
     state =
       reduce(req.drop, state, fn k, state ->
-        %{r | key: k, fun: fn _ -> :pop end}
+        %{pop | key: k}
         |> Req.handle(state)
         |> State.extract()
       end)
 
+    # UPDATE:
+
     state =
       reduce(req.upd, state, fn {k, new_value}, state ->
-        %{r | key: k, fun: fn _ -> new_value end}
+        %{pop | key: k, fun: fn _ -> new_value end}
         |> Req.handle(state)
         |> State.extract()
       end)
@@ -505,50 +463,77 @@ defmodule AgentMap.Multi.Req do
     {:noreply, state}
   end
 
-  # s. 1
+  # main:
   def handle(req, state) do
-    {state, known, sets} = prepare(req, state)  # s. 2
-
     req = %{req | server: self()}
-    ref = make_ref()  # s. 4
 
-    Task.start_link(fn ->
-      #
-      {get, get_upd, upd} = sets
+    {:ok, pid} =
+      Task.start_link(fn ->
+        receive do
+          {known, get, get_upd, upd} ->
+            known = collect(known, keys(get) ++ keys(get_upd))
 
-      prepare_workers(get, get_upd, req.!)  # p. 1
-      send(req.server, {ref, :go!})         # p. 2, s. 4
+            arg = map(req.get, &Map.get(known, &1, req.initial))
 
-      known =                               # p. 3, 4
-        (keys(get) ++ keys(get_upd))
-        |> collect()
-        |> into(known)
+            args =
+              if is_function(req.fun, 2) do
+                exist? = map(req.get, &Map.has_key?(known, &1))
+                [arg, exist?]
+              else
+                [arg]
+              end
 
-      arg = map(req.get, &Map.get(known, &1, req.initial))  # p. 5
+            ret =
+              finalize(
+                req,
+                apply(req.fun, args),
+                known,
+                {get_upd, upd}
+              )
 
-      args =
-        if is_function(req.fun, 2) do
-          [arg, map]
-        else
-          [arg]
+            reply(req.from, ret)
         end
+      end)
 
-      result = apply(req.fun, args)
-      #                              workers ↘      ↙ keys
-      ret = finalize(req, result, known, {get_upd, upd})  # p. 6
+    {state, data} = prepare(req, state, pid)
 
-      reply(req.from, ret)                                # p. 7
-    end)
+    send(pid, data)
 
-    # s. 4
-    # This prevents workers from dying before getting an instructions. When
-    # server receives `{worker, :die?}` from worker, it first looks if its
-    # message queue is empty. If so — worker can die, otherwise, worker has
-    # to continue its execution.
-
-    receive do
-      {^ref, :go!} ->
-        {:noreply, state}
-    end
+    {:noreply, state}
   end
 end
+
+## What's possible to improve?
+##
+## 1. `collect/1` call (p. 3):
+##
+##        am = AgentMap.new(a: 1, b: 2, c: 3)
+##        sleep(am, :a, 4_000)
+##
+##        # process A
+##        #
+##        Multi.update(am, [:a, :b], fn [a, b] ->
+##          [a + 1, b + a]
+##        end)
+##
+##        # process B (at the same time)
+##        #
+##        Multi.update(am, [:b, :c], fn [b, c] ->
+##          [b + 1, c + 1]
+##        end)
+##        … save the world …
+##
+##    As we see, any activity is paused for the `:a` key, and `:b` is a common
+##    key for both update calls.
+##
+##    Now:
+##
+##    * (B → A) if the update-call from B comes a little earlier, this process
+##      will begin to save the world almost immediatelly [total: `4` sec.];
+##
+##    * (A → B) otherwise, saving the world is delayed for `4` seconds [total:
+##      `8` sec.].
+##
+##    In both cases the state of `AgentMap` will be `%{a: 2, b: 4, c: 4}`.
+##
+##    How to optimize performance?

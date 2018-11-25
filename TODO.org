@@ -1,7 +1,3 @@
 * TODO
-** Optimize handling of multi-key calls;
-** DONE Provide Worker.accept_value with timeout;
-   CLOSED: [2018-11-16 Пт 06:11]
-** Simplify docs;
-** Make nice diagram;
-** Provide batch multi-key calls.
+** `tiny: true` option for multi-key calls.
+** 
