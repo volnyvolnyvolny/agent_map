@@ -215,7 +215,7 @@ in `mix.exs`:
 
 ```elixir
 def deps do
-    [{:agent_map, "~> 1.0"}]
+    [{:agent_map, "~> 1.1"}]
 end
 ```
 

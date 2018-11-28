@@ -11,7 +11,7 @@ defmodule AgentMap.Mixfile do
         memoization, computational framework and, sometimes, as a `GenServer`
         alternative.
       """,
-      version: "1.0.2",
+      version: "1.1.0",
       elixir: "~> 1.7",
       deps: deps(),
       aliases: aliases(),
@@ -30,7 +30,7 @@ defmodule AgentMap.Mixfile do
     [
       {:heap, "~> 2.0"},
       {:ex_doc, "~> 0.19", only: :dev, runtime: false},
-      {:credo, "~> 0.10", only: :dev}
+      {:credo, "~> 1.0", only: :dev}
     ]
   end
 
