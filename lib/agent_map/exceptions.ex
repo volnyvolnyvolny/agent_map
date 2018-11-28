@@ -27,8 +27,8 @@ defmodule AgentMap.CallbackError do
       """
   end
 
-  def message(%{len: n, expected: e}) when is_integer(n) do
-    message(%{multi_key?: true, got: got}) <>
+  def message(%{len: n, expected: e} = exc) when is_integer(n) do
+    message(%{multi_key?: true, got: exc.got}) <>
       """
 
       expected #{e} elements, got #{n}

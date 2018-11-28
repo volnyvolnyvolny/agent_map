@@ -1,14 +1,70 @@
 defmodule AgentMap.Server do
   @moduledoc false
+
   require Logger
 
-  alias AgentMap.{Req, Worker, Server.State, Time}
-
-  import Worker, only: [dict: 1, info: 2]
-  import State, only: [put: 3, get: 2]
-  import Time, only: [now: 0, left: 2]
-
   use GenServer
+
+  alias AgentMap.{Worker, Utils}
+
+  import Worker, only: [dict: 1, dec: 1, dec: 2, inc: 2, value?: 1]
+  import Enum, only: [map: 2, zip: 2, empty?: 1]
+  import Task, only: [shutdown: 2]
+  import Map, only: [put: 3, fetch: 2, delete: 2]
+
+  #
+
+  def to_map({map, workers}) do
+    for {key, w} <- workers, v? = value?(w), v?, into: map do
+      {key, v? |> elem(0)}
+    end
+  end
+
+  #
+
+  def spawn_worker({map, workers} = state, key, quota \\ 1) do
+    if Map.has_key?(workers, key) do
+      state
+    else
+      value? =
+        case fetch(map, key) do
+          {:ok, value} ->
+            {value}
+
+          :error ->
+            nil
+        end
+
+      ref = make_ref()
+
+      pid =
+        spawn_link(fn ->
+          Worker.loop({ref, self()}, value?, quota)
+        end)
+
+      # hold …
+
+      receive do
+        {^ref, :resume} ->
+          :_ok
+      end
+
+      # reserve quota
+
+      inc(:processes, quota)
+
+      #
+
+      workers = Map.put(workers, key, pid)
+
+      {delete(map, key), workers}
+    end
+  end
+
+  #
+
+  def extract_state({:noreply, state}), do: state
+  def extract_state({:reply, _get, state}), do: state
 
   ##
   ## GenServer callbacks
@@ -16,8 +72,6 @@ defmodule AgentMap.Server do
 
   @impl true
   def init(args) do
-    past = now()
-
     timeout = args[:timeout]
 
     funs = args[:funs]
@@ -25,16 +79,16 @@ defmodule AgentMap.Server do
 
     results =
       funs
-      |> Enum.map(fn {_key, fun} ->
+      |> map(fn {_key, fun} ->
         Task.async(fn ->
-          AgentMap.safe_apply(fun, [])
+          Utils.safe_apply(fun, [])
         end)
       end)
-      |> Task.yield_many(left(timeout, since: past))
-      |> Enum.map(fn {task, res} ->
-        res || Task.shutdown(task, :brutal_kill)
+      |> Task.yield_many(timeout)
+      |> map(fn {task, res} ->
+        res || shutdown(task, :brutal_kill)
       end)
-      |> Enum.map(fn
+      |> map(fn
         {:ok, result} ->
           result
 
@@ -44,25 +98,24 @@ defmodule AgentMap.Server do
         nil ->
           {:error, :timeout}
       end)
-      |> Enum.zip(keys)
+      |> zip(keys)
 
     errors =
       for {{:error, reason}, key} <- results do
         {key, reason}
       end
 
-    if Enum.empty?(errors) do
+    if empty?(errors) do
+      Process.put(:max_p, args[:max_p])
+      Process.put(:size, map_size(results))
+      Process.put(:processes, 1)
+
       map =
         for {{:ok, v}, key} <- results, into: %{} do
-          {key, {:v, v}}
+          {key, v}
         end
 
-      max_p = args[:max_processes]
-
-      Process.put(:max_processes, max_p)
-      Process.put(:size, map_size(map))
-
-      {:ok, map}
+      {:ok, {map, %{}}}
     else
       {:stop, errors}
     end
@@ -79,56 +132,72 @@ defmodule AgentMap.Server do
 
   @impl true
   def handle_cast(%r{} = req, state) do
-    case r.handle(req, state) do
-      {:reply, _, state} ->
-        {:noreply, state}
-
-      noreply ->
-        noreply
-    end
+    {:noreply, extract_state(r.handle(req, state))}
   end
 
   ##
   ## INFO
   ##
 
+  # get task done its work after workers die
   @impl true
-  def handle_info(%{info: :done, key: key} = msg, state) do
-    state =
-      case get(state, key) do
-        {b, {p, max_p}} ->
-          pack = {b, {p - 1, max_p}}
-          put(state, key, pack)
+  def handle_info(%{info: :done}, state) do
+    dec(:processes)
 
-        worker ->
-          send(worker, msg)
-          state
-      end
+    {:noreply, state}
+  end
+
+  # worker asks to increase quota
+  @impl true
+  def handle_info({ref, worker, :more?}, state) do
+    {soft, _h} = Process.get(:max_p)
+
+    if Process.get(:processes) < soft do
+      send(worker, {ref, %{act: :quota, inc: 1}})
+      inc(:processes, +1)
+    end
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_info({worker, :die?}, state) do
+  def handle_info({worker, :die?}, {map, workers} = state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
-    unless info(worker, :message_queue_len) > 0 do
+    mq_len = Process.info(worker, :message_queue_len) |> elem(1)
+
+    unless mq_len > 0 do
       #!
       dict = dict(worker)
       send(worker, :die!)
 
       #!
-      m = dict[:max_processes]
+      value? = dict[:value?]
+
       p = dict[:processes]
-      v = dict[:value?]
-      k = dict[:key]
+      q = dict[:quota]
 
-      pack = {v, {p - 1, m}}
+      key =
+        case Enum.find(workers, fn {_key, pid} -> pid == worker end) do
+          {key, _pid} ->
+            key
 
-      unless v, do: Worker.dec(:size)
+          nil ->
+            raise "This is an AgentMap-library design error please report it!"
+        end
 
-      {:noreply, put(state, k, pack)}
+      map =
+        if value? do
+          put(map, key, elem(value?, 0))
+        end || map
+
+      # return quota
+      dec(:processes, q - p)
+
+      {:noreply, {map, Map.delete(workers, key)}}
     else
+      send(worker, :continue)
+
       {:noreply, state}
     end
   end
@@ -139,19 +208,6 @@ defmodule AgentMap.Server do
 
   @impl true
   def code_change(_old, state, fun) do
-    state =
-      Enum.reduce(Map.keys(state), state, fn key, state ->
-        req = %Req{act: :cast, key: key, fun: fun, !: 65537}
-
-        case Req.handle(req, state) do
-          {:reply, _, state} ->
-            state
-
-          {:noreply, state} ->
-            state
-        end
-      end)
-
-    {:ok, state}
+    {:noreply, apply(fun, [state])}
   end
 end

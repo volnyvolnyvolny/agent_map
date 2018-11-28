@@ -4,28 +4,61 @@
 
 Complete rewrite.
 
-## v1.0.2
+## v1.1
 
 ### Enhancements
 
-  * [AgentMap] `get_prop(am, :size)` is optimized. From now it may temporary
-    behave a little unaccurate upwards (in some rare cases).
-  * [AgentMap] new `tiny: true` option for `get_and_update4`, `update/4`,
-    `update!/4`, `cast/4` and `put_new_lazy/4`;
-  * [AgentMap] new `upd_prop/4` call;
-  * [AgentMap.Multi] `get_and_update/4`, `update/4`, `cast/4` are now have a
-    fixed priority `{:avg, +1}`
+#### [AgentMap]
 
-  * [Docs] Fixing some typos.
-  * [Docs] Simplifying, hiding non-interesting aspects.
-  * [Docs] New "How it works" section.
+  * [optimized] `get_prop(am, :size)` executes fast, but may behave a little
+    unaccurate upwards (rare cases);
+  * [new] `get_prop(am, :real_size)` a little slower version of above call, but
+    accurate;
+
+  * [new option] `tiny: true`, for `get/4`, `get_and_update4`, `update/4`,
+    `update!/4`, `cast/4` and `put_new_lazy/4`;
+
+  * [moved] to `AgentMap.Utils`: `get_prop/3`, `set_prop/3`;
+  * [moved] to `AgentMap.Utils`: `inc/3`, `dec/3`;
+  * [moved] to `AgentMap.Utils`: `safe_apply/2,3`, `sleep/4`.
+
+  * [loose] `values/2` now has a single argument (no priority option).
+  * [loose] `to_map/2` now has a single argument (no priority option).
+
+#### AgentMap.Utils
+
+  * [new] Introduced.
+  * [new] `upd_prop/4` call;
+
+  * [moved in] from `AgentMap`: `get_prop/3`, `set_prop/3`;
+  * [moved in] from `AgentMap`: `inc/3`, `dec/3`;
+  * [moved in] from `AgentMap`: `safe_apply/2,3`, `sleep/4`.
+
+#### AgentMap.Multi
+
+  * [decided] `get_and_update/4`, `update/4`, `cast/4` are now have a fixed
+    priority `{:avg, +1}`.
+
+  * [new option] `:get` for `get_and_update/4`, `update/4` and `cast/4` methods.
+  * [new options] `:initial`, `:timeout`, `:!` for `get/2`.
+
+#### Docs
+
+  * Fixing some typos.
+  * Simplifying, hiding non-interesting aspects.
+
+  * [new] "How it works" section.
 
 ### Hard-deprecations
 
   * [AgentMap] `size/1` is deprecated in favour of `Enum.count/1` and
     `get_prop(am, :size)`.
 
+  * [AgentMap] `pid/1` is deprecated in favour of using `am.pid` :).
+  * [AgentMap] `max_processes/3` is deprecated.
+  * [AgentMap] `info/3` is deprecated.
 
 ### Bug fixes
 
-  * [AgentMap] `max_processes` does not allows to provide `nil`.
+  * Workers never received `:continue`.
+

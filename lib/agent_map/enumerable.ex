@@ -1,5 +1,6 @@
 defimpl Enumerable, for: AgentMap do
   import AgentMap
+  import AgentMap.Utils
 
   def count(am) do
     {:ok, get_prop(am, :size)}

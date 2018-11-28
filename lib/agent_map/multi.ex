@@ -1,8 +1,8 @@
 defmodule AgentMap.Multi do
   alias AgentMap.Multi
 
-  import AgentMap, only: [_call: 3, _prep: 2]
-  import Enum, only: [uniq: 1]
+  import AgentMap, only: [_call: 4, is_timeout: 1, take: 3]
+  import Enum, only: [uniq: 1, map: 2]
 
   @moduledoc """
   `AgentMap` supports "multi-key" operations.
@@ -141,19 +141,35 @@ defmodule AgentMap.Multi do
       [2, 1]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
-  def get(am, keys, fun, opts \\ [!: :now]) do
+  def get(am, keys, fun, opts)
+
+  def get(am, keys, fun, t) when is_timeout(t) do
+    get(am, keys, fun, timeout: t)
+  end
+
+  def get(am, keys, fun, opts) do
     get_and_update(
       am,
-      {keys, []},
+      [],
       fn keys ->
         {fun.(keys), []}
       end,
-      opts
+      [{:collect, keys} | opts]
     )
   end
 
   @doc """
-  Returns `keys` values. Sugar for `get(am, keys, & &1, !: :min)`.
+  Returns values for `keys`.
+
+  Default priority for this call is `:min`.
+
+  ## Options
+
+    * `initial: value`, `nil` — to return instead of a missing key value;
+
+    * `!: priority`, `:min`;
+
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -163,8 +179,22 @@ defmodule AgentMap.Multi do
       ...> |> get([:a, :b])     # | | 3
       [0, nil]
   """
-  @spec get(am, [key]) :: [value | nil]
-  def get(am, keys), do: get(am, keys, & &1, !: :min)
+  @spec get(am, [key], keyword | timeout) :: [value | nil]
+  def get(am, keys, opts \\ [!: :min])
+
+  def get(am, keys, t) when is_timeout(t) do
+    get(am, keys, timeout: t)
+  end
+
+  def get(am, keys, opts) when is_list(opts) do
+    opts = Keyword.put_new(opts, :!, :min)
+    known = take(am, keys, opts)
+    map(keys, &Map.get(known, &1, opts[:initial]))
+  end
+
+  def get(am, keys, fun) do
+    get(am, keys, fun, [])
+  end
 
   @doc """
   Gets and updates `keys` values.
@@ -214,23 +244,26 @@ defmodule AgentMap.Multi do
           iex> get(am, keys)
           [nil, nil, nil, nil]
 
-  This method can handle `keys` argument in a form of `{get, upd}`, where `get`
-  is a list of keys whose values form the `fun` argument and `upd` — the keys
-  whose values are planned to update:
-
-      iex> AgentMap.new(a: 1, b: 2)
-      ...> |> get_and_update({[:a, :b], []}, fn [1, 2] -> {3, [1 + 2]} end)
-      ...> |> update({[], [:a, :b]}, fn [] -> :drop end)
-      ...> |> get([:a, :b, :sum])
-      [nil, nil, 3]
-
   ## Options
 
     * `initial: value`, `nil` — value for missing keys;
 
     * `!: priority`, `:now` — [priority](AgentMap.html#module-priority) for keys
-      that only needs [collecting](#module-how-it-works), for keys that need to
-      be updated, `{:avg, +1}` is used.
+      that only needs [collecting](#module-how-it-works); for keys needs to be
+      updated, `{:avg, +1}` is used;
+
+    * `collect: [key]`, `keys` — keys whose values form the `fun` callback
+      argument:
+
+          iex> AgentMap.new(a: 1, b: 2)
+          ...> |> get_and_update([], fn [1, 2] ->
+          ...>      {3, [1 + 2]}
+          ...>    end, collect: [:a, :b])
+          ...> |> update([:a, :b], fn [] ->
+          ...>      :drop
+          ...>    end, collect: [])
+          ...> |> get([:a, :b, :sum])
+          [nil, nil, 3]
 
     * `:timeout`, `5000`.
 
@@ -278,24 +311,27 @@ defmodule AgentMap.Multi do
         when ret: var
   def get_and_update(am, keys, fun, opts \\ [])
 
-  def get_and_update(am, {get, upd}, fun, opts) do
-    unless ks_upd == uniq(ks_upd) do
+  def get_and_update(am, keys, fun, t) when is_timeout(t) do
+    get_and_update(am, keys, fun, timeout: t)
+  end
+
+  def get_and_update(am, keys, f, opts) do
+    unless keys == uniq(keys) do
       raise """
             expected uniq keys for `update`, `get_and_update` and
-            `cast` multi-key calls. Got: #{inspect(ks_upd)}. Please
-            check #{inspect(ks_upd -- uniq(ks_upd))}.
+            `cast` multi-key calls. Got: #{inspect(keys)}. Please
+            check #{inspect(keys -- uniq(keys))}.
             """
             |> String.replace("\n", " ")
     end
 
-    opts = _prep(opts, !: :now)
-    req = %Multi.Req{get: get, upd: upd, fun: fun, initial: opts[:initial]}
+    req = %Multi.Req{
+      get: opts[:collect] || keys,
+      upd: keys,
+      fun: f
+    }
 
-    _call(am, req, opts)
-  end
-
-  def get_and_update(am, keys, fun, opts) do
-    get_and_update(am, {keys, keys}, fun, opts)
+    _call(am, req, opts, !: :now)
   end
 
   @doc """
@@ -312,6 +348,9 @@ defmodule AgentMap.Multi do
   ## Options
 
     * `initial: value`, `nil` — value for missing keys;
+
+    * `collect: [key]`, `keys` — keys whose values form the `fun` callback
+      argument;
 
     * `:timeout`, `5000`.
 
@@ -347,7 +386,10 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `initial: value`, `nil` — value for missing keys.
+    * `initial: value`, `nil` — value for missing keys;
+
+    * `collect: [key]`, `keys` — keys whose values form the `fun` callback
+      argument.
 
   ## Examples
 
@@ -360,7 +402,13 @@ defmodule AgentMap.Multi do
   """
   @spec cast(am, ([value] -> [value]), [key], keyword) :: am
   @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
-  def cast(am, keys, fun, opts \\ []) do
-    update(am, keys, fun, _prep(opts, !: {:avg, +1}, cast: true))
+  def cast(am, keys, fun, opts \\ [])
+
+  def cast(am, keys, fun, t) when is_timeout(t) do
+    cast(am, keys, fun, timeout: t)
+  end
+
+  def cast(am, keys, fun, opts) do
+    update(am, keys, fun, [{:cast, true} | opts])
   end
 end

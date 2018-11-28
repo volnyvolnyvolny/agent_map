@@ -32,3 +32,104 @@
     `8` sec.].
 
   In both cases the state of `AgentMap` will be `%{a: 2, b: 4, c: 4}`.
+
+** Use somewhere
+
+
+  By default for each key a global value provided for `AgentMap` is used.
+
+  `AgentMap` can execute `get/4` calls concurrently for the same key.
+
+  Sets the `:max_processes` value for `key`.
+
+  `AgentMap` can execute `get/4` calls concurrently for the same key.
+  `max_processes` option specifies number of processes allowed to use per key
+  (`+1` for a worker process if it was spawned).
+
+  By default, `5` get-processes per key allowed, but this can be changed via
+  `max_processes/2`.
+
+      iex> am = AgentMap.new(k: 42)
+      iex> task = fn ->
+      ...>   get(am, :k, fn _ -> sleep(10) end)
+      ...> end
+      iex> for _ <- 1..4, do: spawn(task)  # +4
+      iex> task.()                         # +1
+      :ok
+
+  will be executed in around of `10` ms, not `50`. `AgentMap` can parallelize
+  any sequence of `get/3` calls. Sequence ends when a call that change state
+  arrive (`get_and_update/3`, `update/3`, etc.)
+
+  Use `max_processes: 1` to execute `get` calls for this `key` sequentially.
+
+  ## Examples
+
+      iex> am = AgentMap.new()
+      iex> max_processes(am, :key, 42)
+      ...>
+      iex> for _ <- 1..1000 do
+      ...>   Task.async(fn ->
+      ...>     get(am, :key, fn _ -> sleep(10) end)
+      ...>   end)
+      ...> end
+      ...>
+      iex> for _ <- 1..250 do
+      ...>   sleep(1)                    # every ms
+      ...>   info(am, :key)[:processes]  # being used processes
+      ...> end
+      ...> |> Enum.max()
+      42
+      iex> get(am, :key, & &1)
+      nil
+
+  Returns keyword with the `:processes` and `:max_processes` numbers for `key`.
+
+  ## Examples
+
+      iex> am = AgentMap.new()
+      ...>
+      iex> info(am, :key)
+      [processes: 0, max_processes: 5]
+      #
+      iex> am
+      ...> |> set_prop(:max_processes, 3)
+      ...> |> info(:key)
+      [processes: 0, max_processes: 3]
+      #
+      iex> am
+      ...> |> sleep(:key, 50)
+      ...> |> info(:key)
+      [processes: 1, max_processes: 3]
+
+      iex> am = AgentMap.new()
+      ...>
+      iex> for _ <- 1..10 do
+      ...>   Task.async(fn ->
+      ...>     get(am, :key, fn _ -> sleep(50) end)
+      ...>   end)
+      ...> end
+      ...>
+      iex> sleep(10)
+      iex> info(am, :key)[:processes]
+      5
+      iex> sleep(150)
+      iex> info(am, :key)[:processes]
+      0
+
+  But:
+
+      iex> am = AgentMap.new()
+      iex> for _ <- 1..100 do
+      ...>   Task.async(fn ->
+      ...>     get(am, :key, fn _ ->
+      ...>       sleep(50)
+      ...>     end, !: :now)
+      ...>   end)
+      ...> end
+      ...>
+      iex> sleep(20)
+      ...>
+      iex> info(am, :key)[:processes]
+      100
+
