@@ -19,6 +19,7 @@
 erl_crash.dump
 
 .mix_tasks
+mix.lock
 
 # Also ignore archive artifacts (built via "mix archive.build").
 *.ez
