@@ -1,4 +1,4 @@
-defmodule Memo do
+defmodule Test.Memo do
   use AgentMap
 
   def start_link() do
@@ -24,11 +24,18 @@ defmodule Memo do
   end
 end
 
-defmodule Calc do
+defmodule Test.Calc do
+  alias Test.Memo
+
   def fib(0), do: 0
   def fib(1), do: 1
 
   def fib(n) when n >= 0 do
-    Memo.calc(:fib, fn n -> fib(n - 1) + fib(n - 2) end, n)
+    unless GenServer.whereis(Test.Memo) do
+      Test.Memo.start_link()
+      fib(n)
+    else
+      Memo.calc(:fib, fn n -> fib(n - 1) + fib(n - 2) end, n)
+    end
   end
 end

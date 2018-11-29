@@ -19,6 +19,48 @@ defmodule AgentMapTest do
   #   # |> take([:a, :b, :d]) == %{a: 1, b: 2}
   # end
 
+  test "Memo example" do
+    alias Test.{Memo, Calc}
+
+    assert 0..10000
+           |> Stream.map(&Calc.fib(&1))
+           |> Enum.take(10000)
+           |> Enum.find_index(&(&1 == 102_334_155)) == 40
+
+    Memo.stop()
+  end
+
+  test "Account example" do
+    alias Test.Account
+
+    Account.start_link()
+
+    #
+
+    assert Account.balance(:Alice) == :error
+
+    assert Account.deposit(:Alice, 10_000) == {:ok, 10_000}
+    assert Account.deposit(:Alice, 10_000) == {:ok, 20_000}
+
+    assert Account.withdraw(:Alice, 30) == {:ok, 19_970}
+
+    assert Account.withdraw(:Alice, 20_000) == :error
+
+    #
+    assert Account.balance(:Alice) == {:ok, 19_970}
+    assert Account.transfer(:Alice, :Bob, 30) == :error
+
+    assert Account.open(:Bob) == :ok
+
+    assert Account.transfer(:Alice, :Bob, 30) == :ok
+    assert Account.balance(:Alice) == {:ok, 19_940}
+    assert Account.balance(:Bob) == {:ok, 30}
+
+    #
+
+    Account.stop()
+  end
+
   test "Collectable" do
     am = AgentMap.new()
 

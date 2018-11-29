@@ -1,15 +1,21 @@
-defmodule Account do
+defmodule Test.Account do
   use AgentMap
 
   def start_link() do
     AgentMap.start_link([], name: __MODULE__)
   end
 
+  def stop() do
+    AgentMap.stop(__MODULE__)
+  end
+
   @doc """
   Returns `{:ok, balance}` for account or `:error` if account
   is unknown.
   """
-  def balance(account), do: AgentMap.fetch(__MODULE__, account)
+  def balance(account) do
+    AgentMap.fetch(__MODULE__, account)
+  end
 
   @doc """
   Withdraw. Returns `{:ok, new_amount}` or `:error`.
@@ -30,16 +36,13 @@ defmodule Account do
   end
 
   @doc """
-  Deposit. Returns `{:ok, new_amount}` or `:error`.
+  Deposit. Returns `{:ok, new_amount}`.
   """
   def deposit(account, amount) do
     AgentMap.get_and_update(__MODULE__, account, fn
-      nil ->
-        {:error}
-
-      balance ->
-        {{:ok, balance + amount}, balance + amount}
-    end)
+      b ->
+        {{:ok, b + amount}, b + amount}
+    end, initial: 0)
   end
 
   @doc """

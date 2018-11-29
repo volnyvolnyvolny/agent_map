@@ -155,24 +155,19 @@ defmodule Account do
   end
 
   @doc """
-  Deposits money. Returns `{:ok, new_amount}` or `:error`.
+  Deposits money. Returns `{:ok, new balance}`.
   """
   def deposit(account, amount) do
     AgentMap.get_and_update(__MODULE__, account, fn
-      nil ->
-        {:error}
-
-      balance ->
-        balance = balance + amount
-        {{:ok, balance}, balance}
-    end)
+      b ->
+        {{:ok, b + amount}, b + amount}
+    end, initial: 0)
   end
 
   @doc """
   Trasfers money. Returns `:ok` or `:error`.
   """
   def transfer(from, to, amount) do
-    # Multi call.
     AgentMap.Multi.get_and_update(__MODULE__, [from, to], fn
       [nil, _] -> {:error}
 

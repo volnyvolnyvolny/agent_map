@@ -4,7 +4,7 @@ defmodule AgentMapMultiTest do
   import :timer
   import AgentMap.Utils, only: [sleep: 3]
   import AgentMap, only: [put: 3]
-#  import AgentMap.Multi
+  #  import AgentMap.Multi
 
   doctest AgentMap.Multi, import: true
 
