@@ -18,7 +18,7 @@ defmodule Account do
     AgentMap.get_and_update(__MODULE__, account, fn
       # no such account
       nil ->
-        # (!) returning {:error, nil} would create key with nil value
+        # (!) using {:error, nil} will add {key, nil}
         {:error}
 
       balance when balance > amount ->

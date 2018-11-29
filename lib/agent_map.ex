@@ -9,13 +9,13 @@ defmodule AgentMap do
   @moduledoc """
   `AgentMap` can be seen as a stateful `Map` that parallelize operations made on
   different keys. Basically, it can be used as a cache, memoization,
-  computational framework and, sometimes, as a `GenServer` alternative.
+  computational framework and, sometimes, and as an alternative to `GenServer`.
   `AgentMap` supports operations made on a group of keys (["multi-key"
   calls](AgentMap.Multi.html)).
 
   ## Examples
 
-  Create and use it as an ordinary `Map`:
+  Create and use it as an ordinary `Map` (`new/0`, `new/1` and `new/2`):
 
       iex> am = AgentMap.new(a: 42, b: 24)
       iex> AgentMap.get(am, :a)
@@ -31,129 +31,26 @@ defmodule AgentMap do
       iex> Enum.count(am)
       2
 
-  A special struct `%AgentMap{}` is created via `new/1`. It allows to use the
-  `Enumerable` protocol. See also `start/2` and `start_link/2`.
+  or in an `Agent` manner (`start/2`, `start_link/2`):
 
-  More complicated example involves memoization:
+      iex> {:ok, pid} = AgentMap.start_link()
+      iex> pid
+      ...> |> AgentMap.put(:a, 1)
+      ...> |> AgentMap.get(:a)
+      1
 
-      defmodule Calc do
-        def fib(0), do: 0
-        def fib(1), do: 1
+  Struct `%AgentMap{}` allows to use `Enumerable` and `Collectable` protocols:
 
-        def fib(n) when n >= 0 do
-          unless GenServer.whereis(__MODULE__) do
-            AgentMap.start_link([], name: __MODULE__)
-            fib(n)
-          else
-            AgentMap.get_and_update(__MODULE__, n, fn
-              nil ->
-                # This calculation will be made in a separate
-                # worker process.
-                res = fib(n - 1) + fib(n - 2)
+      iex> {:ok, pid} = AgentMap.start_link()
+      iex> am = AgentMap.new(pid)
+      ...> Enum.empty?(am)
+      true
+      #
+      iex> Enum.into([a: 1, b: 2], am)
+      iex> AgentMap.take(am, [:a, :b])
+      ...> %{a: 1, b: 2}
 
-                # Return `res` and set it as a new value.
-                {res, res}
-
-              _value ->
-                # Change nothing, return current value.
-                :id
-            end)
-          end
-        end
-      end
-
-  Take a look at the `test/memo.ex`.
-
-  `AgentMap` provides a possibility to make "multi-key" calls:
-
-      defmodule Account do
-        def start_link() do
-          AgentMap.start_link([], name: __MODULE__)
-        end
-
-        def stop() do
-          AgentMap.stop(__MODULE__)
-        end
-
-        @doc \"""
-        Returns `{:ok, balance}` or `:error` in case there is no
-        such account.
-        \"""
-        def balance(account) do
-          AgentMap.fetch(__MODULE__, account)
-        end
-
-        @doc \"""
-        Withdraws money. Returns `{:ok, new_amount}` or `:error`.
-        \"""
-        def withdraw(account, amount) do
-          AgentMap.get_and_update(__MODULE__, account, fn
-            nil ->     # no such account
-              {:error} # (!) refrain from returning `{:error, nil}`
-                       # as it would create key with `nil` value
-
-            balance when balance > amount ->
-              balance = balance - amount
-              {{:ok, balance}, balance}
-
-            _balance ->
-              # Returns `:error`, while not changing value.
-              {:error}
-          end)
-        end
-
-        @doc \"""
-        Deposits money. Returns `{:ok, new_amount}` or `:error`.
-        \"""
-        def deposit(account, amount) do
-          AgentMap.get_and_update(__MODULE__, account, fn
-            nil ->
-              {:error}
-
-            balance ->
-              balance = balance + amount
-              {{:ok, balance}, balance}
-          end)
-        end
-
-        @doc \"""
-        Trasfers money. Returns `:ok` or `:error`.
-        \"""
-        def transfer(from, to, amount) do
-          AgentMap.Multi.get_and_update(__MODULE__, [from, to], fn
-            [nil, _] -> {:error}
-
-            [_, nil] -> {:error}
-
-            [b1, b2] when b1 >= amount ->
-              {:ok, [b1 - amount, b2 + amount]}
-
-            _ -> {:error}
-          end)
-        end
-
-        @doc \"""
-        Closes account. Returns `:ok` or `:error`.
-        \"""
-        def close(account) do
-          AgentMap.pop(__MODULE__, account) && :ok || :error
-        end
-
-        @doc \"""
-        Opens account. Returns `:ok` or `:error`.
-        \"""
-        def open(account) do
-          AgentMap.get_and_update(__MODULE__, account, fn
-            nil ->
-              # Sets balance to 0, while returning :ok.
-              {:ok, 0}
-
-            _balance ->
-              # Returns :error, while not changing balance.
-              {:error}
-          end)
-        end
-      end
+  See [README](readme.html#examples) for memoization and accounting examples.
 
   ## Priority (`:!`)
 
@@ -161,22 +58,22 @@ defmodule AgentMap do
   ("priority") calls.
 
   Priority can be given as a non-negative integer or alias. Aliases are: `:min |
-  :low` = `0`, `:avg | :mid` = `255`, `:max | :high` = `65535`, also, relative
-  value can be given, for ex.: `{:max, -1}` = `65534`.
+  :low` = `0`, `:avg | :mid` = `255`, `:max | :high` = `65535`. Relative value
+  is also acceptable, for ex.: `{:max, -1}` = `65534`.
 
       iex> %{state: :ready}
       ...> |> AgentMap.new()
       ...> |> sleep(:state, 10)
-      ...> |> cast(:state, fn :go!    -> :stop   end)                # | | 3
-      ...> |> cast(:state, fn :steady -> :go!    end, !: :max)       # | 2 |
-      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1}) # 1 | |
+      ...> |> cast(:state, fn :go!    -> :stop   end)                 # | | 3
+      ...> |> cast(:state, fn :steady -> :go!    end, !: :max)        # | 2 |
+      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1})  # 1 | |
       ...> |> get(:state)
       :stop
 
   Also, `!: :now` option can be given in `get/4`, `get_lazy/4` or `take/3` to
   instruct `AgentMap` to make execution using a separate `Task` and *current*
-  thus, bypassing worker. Calls `fetch!/3`, `fetch/3`, `values/2`, `to_map/2`
-  and `has_key?/3` use this option by default:
+  values. Calls `fetch!/3`, `fetch/3`, `values/2`, `to_map/2` and `has_key?/3`
+  use this option by default:
 
       iex> am =
       ...>   AgentMap.new(key: 1)
@@ -197,7 +94,7 @@ defmodule AgentMap do
   temporary worker-process is spawned. All subsequent calls are forwarded to the
   message queue of this worker, which respects the order of incoming new calls.
   Worker executes them in a sequence, except for `get/4` calls, which are
-  processed as a parallel `Task`s. A worker will die after about `10` ms of
+  processed as a parallel `Task`s. A worker will die after `~10` ms of
   inactivity.
 
   For example:
@@ -472,7 +369,7 @@ defmodule AgentMap do
       it will be terminated;
 
     * `max_processes: pos_integer | :infinity | {pos_integer, pos_integer}`,
-      `#{@max_p}` — a maximux number of processes instance can have. Limit can
+      `#{@max_p}` — a maximum number of processes instance can have. Limit can
       be "soft" — if it is exceeded, optimizations are applied; or "hard" — if
       it's exceeded and no optimization can be made to spawn workers, all
       requests are handled in a server process, one by one. For example,
@@ -601,17 +498,17 @@ defmodule AgentMap do
   @doc """
   Gets a value via the given `fun`.
 
-  The function `fun` is sent to an instance of `AgentMap` which invokes it,
-  passing the value associated with `key`. The result of the invocation is
-  returned from this function. This call does not change value, so workers
-  execute a series of `get`-calls can as a parallel `Task`s.
+  A callback `fun` is sent to an instance that invokes it, passing as an
+  argument the value associated with `key`. The result of an invocation is
+  returned from this function. This call does not change value, and so, workers
+  execute a series of `get`-calls as a parallel `Task`s.
 
   ## Options
 
     * `initial: value`, `nil` — value for `key` if it's missing;
 
-    * `!: :now` — to execute call in a separate `Task` (passing a current
-      value), bypassing a worker:
+    * `!: :now` — to execute call in a separate `Task` (passing current value),
+      spawned from server:
 
           iex> am = AgentMap.new()
           iex> sleep(am, :key)
@@ -653,14 +550,14 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns the value for the given `key`.
+  Returns the value for a specific `key`.
 
   Sugar for `get(am, key, & &1, !: :min)`.
 
   This call is executed with a minimum (`0`) priority. As so, it will start only
   after all other calls awaiting for execution for this `key` are completed.
 
-  See `get/4`.
+  See `get/4`, `AgentMap.Multi.get/3`.
 
   ## Examples
 
@@ -683,7 +580,7 @@ defmodule AgentMap do
   @doc """
   Gets the value for a specific `key`.
 
-  If `key` is present, return its value. Otherwise, `fun` is evaluated and its
+  If `key` is present, return its value. Otherwise, `fun` is evaluated and the
   result is returned.
 
   This is useful if the default value is very expensive to calculate or
@@ -693,11 +590,10 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority` `:avg` — to return when calls with a `≥`
-      [priorities](#module-priority) are executed;
-
     * `!: :now` — to execute this call in a separate `Task` (passing a current
-      value);
+      value) spawned from server;
+
+    * `!: priority`, `:avg`;
 
     * `:timeout`, `5000`.
 
@@ -735,8 +631,8 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: priority`, `:now` — to return when calls with a `≥`
-      [priorities](#module-priority) are executed for `key`;
+    * `!: priority`, `:now` — to return only when calls with higher
+      [priorities](#module-priority) are finished to execute for this `key`;
 
     * `:timeout`, `5000`.
 
@@ -752,8 +648,7 @@ defmodule AgentMap do
       ...> |> put(:b, 42)
       ...> |> fetch(:b)
       :error
-      iex> am
-      ...> |> fetch(:b, !: :min)
+      iex> fetch(am, :b, !: :min)
       {:ok, 42}
   """
   @spec fetch(am, key, keyword | timeout) :: {:ok, value} | :error
@@ -775,16 +670,17 @@ defmodule AgentMap do
   end
 
   @doc """
-  Fetches the value for a specific `key`, erroring out otherwise.
+  Fetches the value for a specific `key`, erroring out if instance doesn't
+  contain `key`.
 
-  Returns current value. Raises a `KeyError` if `key` is not present.
+  Returns current value or raises a `KeyError`.
 
   See `fetch/3`.
 
   ## Options
 
-    * `!: priority`, `:now` — to return when calls with a `≥`
-      [priorities](#module-priority) are executed for `key`;
+    * `!: priority`, `:now` — to return only when calls with higher
+      [priorities](#module-priority) are finished to execute for this `key`;
 
     * `:timeout`, `5000`.
 
@@ -827,12 +723,12 @@ defmodule AgentMap do
   Gets the value for `key` and updates it, all in one pass.
 
   The `fun` is sent to an `AgentMap` that invokes it, passing the value for
-  `key`. A `fun` can result in:
+  `key`. A callback can return:
 
-    * `{get, new value}` — to return "get" value and set new value;
-    * `{get}` — to return "get" value;
-    * `:pop` — to return current value and remove `key`;
-    * `:id` — to just return current value.
+    * `{ret, new value}` — to set new value and retrive "ret";
+    * `{ret}` — to retrive "ret" value;
+    * `:pop` — to retrive current value and remove `key`;
+    * `:id` — to just retrive current value.
 
   For example, `get_and_update(account, :Alice, &{&1, &1 + 1_000_000})` returns
   the balance of `:Alice` and makes the deposit, while `get_and_update(account,
@@ -840,7 +736,7 @@ defmodule AgentMap do
 
   This call creates a temporary worker that is responsible for holding queue of
   calls awaiting execution for `key`. If such a worker exists, call is added to
-  the end of the queue. Priority can be given (`:!`), to process call out of
+  the end of its queue. Priority can be given (`:!`), to process call out of
   turn.
 
   See `Map.get_and_update/3`.
@@ -849,8 +745,8 @@ defmodule AgentMap do
 
     * `initial: value`, `nil` — value for `key` if it's missing;
 
-    * `tiny: true`, `false` — to execute `fun` on
-      [server](#module-how-it-works);
+    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
+      possible;
 
     * `!: priority`, `:avg`;
 
@@ -911,11 +807,11 @@ defmodule AgentMap do
 
   ## Options
 
-    * `initial: value`, `nil` — to be passed in `fun` as an argument if `key` is
+    * `initial: value`, `nil` — to be passed as an argument to `fun` if `key` is
       missing;
 
-    * `tiny: true`, `false` — to execute `fun` on [server](#module-how-it-works)
-      if it's possible;
+    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
+      possible;
 
     * `!: priority`, `:avg`;
 
@@ -959,8 +855,8 @@ defmodule AgentMap do
 
     * `!: priority`, `:avg`;
 
-    * `tiny: true`, `false` — to execute `fun` on [server](#module-how-it-works)
-      if it's possible;
+    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
+      possible;
 
     * `:timeout`, `5000`.
 
@@ -983,7 +879,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Updates `key` with the given function, but only if `key` already exists.
+  Updates known `key` with the given function.
 
   If `key` is present, `fun` is invoked with value as argument and its result is
   used as the new value of `key`. If `key` is not present, a `KeyError`
@@ -995,8 +891,8 @@ defmodule AgentMap do
 
     * `!: priority`, `:avg`;
 
-    * `tiny: true`, `false` — to execute `fun` on [server](#module-how-it-works)
-      if it's possible;
+    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
+      possible;
 
     * `:timeout`, `5000`.
 
@@ -1050,10 +946,10 @@ defmodule AgentMap do
       ** (KeyError) key :c not found
   """
   @spec replace!(am, key, value, keyword | timeout) :: am
-  def replace!(am, key, opts \\ [!: :avg])
+  def replace!(am, key, value, opts \\ [!: :avg])
 
-  def replace!(am, key, t) when is_timeout(t) do
-    replace!(am, key, timeout: t)
+  def replace!(am, key, value, t) when is_timeout(t) do
+    replace!(am, key, value, timeout: t)
   end
 
   def replace!(am, key, v, opts) do
@@ -1116,7 +1012,7 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns values stored by `AgentMap` instance.
+  Returns current values stored by `AgentMap` instance.
 
   ## Examples
 
@@ -1161,7 +1057,7 @@ defmodule AgentMap do
       %{a: 42, b: 42}
   """
   @spec put(am, key, value, keyword) :: am
-  def put(am, key, value, opts \\ [!: :max, cast: true]) do
+  def put(am, key, value, opts \\ [cast: true, !: :max]) do
     opts =
       opts
       |> Keyword.put_new(:!, :max)
@@ -1198,7 +1094,7 @@ defmodule AgentMap do
       %{a: 1, b: 42}
   """
   @spec put_new(am, key, value, keyword) :: am
-  def put_new(am, key, value, opts \\ [!: :max, cast: true]) do
+  def put_new(am, key, value, opts \\ [cast: true, !: :max]) do
     put_new_lazy(am, key, fn _ -> value end, [{:tiny, true} | opts])
   end
 
@@ -1221,8 +1117,8 @@ defmodule AgentMap do
 
     * `!: priority`, `:max`;
 
-    * `tiny: true`, `false` — to execute `fun` on [server](#module-how-it-works)
-      if it's possible;
+    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
+      possible;
 
     * `:timeout`, `5000`.
 
@@ -1241,7 +1137,7 @@ defmodule AgentMap do
       %{a: 1, b: 42}
   """
   @spec put_new_lazy(am, key, (() -> value), keyword) :: am
-  def put_new_lazy(am, key, fun, opts \\ [!: :max, cast: true]) do
+  def put_new_lazy(am, key, fun, opts \\ [cast: true, !: :max]) do
     opts =
       opts
       |> Keyword.put_new(:!, :max)
@@ -1319,7 +1215,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `cast: false` — to return after the actual drop;
+    * `cast: false` — to return only after the actual delete;
 
     * `!: priority`, `:max`;
 
@@ -1334,7 +1230,7 @@ defmodule AgentMap do
       %{b: 2}
   """
   @spec delete(am, key, keyword) :: am
-  def delete(am, key, opts \\ [!: :max, cast: true]) do
+  def delete(am, key, opts \\ [cast: true, !: :max]) do
     opts =
       opts
       |> Keyword.put_new(:!, :avg)
@@ -1383,7 +1279,7 @@ defmodule AgentMap do
   ##
 
   @doc """
-  Returns a current map representation.
+  Returns a current `Map` representation.
 
   ## Examples
 
@@ -1404,7 +1300,9 @@ defmodule AgentMap do
 
   ## Options
 
-    * `!: :now`, `:avg` — to return a snapshot with current keys and values;
+    * `!: :now` — to return a snapshot with current keys and values;
+
+    * `!: priority`, `:avg`;
 
     * `:timeout`, `5000`.
 
@@ -1440,14 +1338,14 @@ defmodule AgentMap do
   @doc """
   Performs "fire and forget" `update/4` call with `GenServer.cast/2`.
 
-  Returns without waiting for the actual update.
+  Returns without waiting for the actual update to finish.
 
   ## Options
 
     * `!: priority`, `:avg`;
 
-    * `tiny: true`, `false` — to execute `fun` on [server](#module-how-it-works)
-      if it's possible.
+    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
+      possible.
 
   ## Examples
 

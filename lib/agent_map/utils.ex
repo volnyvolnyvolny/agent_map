@@ -103,8 +103,8 @@ defmodule AgentMap.Utils do
 
     * `cast: false` — to return after the actual sleep;
 
-    * `!: priority`, `:avg` — to postpone sleep until calls with a `≥`
-      [priorities](#module-priority) are executed.
+    * `!: priority`, `:avg` — to postpone sleep until calls with a higher
+      [priority](#module-priority) are executed.
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
   def sleep(am, key, t, opts \\ [!: :avg, cast: true]) do
@@ -131,15 +131,17 @@ defmodule AgentMap.Utils do
   ##
 
   @doc """
-  Returns prop with given `key` or `default`.
+  Returns property with given `key` or `default`.
 
   See `set_prop/3`, `upd_prop/3`.
 
   ## Special properties
 
-  * `:size` — current size;
+  * `:size` — current size (fast, but in some rare cases inaccurate upwards);
+  * `:real_size` — current size (slower, but always accurate);
   * `:max_processes` — a limit for the number of processes allowed to spawn;
-  * `:processes` — total number of processes being used (+1 for server itself).
+  * `:processes` — total number of processes being used (`+1` for server
+    itself).
 
   ## Examples
 
@@ -162,6 +164,7 @@ defmodule AgentMap.Utils do
       iex> get_prop(am, :processes)
       1
 
+  #
 
       iex> am = AgentMap.new()
       iex> get_prop(am, :size)
@@ -193,7 +196,7 @@ defmodule AgentMap.Utils do
   end
 
   @doc """
-  Stores prop in a process dictionary of instance.
+  Stores property in a process dictionary of instance.
 
   See `get_prop/3`, `upd_prop/4`.
 
@@ -227,7 +230,7 @@ defmodule AgentMap.Utils do
   end
 
   @doc """
-  Updates prop stored in a process dictionary of instance.
+  Updates property stored in a process dictionary of instance.
 
   See `get_prop/3`, `set_prop/3`.
 
@@ -267,11 +270,14 @@ defmodule AgentMap.Utils do
 
   By default, returns without waiting for the actual increment.
 
+  Raises an `ArithmeticError` if current value associated with key is not a
+  number.
+
   ### Options
 
     * `step: number`, `1` — increment step;
 
-    * `initial: number`, `0` — value if `key` is missing;
+    * `initial: number`, `0` — initial value;
 
     * `initial: false` — to raise `KeyError` on server if value does not exist;
 
@@ -307,8 +313,8 @@ defmodule AgentMap.Utils do
       opts
       |> Keyword.put_new(:step, 1)
       |> Keyword.put_new(:initial, 1)
-      |> Keyword.put_new(:!, :avg)
       |> Keyword.put_new(:cast, true)
+      |> Keyword.put_new(:!, :avg)
 
     step = opts[:step]
     init = opts[:initial]

@@ -8,9 +8,8 @@ defmodule Memo do
   def stop(), do: AgentMap.stop(__MODULE__)
 
   @doc """
-  If `{task, arg}` key is known — return it,
-  else, invoke given `fun` as a Task, writing
-  result under `{task, arg}` key.
+  If `{task, arg}` key is known — return it, else, invoke given `fun` as a Task,
+  writing result under `{task, arg}` key.
   """
   def calc(task, fun, arg) do
     AgentMap.get_and_update(__MODULE__, {task, arg}, fn

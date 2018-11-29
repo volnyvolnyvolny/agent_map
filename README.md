@@ -1,7 +1,7 @@
 # AgentMap
 
-The `AgentMap` can be seen as a stateful `Map` that parallelize operations
-made on different keys. 
+`AgentMap` can be seen as a stateful `Map` that parallelize operations made on
+different keys.
 
 For instance, this call:
 
@@ -12,24 +12,18 @@ iex> fun =
 ...>     {:_get, v + 1}
 ...>   end
 ...>
-iex> map = Map.new(a: 1, b: 1)
-iex> {:_get, map} = Map.get_and_update(map, :a, fun)
-iex> {:_get, map} = Map.get_and_update(map, :b, fun)
-iex> Map.get(map, :a)
-2
-iex> Map.get(map, :b)
+iex> map = Map.new(a: 1, b: 1)                        # | am = AgentMap.new(a: 1, b: 1)
+iex> {:_get, map} = Map.get_and_update(map, :a, fun)  # | AgentMap.get_and_update(am, :a, fun)
+iex> {:_get, map} = Map.get_and_update(map, :b, fun)  # | AgentMap.get_and_update(am, :b, fun)
+iex> Map.get(map, :a)                                 # | AgentMap.get(am, :a)
+2                                                     # |
+iex> Map.get(map, :b)                                 # | AgentMap.get(am, :b)
 2
 ```
 
-will be executed in `20` ms, while this:
+will be executed in `20` ms, while this, because of parallelization:
 
 ```elixir
-iex> fun =
-...>   fn v ->
-...>     :timer.sleep(10)
-...>     {:_get, v + 1}
-...>   end
-...>
 iex> am = AgentMap.new(a: 1, b: 1)
 iex> AgentMap.get_and_update(am, :a, fun)
 :_get
@@ -40,17 +34,27 @@ iex> AgentMap.get(am, :b)
 2
 ```
 
-in around of `10` ms, because of parallelization.
+in around of `10` ms.
 
 Basically, `AgentMap` can be used as a cache, memoization, computational
-framework and, sometimes, as a `GenServer` alternative. `AgentMap` supports
+framework and, sometimes, as an alternative to `GenServer`. `AgentMap` supports
 operations made on a group of keys (["multi-key" calls](AgentMap.Multi.html)).
 
-See documentation for [AgentMap](https://hexdocs.pm/agent_map) for details.
+See [documentation](https://hexdocs.pm/agent_map) for the details.
 
 ## Examples
 
-Create and use it as an ordinary `Map`:
+`AgentMap` can be started in an `Agent` manner:
+
+```elixir
+iex> {:ok, pid} = AgentMap.start_link()
+iex> pid
+...> |> AgentMap.put(:a, 1)
+...> |> AgentMap.get(:a)
+1
+```
+
+Or similarly to an ordinary `Map`:
 
 ```elixir
 iex> am = AgentMap.new(a: 42, b: 24)
@@ -65,21 +69,18 @@ iex> am
 %{a: 43, b: 23}
 ```
 
-The special struct `%AgentMap{}` can be created via the `new/1` function. This
-allows to use the `Enumerable` protocol.
-
-Also, `AgentMap` can be started in an `Agent` manner:
+Using `new/1` function creates a special `%AgentMap{}` struct that is compatible
+with `Enumerable` and `Collectable` protocols.
 
 ```elixir
 iex> {:ok, pid} = AgentMap.start_link()
-iex> pid
-...> |> AgentMap.put(:a, 1)
-...> |> AgentMap.get(:a)
-1
-iex> pid
-...> |> AgentMap.new()
-...> |> Enum.empty?()
-false
+iex> am = AgentMap.new(pid)
+...> Enum.empty?(am)
+true
+#
+iex> Enum.into([a: 1, b: 2], am)
+iex> AgentMap.take(am, [:a, :b])
+...> %{a: 1, b: 2}
 ```
 
 More complicated example involves memoization:
@@ -89,11 +90,11 @@ defmodule Calc do
   def fib(0), do: 0
   def fib(1), do: 1
   def fib(n) when n >= 0 do
-    unless GenServer.whereis(__MODULE__) do
-      AgentMap.start_link([], name: __MODULE__)
+    unless GenServer.whereis(Calc) do
+      AgentMap.start_link([], name: Calc)
       fib(n)
     else
-      AgentMap.get_and_update(__MODULE__, n, fn
+      AgentMap.get_and_update(Calc, n, fn
         nil ->
           # This calculation will be made in a separate
           # worker process.
@@ -113,7 +114,7 @@ end
 Take a look at the
 [test/memo.ex](https://github.com/zergera/agent_map/blob/master/test/memo.ex).
 
-The `AgentMap` provides a possibility to make multi-key calls (operations on
+`AgentMap` provides a possibility to make multi-key calls (operations on
 multiple keys). Let's see an accounting demo:
 
 ```elixir
@@ -139,9 +140,9 @@ defmodule Account do
   """
   def withdraw(account, amount) do
     AgentMap.get_and_update(__MODULE__, account, fn
-      nil ->     # no such account
-        {:error} # (!) refrain from returning `{:error, nil}`
-                 # as it would create key with `nil` value
+      nil ->
+        # no such account
+        {:error}
 
       balance when balance > amount ->
         balance = balance - amount

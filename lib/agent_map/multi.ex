@@ -86,14 +86,13 @@ defmodule AgentMap.Multi do
   (think of a drop-call) or even if we compute new values using completely
   different set of keys.
 
-  For this particular case `get_and_update/4`, `update/4` and `cast/4` could
-  handle keys argument in a form of `{get, upd}`, where `get` is a list of keys
-  whose values form the callback argument and `upd` — the keys whose values are
-  updated. For example:
+  For this particular case `collect: [key]` option could be provided to specify
+  the list of keys whose values will be collected to form the callback argument.
+  For example:
 
       iex> AgentMap.new(a: 1, b: 2, sum: 0)
-      ...> |> update({[:a, :b], [:sum]}, fn [1, 2] -> [1 + 2] end)
-      ...> |> update({[], [:a, :b]}, fn [] -> :drop end)
+      ...> |> update([:sum], fn [1, 2] -> [1 + 2] end, collect: [:a, :b])
+      ...> |> update([:a, :b], fn [] -> :drop end, collect: [])
       ...> |> get([:a, :b, :sum])
       [nil, nil, 3]
   """
@@ -165,7 +164,7 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `initial: value`, `nil` — to return instead of a missing key value;
+    * `initial: value`, `nil` — value to return if key is missing;
 
     * `!: priority`, `:min`;
 
@@ -248,9 +247,9 @@ defmodule AgentMap.Multi do
 
     * `initial: value`, `nil` — value for missing keys;
 
-    * `!: priority`, `:now` — [priority](AgentMap.html#module-priority) for keys
-      that only needs [collecting](#module-how-it-works); for keys needs to be
-      updated, `{:avg, +1}` is used;
+    * `!: priority`, `:now` — [priority](AgentMap.html#module-priority) for
+      [collecting](#module-how-it-works) keys; for other keys, `{:avg, +1}` is
+      used;
 
     * `collect: [key]`, `keys` — keys whose values form the `fun` callback
       argument:
@@ -306,8 +305,7 @@ defmodule AgentMap.Multi do
              | :pop
              | :id)
 
-  @spec get_and_update(am, [key] | {[key], [key]}, cb_m(ret), keyword | timeout) ::
-          ret | [ret | value]
+  @spec get_and_update(am, [key], cb_m(ret), keyword | timeout) :: ret | [ret | value]
         when ret: var
   def get_and_update(am, keys, fun, opts \\ [])
 
@@ -380,7 +378,7 @@ defmodule AgentMap.Multi do
   @doc """
   Performs "fire and forget" `update/4` call with `GenServer.cast/2`.
 
-  Returns without waiting for the actual update.
+  Returns without waiting for the actual update to finish.
 
   For this call `{:avg, +1}` priority is used.
 
