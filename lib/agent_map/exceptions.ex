@@ -5,14 +5,14 @@ defmodule AgentMap.CallbackError do
 
   def message(%{multi_key?: false, got: got}) do
     """
-    callback may return:
+    callback can return:
 
       * {get, value}
       * {get}
       * :pop
       * :id
 
-    got: #{inspect(got)}
+    Got: #{inspect(got)}
     """
   end
 
@@ -22,8 +22,8 @@ defmodule AgentMap.CallbackError do
     message(%{multi_key?: true, got: got}) <>
       """
 
-      err-item: #{inspect(e.item)}
-      position: #{n}
+      Err-item: #{inspect(e.item)}
+      Position: #{n}
       """
   end
 
@@ -37,7 +37,7 @@ defmodule AgentMap.CallbackError do
 
   def message(%{multi_key?: true, got: got}) do
     """
-    callback may return:
+    callback can return:
 
       * {get, [value] | :id | :drop}
       * [{get, value} | {get} | :id | :pop]
@@ -46,7 +46,7 @@ defmodule AgentMap.CallbackError do
       * :id   = [:id, …]
       * :pop  = [:pop, …]
 
-    got: #{inspect(got)}
+    Got: #{inspect(got)}
     """
   end
 end

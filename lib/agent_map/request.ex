@@ -45,7 +45,7 @@ defmodule AgentMap.Req do
 
   defp args(%{fun: f} = req, value?) do
     init = Map.get(req, :initial)
-    value = (value? && elem(value?, 0)) || init
+    value = if value?, do: elem(value?, 0), else: init
 
     if is_function(f, 2) do
       [value, value? && true]
@@ -92,6 +92,7 @@ defmodule AgentMap.Req do
     |> Map.from_struct()
     |> Map.delete(:key)
     |> Enum.reject(&match?({_, nil}, &1))
+    |> Enum.reject(&match?({:tiny, false}, &1))
     |> Enum.into(%{})
   end
 
@@ -125,6 +126,41 @@ defmodule AgentMap.Req do
 
   def handle(%{act: :to_map}, state) do
     {:reply, to_map(state), state}
+  end
+
+  #
+  # :max_p ≅ :max_processes
+  #
+
+  def handle(%{act: :upd_prop, key: :max_processes} = req, state) do
+    handle(%{req | key: :max_p}, state)
+  end
+
+  def handle(%{act: :upd_prop, key: prop, fun: f} = req, state) do
+    arg = Process.get(prop, Map.get(req, :initial))
+    Process.put(prop, apply(f, [arg]))
+
+    {:reply, :_done, state}
+  end
+
+  #
+
+  def handle(%{act: :get_prop, key: :real_size}, state) do
+    {:reply, map_size(to_map(state)), state}
+  end
+
+  def handle(%{act: :get_prop, key: :size}, {map, workers} = state) do
+    {:reply, map_size(map) + map_size(workers), state}
+  end
+
+  def handle(%{act: :get_prop, key: :max_processes} = req, state) do
+    handle(%{req | key: :max_p}, state)
+  end
+
+  def handle(%{act: :get_prop, key: prop} = req, state) do
+    value = Process.get(prop, Map.get(req, :initial))
+
+    {:reply, value, state}
   end
 
   # :tiny
@@ -193,40 +229,5 @@ defmodule AgentMap.Req do
           handle(%{req | !: :now}, state)
       end
     end
-  end
-
-  #
-  # :max_p ≅ :max_processes
-  #
-
-  def handle(%{act: :upd_prop, key: :max_processes} = req, state) do
-    handle(%{req | key: :max_p}, state)
-  end
-
-  def handle(%{act: :upd_prop, key: prop, fun: f} = req, state) do
-    arg = Process.get(prop, Map.get(req, :initial))
-    Process.put(prop, apply(f, [arg]))
-
-    {:reply, :_done, state}
-  end
-
-  #
-
-  def handle(%{act: :get_prop, key: :real_size}, state) do
-    {:reply, map_size(to_map(state)), state}
-  end
-
-  def handle(%{act: :get_prop, key: :size}, {map, workers} = state) do
-    {:reply, map_size(map) + map_size(workers), state}
-  end
-
-  def handle(%{act: :get_prop, key: :max_processes} = req, state) do
-    handle(%{req | key: :max_p}, state)
-  end
-
-  def handle(%{act: :get_prop, key: prop} = req, state) do
-    value = Process.get(prop, Map.get(req, :initial))
-
-    {:reply, value, state}
   end
 end

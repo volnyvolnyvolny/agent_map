@@ -254,10 +254,13 @@ defmodule AgentMap.Multi do
     * `collect: [key]`, `keys` — keys whose values form the `fun` callback
       argument:
 
-          iex> AgentMap.new(a: 1, b: 2)
-          ...> |> get_and_update([], fn [1, 2] ->
-          ...>      {3, [1 + 2]}
-          ...>    end, collect: [:a, :b])
+          iex> am = AgentMap.new(a: 1, b: 2)
+          ...> get_and_update(am, [:sum], fn [1, 2] ->
+          ...>   {3, [1 + 2]}
+          ...> end, collect: [:a, :b])
+          3
+          #
+          iex> am
           ...> |> update([:a, :b], fn [] ->
           ...>      :drop
           ...>    end, collect: [])

@@ -13,14 +13,11 @@ defmodule AgentMap.Server do
   import Map, only: [put: 3, fetch: 2, delete: 2]
 
   #
-
   def to_map({map, workers}) do
     for {key, w} <- workers, v? = value?(w), v?, into: map do
       {key, v? |> elem(0)}
     end
   end
-
-  #
 
   def spawn_worker({map, workers} = state, key, quota \\ 1) do
     if Map.has_key?(workers, key) do
@@ -35,33 +32,27 @@ defmodule AgentMap.Server do
             nil
         end
 
+      server = self()
       ref = make_ref()
 
       pid =
         spawn_link(fn ->
-          Worker.loop({ref, self()}, value?, quota)
+          Worker.loop({ref, server}, value?, quota)
         end)
 
       # hold …
-
       receive do
         {^ref, :resume} ->
           :_ok
       end
 
       # reserve quota
-
       inc(:processes, quota)
 
       #
-
-      workers = Map.put(workers, key, pid)
-
-      {delete(map, key), workers}
+      {delete(map, key), Map.put(workers, key, pid)}
     end
   end
-
-  #
 
   def extract_state({:noreply, state}), do: state
   def extract_state({:reply, _get, state}), do: state
@@ -107,13 +98,14 @@ defmodule AgentMap.Server do
 
     if empty?(errors) do
       Process.put(:max_p, args[:max_p])
-      Process.put(:size, map_size(results))
       Process.put(:processes, 1)
 
       map =
         for {{:ok, v}, key} <- results, into: %{} do
           {key, v}
         end
+
+      Process.put(:size, map_size(map))
 
       {:ok, {map, %{}}}
     else

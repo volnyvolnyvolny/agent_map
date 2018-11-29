@@ -1,8 +1,8 @@
 defimpl Collectable, for: AgentMap do
-  def into(original) do
+  def into(am) do
     collector_fun = fn
       am, {:cont, {key, value}} ->
-        AgentMap.put(am, key, value)
+        AgentMap.put(am, key, value, cast: false)
 
       am, :done ->
         am
@@ -11,6 +11,6 @@ defimpl Collectable, for: AgentMap do
         :ok
     end
 
-    {original, collector_fun}
+    {am, collector_fun}
   end
 end

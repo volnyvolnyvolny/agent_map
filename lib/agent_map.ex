@@ -48,7 +48,7 @@ defmodule AgentMap do
       #
       iex> Enum.into([a: 1, b: 2], am)
       iex> AgentMap.take(am, [:a, :b])
-      ...> %{a: 1, b: 2}
+      %{a: 1, b: 2}
 
   See [README](readme.html#examples) for memoization and accounting examples.
 
@@ -177,6 +177,8 @@ defmodule AgentMap do
 
   @type key :: term
   @type value :: term
+  @type initial :: value
+  @type default :: initial
   @type reason :: term
   @type alias :: :low | :mix | :mid | :avg | :high | :max
   @type delta :: integer
@@ -218,10 +220,9 @@ defmodule AgentMap do
   end
 
   def _call(am, req, opts) do
-    opts = Keyword.update(opts, :!, to_num(:avg), &to_num/1)
+    opts = Keyword.update(opts, :!, to_num(:avg), &prep!(:!, &1))
 
     req = struct(req, opts)
-
     pid = (is_map(am) && am.pid) || am
 
     if opts[:cast] do
@@ -246,6 +247,36 @@ defmodule AgentMap do
   defp to_num(p) when p in [:max, :high], do: 65535
   defp to_num(i) when is_integer(i) and i >= 0, do: i
   defp to_num({p, delta}), do: to_num(p) + delta
+
+  #
+
+  defp prep!(:max_processes, max_p)
+       when is_timeout(max_p) do
+    #
+    {max_p, :infinity}
+  end
+
+  defp prep!(:max_processes, {soft, hard})
+       when hard < soft do
+    #
+    raise """
+    Hard limit must be greater than soft.
+    Got contrary: #{inspect({soft, hard})}
+    """
+  end
+
+  defp prep!(:max_processes, {_soft, _h} = max_p) do
+    max_p
+  end
+
+  defp prep!(:max_processes, malformed) do
+    raise """
+    Value for option :max_processes is malformed.
+    Got: #{inspect(malformed)}
+    """
+  end
+
+  defp prep!(:!, p), do: to_num(p)
 
   ##
   ## NEW
@@ -395,7 +426,7 @@ defmodule AgentMap do
       iex> get(pid, :k)
       42
       iex> get_prop(pid, :max_processes)
-      5
+      {#{@max_p}, :infinity}
 
   — starts server with a predefined single key `:k`.
 
@@ -421,34 +452,6 @@ defmodule AgentMap do
     start(funs, [{:link, true} | opts])
   end
 
-  #
-
-  defp check!(:max_processes, max_p)
-       when is_timeout(max_p) do
-    #
-    {max_p, :infinity}
-  end
-
-  defp check!(:max_processes, {soft, hard})
-       when hard < soft do
-    #
-    raise """
-    Hard limit must be greater than soft.
-    Got contrary: #{inspect({soft, hard})}
-    """
-  end
-
-  defp check!(:max_processes, {_soft, _h}), do: :ok
-
-  defp check!(:max_processes, malformed) do
-    raise """
-    Value for option :max_processes is malformed.
-    Got: #{inspect(malformed)}
-    """
-  end
-
-  #
-
   @doc """
   Starts an unlinked `AgentMap` instance.
 
@@ -468,20 +471,19 @@ defmodule AgentMap do
   """
   @spec start([{key, (() -> any)}], GenServer.options()) :: on_start
   def start(funs \\ [], opts \\ [max_processes: @max_p]) do
-    args = [
-      funs: funs,
-      timeout: opts[:timeout] || 5000,
-      max_p: opts[:max_processes] || @max_p
-    ]
-
-    check!(:max_processes, args[:max_p])
+    args =
+      [
+        funs: funs,
+        timeout: opts[:timeout] || 5000,
+        max_p: opts[:max_processes] || @max_p
+      ]
+      |> Keyword.update!(:max_p, &prep!(:max_processes, &1))
 
     # Global timeout must be turned off.
     opts =
       opts
-      |> Keyword.put(:max_p, args[:max_p])
       |> Keyword.put(:timeout, :infinity)
-      |> Keyword.delete(:max_p)
+      |> Keyword.delete(:max_processes)
       |> Keyword.delete(:link)
 
     if opts[:link] do
@@ -505,13 +507,15 @@ defmodule AgentMap do
 
   ## Options
 
-    * `initial: value`, `nil` — value for `key` if it's missing;
+    * `:initial`, `nil` — value for `key` if it's missing;
+
+    * `!: priority`, `:avg`;
 
     * `!: :now` — to execute call in a separate `Task` (passing current value),
       spawned from server:
 
           iex> am = AgentMap.new()
-          iex> sleep(am, :key)
+          iex> sleep(am, :key, 40)
           iex> for _ <- 1..100 do
           ...>   Task.async(fn ->
           ...>     get(am, :key, fn _ -> sleep(40) end, !: :now)
@@ -519,9 +523,7 @@ defmodule AgentMap do
           ...> end
           iex> sleep(10)
           iex> get_prop(am, :processes)
-          101
-
-    * `!: priority`, `:avg`;
+          102
 
     * `:timeout`, `5000`.
 
@@ -537,8 +539,9 @@ defmodule AgentMap do
       iex> get(am, :Bob, & &1 + 1, initial: 0)
       1
   """
-  @spec get(am, key, (value -> get), keyword | timeout) :: get when get: var
-  def get(am, key, fun, opts \\ [!: :avg])
+  @spec get(am, key, (value | default -> get), keyword | timeout) :: get
+        when get: var
+  def get(am, key, fun, opts)
 
   def get(am, key, fun, t) when is_timeout(t) do
     get(am, key, fun, timeout: t)
@@ -552,12 +555,18 @@ defmodule AgentMap do
   @doc """
   Returns the value for a specific `key`.
 
-  Sugar for `get(am, key, & &1, !: :min)`.
-
-  This call is executed with a minimum (`0`) priority. As so, it will start only
-  after all other calls awaiting for execution for this `key` are completed.
+  This call has a minimum (`0`) priority. The value is retrived only after all
+  other calls using this `key` are completed.
 
   See `get/4`, `AgentMap.Multi.get/3`.
+
+  ## Options
+
+    * `:initial`, `nil` — default value to return if `key` is missing;
+
+    * `!: priority`, `:min`;
+
+    * `:timeout`, `5000`.
 
   ## Examples
 
@@ -574,55 +583,65 @@ defmodule AgentMap do
       ...> |> get(:Alice)
       0
   """
-  @spec get(am, key) :: value | nil
-  def get(am, key), do: get(am, key, & &1, !: :min)
+  @spec get(am, key, keyword) :: value | default
+  def get(am, key, opts \\ [!: :min])
 
-  @doc """
-  Gets the value for a specific `key`.
-
-  If `key` is present, return its value. Otherwise, `fun` is evaluated and the
-  result is returned.
-
-  This is useful if the default value is very expensive to calculate or
-  generally difficult to setup and teardown again.
-
-  See `get/4`.
-
-  ## Options
-
-    * `!: :now` — to execute this call in a separate `Task` (passing a current
-      value) spawned from server;
-
-    * `!: priority`, `:avg`;
-
-    * `:timeout`, `5000`.
-
-  ## Examples
-
-      iex> am = AgentMap.new(a: 1)
-      iex> fun = fn ->
-      ...>   # some expensive operation here
-      ...>   13
-      ...> end
-      iex> get_lazy(am, :a, fun)
-      1
-      iex> get_lazy(am, :b, fun)
-      13
-  """
-  @spec get_lazy(am, key, (() -> a), keyword | timeout) :: value | a when a: var
-  def get_lazy(am, key, fun, opts \\ [!: :avg])
-
-  def get_lazy(am, key, fun, t) when is_timeout(t) do
-    get_lazy(am, key, fun, timeout: t)
+  def get(am, key, opts) when is_list(opts) do
+    get(am, key, & &1, !: :min, tiny: true)
   end
 
-  def get_lazy(am, key, fun, opts) do
-    fun = fn value, exist? ->
-      (exist? && value) || fun.()
-    end
-
-    get(am, key, fun, opts)
+  def get(am, key, fun) do
+    get(am, key, fun, [])
   end
+
+  # @doc """
+  # Gets the value for a specific `key`.
+
+  # If `key` is present, return its value. Otherwise, `fun` is evaluated and the
+  # result is returned.
+
+  # This is useful if the default value is very expensive to calculate or
+  # generally difficult to setup and teardown again.
+
+  # See `get/4`.
+
+  # ## Options
+
+  #   * `!: :now` — to execute this call in a separate `Task` (passing a current
+  #     value) spawned from server;
+
+  #   * `!: priority`, `:avg`;
+
+  #   * `:timeout`, `5000`.
+
+  # ## Examples
+
+  #     iex> am = AgentMap.new(a: 1)
+  #     iex> fun = fn ->
+  #     ...>   # some expensive operation here
+  #     ...>   13
+  #     ...> end
+  #     iex> get_lazy(am, :a, fun)
+  #     1
+  #     iex> get_lazy(am, :b, fun)
+  #     13
+  # """
+  # @spec get_lazy(am, key, (() -> a), keyword | timeout) :: value | a
+  #       when a: var
+  # #
+  # def get_lazy(am, key, fun, opts \\ [!: :avg])
+
+  # def get_lazy(am, key, fun, t) when is_timeout(t) do
+  #   get_lazy(am, key, fun, timeout: t)
+  # end
+
+  # def get_lazy(am, key, fun, opts) do
+  #   fun = fn value, exist? ->
+  #     (exist? && value) || fun.()
+  #   end
+
+  #   get(am, key, fun, opts)
+  # end
 
   @doc """
   Fetches the value for a specific `key`.
@@ -743,7 +762,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `initial: value`, `nil` — value for `key` if it's missing;
+    * `:initial`, `nil` — value for `key` if it's missing;
 
     * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
       possible;
@@ -777,17 +796,21 @@ defmodule AgentMap do
       iex> has_key?(am, :b)
       true
   """
-  @spec get_and_update(am, key, (value -> {get} | {get, value} | :pop | :id), keyword | timeout) ::
-          get | value
-        when get: var
-  def get_and_update(am, key, opts \\ [!: :avg])
+  @spec get_and_update(
+          am,
+          key,
+          (value | initial -> {ret} | {ret, value} | :pop | :id),
+          keyword | timeout
+        ) :: ret | value | initial
+        when ret: var
+  def get_and_update(am, key, fun, opts \\ [!: :avg])
 
-  def get_and_update(am, key, t) when is_timeout(t) do
-    get_and_update(am, key, timeout: t)
+  def get_and_update(am, key, fun, t) when is_timeout(t) do
+    get_and_update(am, key, fun, timeout: t)
   end
 
   def get_and_update(am, k, f, opts) do
-    req = %Req{act: :upd, key: k, fun: f, initial: opts[:initial]}
+    req = %Req{act: :upd, key: k, fun: f}
 
     if opts[:!] == :now do
       raise "`:now` priority cannot be used in a `get_and_update/4` call!"
@@ -807,8 +830,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `initial: value`, `nil` — to be passed as an argument to `fun` if `key` is
-      missing;
+    * `:initial`, `nil` — value for `key` if it's missing;
 
     * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
       possible;
@@ -827,63 +849,29 @@ defmodule AgentMap do
       %{Alice: 1024, Bob: 42}
 
       iex> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                                        # 0 | | |
-      ...> |> put(:Alice, 3)                                           # | | 2 |
-      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1) # | 1 | |
-      ...> |> update(:Alice, fn 3 -> 4 end)                            # | | | 3
+      ...> |> sleep(:Alice, 20)                                         # 0 | | |
+      ...> |> put(:Alice, 3)                                            # | | 2 |
+      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # | 1 | |
+      ...> |> update(:Alice, fn 3 -> 4 end)                             # | | | 3
       ...> |> values()
       [4]
   """
-  @spec update(am, key, (value -> value), keyword | timeout) :: am
+  @spec update(am, key, (value | initial -> value), keyword | timeout) :: am
   def update(am, key, fun, opts \\ [!: :avg])
 
-  @spec update(am, key, value, (value -> value)) :: am
-  def update(am, key, initial, fun) when is_function(fun, 1) do
-    update(am, key, initial, fun, 5000)
+  def update(am, key, fun, t) when is_timeout(t) do
+    update(am, key, fun, timeout: t)
   end
 
-  def update(am, key, fun, opts) when is_function(fun, 1) do
+  def update(am, key, fun, opts) do
     get_and_update(am, key, &{am, fun.(&1)}, opts)
-  end
-
-  @doc """
-  This call exists as a clone of `Map.update/4`.
-
-  See `update/4`.
-
-  ## Options
-
-    * `!: priority`, `:avg`;
-
-    * `tiny: true` — to execute `fun` on [server](#module-how-it-works) if it's
-      possible;
-
-    * `:timeout`, `5000`.
-
-  ## Example
-
-      iex> %{a: 42}
-      ...> |> AgentMap.new()
-      ...> |> update(:a, :initial, & &1 + 1)
-      ...> |> update(:b, :initial, & &1 + 1)
-      ...> |> take([:a, :b])
-      %{a: 43, b: :initial}
-  """
-  @spec update(am, key, value, (value -> value), keyword | timeout) :: am
-  def update(am, key, initial, fun, opts) do
-    fun = fn value, exist? ->
-      (exist? && fun.(value)) || initial
-    end
-
-    update(am, key, fun, opts)
   end
 
   @doc """
   Updates known `key` with the given function.
 
   If `key` is present, `fun` is invoked with value as argument and its result is
-  used as the new value of `key`. If `key` is not present, a `KeyError`
-  exception is raised.
+  used as the new value. Otherwise, a `KeyError` exception is raised.
 
   See `update/4`.
 
@@ -1053,7 +1041,7 @@ defmodule AgentMap do
       ...> |> AgentMap.new()
       ...> |> put(:a, 42)
       ...> |> put(:b, 42)
-      ...> |> take([:a, :b])
+      ...> |> take([:a, :b], !: :min)
       %{a: 42, b: 42}
   """
   @spec put(am, key, value, keyword) :: am
@@ -1090,12 +1078,12 @@ defmodule AgentMap do
       ...> |> AgentMap.new()
       ...> |> put_new(:a, 42)
       ...> |> put_new(:b, 42)
-      ...> |> take([:a, :b])
+      ...> |> take([:a, :b], !: :min)
       %{a: 1, b: 42}
   """
   @spec put_new(am, key, value, keyword) :: am
   def put_new(am, key, value, opts \\ [cast: true, !: :max]) do
-    put_new_lazy(am, key, fn _ -> value end, [{:tiny, true} | opts])
+    put_new_lazy(am, key, fn -> value end, [{:tiny, true} | opts])
   end
 
   @doc """
@@ -1133,7 +1121,7 @@ defmodule AgentMap do
       ...> |> AgentMap.new()
       ...> |> put_new_lazy(:a, fun)
       ...> |> put_new_lazy(:b, fun)
-      ...> |> take([:a, :b])
+      ...> |> take([:a, :b], !: :min)
       %{a: 1, b: 42}
   """
   @spec put_new_lazy(am, key, (() -> value), keyword) :: am
@@ -1143,15 +1131,11 @@ defmodule AgentMap do
       |> Keyword.put_new(:!, :max)
       |> Keyword.put_new(:cast, true)
 
-    get_and_update(
-      am,
-      key,
-      fn _, exist? ->
-        (exist? && :id) || {:_ret, fun.()}
-      end,
-      opts
-    )
+    fun = fn _, exist? ->
+      (exist? && :id) || {:_ret, fun.()}
+    end
 
+    get_and_update(am, key, fun, opts)
     am
   end
 
@@ -1188,7 +1172,7 @@ defmodule AgentMap do
       iex> Enum.empty?(am)
       true
   """
-  @spec pop(am, key, any, keyword | timeout) :: value | any
+  @spec pop(am, key, default, keyword | timeout) :: value | default
   def pop(am, key, default \\ nil, opts \\ [!: :avg])
 
   def pop(am, key, default, t) when is_timeout(t) do
@@ -1226,7 +1210,7 @@ defmodule AgentMap do
       iex> %{a: 1, b: 2}
       ...> |> AgentMap.new()
       ...> |> delete(:a)
-      ...> |> take([:a, :b])
+      ...> |> take([:a, :b], !: :min)
       %{b: 2}
   """
   @spec delete(am, key, keyword) :: am
@@ -1260,18 +1244,19 @@ defmodule AgentMap do
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
       ...> |> drop([:b, :d])
-      ...> |> take([:a, :b, :c, :d])
+      ...> |> take([:a, :b, :c, :d], !: :min)
       %{a: 1, c: 3}
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
       ...> |> drop([:b, :d], cast: false)
-      ...> |> take([:a, :b, :c, :d], !: :now)
+      ...> |> take([:a, :b, :c, :d])
       %{a: 1, c: 3}
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [cast: true]) do
     _call(am, %Multi.Req{drop: keys}, opts, cast: true)
+    am
   end
 
   ##
@@ -1296,13 +1281,11 @@ defmodule AgentMap do
   end
 
   @doc """
-  Returns a map with `keys` and values.
+  Returns a map with `keys` and *current* values.
 
   ## Options
 
-    * `!: :now` — to return a snapshot with current keys and values;
-
-    * `!: priority`, `:avg`;
+    * `!: priority`, `:now`;
 
     * `:timeout`, `5000`.
 
@@ -1315,20 +1298,21 @@ defmodule AgentMap do
       ...> |> put(:a, 42, !: :avg)
       ...> |> sleep(:b, 20)
       ...> |> put(:b, 42, !: :avg)
-      ...> |> take([:a, :b, :d], !: :now)
+      ...> |> take([:a, :b, :d])
       %{a: 1, b: 2}
-      iex> take(am, [:a, :b])
+      iex> am
+      ...> |> take([:a, :b], !: :min)
       %{a: 42, b: 42}
   """
   @spec take(am, [key], keyword | timeout) :: map
-  def take(am, keys, opts \\ [!: :avg])
+  def take(am, keys, opts \\ [!: :now])
 
   def take(am, keys, t) when is_timeout(t) do
     take(am, keys, timeout: t)
   end
 
   def take(am, keys, opts) do
-    _call(am, %Multi.Req{get: keys}, opts, !: :avg)
+    _call(am, %Multi.Req{get: keys}, opts, !: :now)
   end
 
   ##
@@ -1341,6 +1325,8 @@ defmodule AgentMap do
   Returns without waiting for the actual update to finish.
 
   ## Options
+
+    * `:initial`, `nil` — value for `key` if it’s missing;
 
     * `!: priority`, `:avg`;
 
@@ -1357,7 +1343,7 @@ defmodule AgentMap do
       ...> |> get(:a)
       4
   """
-  @spec cast(am, key, (value -> value), keyword) :: am
+  @spec cast(am, key, (value | initial -> value), keyword) :: am
   def cast(am, key, fun, opts \\ [!: :avg]) do
     opts =
       opts

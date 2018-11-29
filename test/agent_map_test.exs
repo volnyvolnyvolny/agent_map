@@ -3,18 +3,35 @@ defmodule AgentMapTest do
 
   import :timer
   import AgentMap
+  import AgentMap.Utils
 
   doctest AgentMap, import: true
 
-  test "size" do
+  # test "…" do
+  #   # am =
+  #   #   AgentMap.new(a: 1, b: 2, c: 3)
+
+  #   # assert am
+  #   # |> sleep(:a, 100, !: :max)
+  #   # |> put(:a, 42)
+  #   # |> sleep(:b, 100, !: :max)
+  #   # |> put(:b, 42)
+  #   # |> take([:a, :b, :d]) == %{a: 1, b: 2}
+  # end
+
+  test "Collectable" do
     am = AgentMap.new()
 
-    assert am
-           |> sleep(:a, 20)
-           |> get_prop(:size) == 1
+    proc = fn c ->
+      1..1000
+      |> Enum.map(&{&1, 1 / &1})
+      |> Enum.into(c)
+    end
 
-    sleep(100)
-    assert get_prop(am, :size) == 0
+    map = proc.(%{})
+    am = proc.(am)
+
+    assert to_map(am) == map
   end
 
   test "delete" do
@@ -23,17 +40,5 @@ defmodule AgentMapTest do
            |> delete(:a, !: :min)
            |> put(:a, 2)
            |> get(:a) == nil
-  end
-
-  test "max_processes" do
-    am = AgentMap.new()
-
-    assert info(am, :key)[:max_processes] == 5
-
-    max_processes(am, :key, 3)
-    assert info(am, :key)[:max_processes] == 3
-
-    max_processes(am, :key, nil)
-    assert info(am, :key)[:max_processes] == 5
   end
 end

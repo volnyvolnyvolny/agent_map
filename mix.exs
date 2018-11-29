@@ -8,9 +8,10 @@ defmodule AgentMap.Mixfile do
       description: """
         `AgentMap` can be seen as a stateful `Map` that parallelize operations
         made on different keys. Basically, it can be used as a cache,
-        memoization, computational framework and, sometimes, as an alternative to `GenServer`.
+        memoization, computational framework and, sometimes, as an alternative
+        to `GenServer`.
       """,
-      version: "1.1.0",
+      version: "1.1.0-rc.0",
       elixir: "~> 1.7",
       deps: deps(),
       aliases: aliases(),

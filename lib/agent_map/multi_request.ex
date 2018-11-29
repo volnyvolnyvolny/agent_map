@@ -338,7 +338,7 @@ defmodule AgentMap.Multi.Req do
     acts = zip(req.upd, acts)
 
     known =
-      for {key, pid} <- workers, into: %{} do
+      for {key, pid} <- workers do
         case acts[key] do
           {ret, new_value} ->
             send(pid, {new_value})
@@ -423,7 +423,6 @@ defmodule AgentMap.Multi.Req do
 
   # %Multi.Req{get: …, upd: …, drop: …}
   def handle(%{fun: nil} = req, state) do
-    #
     # GET:
 
     {:ok, pid} =
@@ -434,7 +433,12 @@ defmodule AgentMap.Multi.Req do
         end
       end)
 
-    get = %Req{Map.from_struct(req) | act: :get, tiny: true, from: pid}
+    req =
+      req
+      |> Map.from_struct()
+      |> Map.merge(%{act: :get, tiny: true, from: pid})
+
+    get = struct(Req, req)
 
     {state, known, keys} =
       reduce(uniq(req.get), {state, %{}, []}, fn k, {state, known, keys} ->
@@ -469,7 +473,7 @@ defmodule AgentMap.Multi.Req do
 
     state =
       reduce(req.upd, state, fn {k, new_value}, state ->
-        %{pop | key: k, fun: fn _ -> new_value end}
+        %{pop | key: k, fun: fn _ -> {:_ret, new_value} end}
         |> Req.handle(state)
         |> extract_state()
       end)
@@ -494,7 +498,7 @@ defmodule AgentMap.Multi.Req do
             ret =
               finalize(
                 req,
-                apply(req.fun, arg),
+                apply(req.fun, [arg]),
                 known,
                 {get_upd, only_upd}
               )

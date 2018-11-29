@@ -87,7 +87,7 @@ defmodule AgentMap.Worker do
           handle(r)
 
         :error ->
-          handle(%{r | tiny: true})
+          handle(Map.put(r, :tiny, true))
       end
     end
   end
