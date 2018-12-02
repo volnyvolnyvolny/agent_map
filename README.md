@@ -69,8 +69,8 @@ iex> am
 %{a: 43, b: 23}
 ```
 
-Using `new/1` function creates a special `%AgentMap{}` struct that is compatible
-with `Enumerable` and `Collectable` protocols.
+Function `new/1` creates a special `%AgentMap{}` struct that is compatible with
+`Enumerable` and `Collectable` protocols.
 
 ```elixir
 iex> {:ok, pid} = AgentMap.start_link()
