@@ -21,7 +21,7 @@ iex> Map.get(map, :b)                                 # | AgentMap.get(am, :b)
 2
 ```
 
-will be executed in `20` ms, while this, because of parallelization:
+will be executed in `20` ms. While this, because of parallelization:
 
 ```elixir
 iex> am = AgentMap.new(a: 1, b: 1)
