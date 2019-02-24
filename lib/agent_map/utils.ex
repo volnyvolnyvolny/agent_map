@@ -301,10 +301,10 @@ defmodule AgentMap.Utils do
 
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)
-      ...> |> put(:a, 1)               # 1 | |
-      ...> |> cast(:a, fn 2 -> 3 end)  # | | 3
-      ...> |> inc(:a, !: :max)         # | 2 |
-      ...> |> get(:a)
+      ...> |> put(:a, 1)               # 1
+      ...> |> cast(:a, fn 2 -> 3 end)  # : ↱ 3
+      ...> |> inc(:a, !: :max)         # ↳ 2 :
+      ...> |> get(:a)                  #     ↳ 4
       3
   """
   @spec inc(am, key, keyword) :: am

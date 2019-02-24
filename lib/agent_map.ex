@@ -64,10 +64,10 @@ defmodule AgentMap do
       iex> %{state: :ready}
       ...> |> AgentMap.new()
       ...> |> sleep(:state, 10)
-      ...> |> cast(:state, fn :go!    -> :stop   end)                 # | | 3
-      ...> |> cast(:state, fn :steady -> :go!    end, !: :max)        # | 2 |
-      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1})  # 1 | |
-      ...> |> get(:state)
+      ...> |> cast(:state, fn :go!    -> :stop   end)                 #   ↱ 3
+      ...> |> cast(:state, fn :steady -> :go!    end, !: :max)        # ↱ 2 :
+      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1})  # 1   :
+      ...> |> get(:state)                                             #     ↳ 4
       :stop
 
   Also, `!: :now` option can be given in `get/4`, `get_lazy/4` or `take/3` to
@@ -852,11 +852,11 @@ defmodule AgentMap do
       %{Alice: 1024, Bob: 42}
 
       iex> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                                         # 0 | | |
-      ...> |> put(:Alice, 3)                                            # | | 2 |
-      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # | 1 | |
-      ...> |> update(:Alice, fn 3 -> 4 end)                             # | | | 3
-      ...> |> values()
+      ...> |> sleep(:Alice, 20)                                         # 0
+      ...> |> put(:Alice, 3)                                            # : ↱ 2 ↴
+      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # ↳ 1   :
+      ...> |> update(:Alice, fn 3 -> 4 end)                             #       3 ↴
+      ...> |> values()                                                  #         4
       [4]
   """
   @spec update(am, key, (value | initial -> value), keyword | timeout) :: am
@@ -891,11 +891,11 @@ defmodule AgentMap do
 
       iex> %{Alice: 1}
       ...> |> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                              # 0 | | |
-      ...> |> put(:Alice, 3)                                 # | | 2 |
-      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # | 1 | |
-      ...> |> update!(:Alice, fn 3 -> 4 end)                 # | | | 3
-      ...> |> update!(:Bob, & &1)
+      ...> |> sleep(:Alice, 20)                              # 0
+      ...> |> put(:Alice, 3)                                 # : ↱ 2 ↴
+      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # ↳ 1   :
+      ...> |> update!(:Alice, fn 3 -> 4 end)                 #       3
+      ...> |> update!(:Bob, & &1)                            # 0
       ** (KeyError) key :Bob not found
   """
   @spec update!(am, key, (value -> value), keyword | timeout) :: am | no_return
@@ -1273,9 +1273,9 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: nil}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)         # 0 | |
-      ...> |> put(:a, 42, !: :avg)  # | | 2
-      ...> |> to_map()              # | 1 |
+      ...> |> sleep(:a, 20)         # 0
+      ...> |> put(:a, 42, !: :avg)  # : ↱ 2
+      ...> |> to_map()              # ↳ 1
       %{a: 1, b: 2, c: nil}
   """
   @spec to_map(am) :: %{required(key) => value}
@@ -1340,10 +1340,10 @@ defmodule AgentMap do
 
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
-      ...> |> cast(:a, fn 2 -> 3 end)           # | 2 |
-      ...> |> cast(:a, fn 1 -> 2 end, !: :max)  # 1 | |
-      ...> |> cast(:a, fn 3 -> 4 end, !: :min)  # | | 3
-      ...> |> get(:a)
+      ...> |> cast(:a, fn 2 -> 3 end)           # ↱ 2
+      ...> |> cast(:a, fn 1 -> 2 end, !: :max)  # 1 :
+      ...> |> cast(:a, fn 3 -> 4 end, !: :min)  #   ↳ 3
+      ...> |> get(:a)                           #     ↳ 4
       4
   """
   @spec cast(am, key, (value | initial -> value), keyword) :: am
