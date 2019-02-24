@@ -28,7 +28,7 @@ defmodule AgentMap.Multi do
 
       iex> %{Bob: 999_999}
       ...> |> AgentMap.new()
-      ...> |> get([:Bob, :Chris], & &1, initial: 0)
+      ...> |> get([:Bob, :Chris], & &1, default: 0)
       [999_999, 0]
 
   More complex example:
@@ -117,7 +117,7 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `initial: value`, `nil` — value for missing keys;
+    * `default: value`, `nil` — value for missing keys;
 
     * `!: priority`, `:now`;
 
@@ -128,7 +128,7 @@ defmodule AgentMap.Multi do
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 10)                    # 1 | |
       ...> |> put(:a, 2)                       # | | 3
-      ...> |> get([:a, :b], & &1, initial: 1)  # | 2 |
+      ...> |> get([:a, :b], & &1, default: 1)  # | 2 |
       [1, 1]
 
       but:
@@ -147,6 +147,8 @@ defmodule AgentMap.Multi do
   end
 
   def get(am, keys, fun, opts) do
+    opts = Keyword.put_new(opts, :initial, opts[:default])
+
     get_and_update(
       am,
       [],
@@ -164,7 +166,7 @@ defmodule AgentMap.Multi do
 
   ## Options
 
-    * `initial: value`, `nil` — value to return if key is missing;
+    * `default: value`, `nil` — value to return if key is missing;
 
     * `!: priority`, `:min`;
 
@@ -186,7 +188,11 @@ defmodule AgentMap.Multi do
   end
 
   def get(am, keys, opts) when is_list(opts) do
-    opts = Keyword.put_new(opts, :!, :min)
+    opts =
+      opts
+      |> Keyword.put_new(:!, :min)
+      |> Keyword.put_new(:initial, opts[:default])
+
     known = take(am, keys, opts)
     map(keys, &Map.get(known, &1, opts[:initial]))
   end

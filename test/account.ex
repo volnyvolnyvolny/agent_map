@@ -39,10 +39,15 @@ defmodule Test.Account do
   Deposit. Returns `{:ok, new_amount}`.
   """
   def deposit(account, amount) do
-    AgentMap.get_and_update(__MODULE__, account, fn
-      b ->
-        {{:ok, b + amount}, b + amount}
-    end, initial: 0)
+    AgentMap.get_and_update(
+      __MODULE__,
+      account,
+      fn
+        b ->
+          {{:ok, b + amount}, b + amount}
+      end,
+      initial: 0
+    )
   end
 
   @doc """

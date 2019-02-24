@@ -17,7 +17,7 @@ Complete rewrite.
 
   * [new option] `tiny: true`, for `get/4`, `get_and_update4`, `update/4`,
     `update!/4`, `cast/4` and `put_new_lazy/4`;
-  * [new options] `:initial`, `:timeout` and `:!` for `get/2`.
+  * [new options] `:default`, `:timeout` and `:!` for `get/3`.
 
   * [moved] to `AgentMap.Utils`: `get_prop/3`, `set_prop/3`;
   * [moved] to `AgentMap.Utils`: `inc/3`, `dec/3`;
@@ -43,7 +43,7 @@ Complete rewrite.
     priority `{:avg, +1}`.
 
   * [new option] `:get` for `get_and_update/4`, `update/4` and `cast/4` methods.
-  * [new options] `:initial`, `:timeout` and `:!` for `get/2`.
+  * [new options] `:default`, `:timeout` and `:!` for `get/3`.
 
 #### Docs
 

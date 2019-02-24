@@ -220,7 +220,10 @@ defmodule AgentMap do
   end
 
   def _call(am, req, opts) do
-    opts = Keyword.update(opts, :!, to_num(:avg), &prep!(:!, &1))
+    opts =
+      opts
+      |> Keyword.update(:!, to_num(:avg), &prep!(:!, &1))
+      |> Keyword.put_new(:initial, opts[:default])
 
     req = struct(req, opts)
     pid = (is_map(am) && am.pid) || am
@@ -507,7 +510,7 @@ defmodule AgentMap do
 
   ## Options
 
-    * `:initial`, `nil` — value for `key` if it's missing;
+    * `:default`, `nil` — value for `key` if it's missing;
 
     * `!: priority`, `:avg`;
 
@@ -536,7 +539,7 @@ defmodule AgentMap do
       ...> |> put(:Alice, 42)
       ...> |> get(:Alice, & &1 + 1)
       43
-      iex> get(am, :Bob, & &1 + 1, initial: 0)
+      iex> get(am, :Bob, & &1 + 1, default: 0)
       1
   """
   @spec get(am, key, (value | default -> get), keyword | timeout) :: get
@@ -555,14 +558,14 @@ defmodule AgentMap do
   @doc """
   Returns the value for a specific `key`.
 
-  This call has a minimum (`0`) priority. The value is retrived only after all
-  other calls using this `key` are completed.
+  The value is retrived only after all other calls using this `key` are
+  completed (default priority is `0`).
 
   See `get/4`, `AgentMap.Multi.get/3`.
 
   ## Options
 
-    * `:initial`, `nil` — default value to return if `key` is missing;
+    * `:default`, `nil` — value to return if `key` is missing;
 
     * `!: priority`, `:min`;
 
