@@ -1220,7 +1220,7 @@ defmodule AgentMap do
   def delete(am, key, opts \\ [cast: true, !: :max]) do
     opts =
       opts
-      |> Keyword.put_new(:!, :avg)
+      |> Keyword.put_new(:!, :max)
       |> Keyword.put_new(:cast, true)
       |> Keyword.put(:tiny, true)
 
