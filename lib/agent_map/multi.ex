@@ -254,8 +254,8 @@ defmodule AgentMap.Multi do
     * `initial: value`, `nil` — value for missing keys;
 
     * `!: priority`, `:now` — [priority](AgentMap.html#module-priority) for
-      [collecting](#module-how-it-works) keys; for other keys, `{:avg, +1}` is
-      used;
+      [collecting](#module-how-it-works) keys; for keys that are updated or
+      dropped, `{:avg, +1}` is used;
 
     * `collect: [key]`, `keys` — keys whose values form the `fun` callback
       argument:
