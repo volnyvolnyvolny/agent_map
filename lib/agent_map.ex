@@ -852,17 +852,21 @@ defmodule AgentMap do
       iex> %{Alice: 24}
       ...> |> AgentMap.new()
       ...> |> update(:Alice, & &1 + 1_000)
+      ...> |> get(:Alice)
+      1024
+
+      iex> AgentMap.new()
       ...> |> update(:Bob, fn nil -> 42 end)
-      ...> |> take([:Alice, :Bob])
-      %{Alice: 1024, Bob: 42}
+      ...> |> get(:Bob)
+      42
 
       iex> AgentMap.new()
       ...> |> sleep(:Alice, 20)                                         # 0
       ...> |> put(:Alice, 3)                                            # : ↱ 2 ↴
       ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # ↳ 1   :
       ...> |> update(:Alice, fn 3 -> 4 end)                             #       3 ↴
-      ...> |> values()                                                  #         4
-      [4]
+      ...> |> get(:Alice)                                                  #         4
+      4
   """
   @spec update(am, key, (value | initial -> value), keyword | timeout) :: am
   def update(am, key, fun, opts \\ [!: :avg]) do
