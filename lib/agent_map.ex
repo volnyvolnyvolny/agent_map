@@ -972,12 +972,16 @@ defmodule AgentMap do
       true
       iex> has_key?(am, :b)
       false
-
-      iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 20)
+      iex> am
       ...> |> delete(:a)
       ...> |> has_key?(:a)
-      true
+      false
+
+      iex> AgentMap.new(a: 1)
+      ...> |> sleep(:a, 20)           # creating worker for key :a
+      ...> |> delete(:a, cast: false) # wait for the removal to happen
+      ...> |> has_key?(:a)
+      false
 
       iex> AgentMap.new(a: 1)
       ...> |> sleep(:a, 20)
@@ -997,6 +1001,7 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: nil, c: 3}
       ...> |> AgentMap.new()
+      ...> |> sleep(:d, 10)
       ...> |> keys()
       [:a, :b, :c]
   """
