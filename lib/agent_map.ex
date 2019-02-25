@@ -865,13 +865,7 @@ defmodule AgentMap do
       [4]
   """
   @spec update(am, key, (value | initial -> value), keyword | timeout) :: am
-  def update(am, key, fun, opts \\ [!: :avg])
-
-  def update(am, key, fun, t) when is_timeout(t) do
-    update(am, key, fun, timeout: t)
-  end
-
-  def update(am, key, fun, opts) do
+  def update(am, key, fun, opts \\ [!: :avg]) do
     get_and_update(am, key, &{am, fun.(&1)}, opts)
   end
 
