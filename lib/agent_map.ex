@@ -865,7 +865,7 @@ defmodule AgentMap do
       ...> |> put(:Alice, 3)                                            # : ↱ 2 ↴
       ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # ↳ 1   :
       ...> |> update(:Alice, fn 3 -> 4 end)                             #       3 ↴
-      ...> |> get(:Alice)                                                  #         4
+      ...> |> get(:Alice)                                               #         4
       4
   """
   @spec update(am, key, (value | initial -> value), keyword | timeout) :: am
