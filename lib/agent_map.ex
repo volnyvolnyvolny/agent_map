@@ -590,7 +590,12 @@ defmodule AgentMap do
   def get(am, key, opts \\ [!: :min])
 
   def get(am, key, opts) when is_list(opts) do
-    get(am, key, & &1, !: :min, tiny: true)
+    opts =
+      opts
+      |> Keyword.put_new(:!, :min)
+      |> Keyword.put(:tiny, true)
+
+    get(am, key, & &1, opts)
   end
 
   def get(am, key, fun) do
