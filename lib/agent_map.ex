@@ -1221,7 +1221,7 @@ defmodule AgentMap do
       iex> %{a: 1, b: 2}
       ...> |> AgentMap.new()
       ...> |> delete(:a)
-      ...> |> take([:a, :b], !: :min)
+      ...> |> to_map()
       %{b: 2}
   """
   @spec delete(am, key, keyword) :: am
