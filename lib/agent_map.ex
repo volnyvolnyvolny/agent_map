@@ -215,7 +215,7 @@ defmodule AgentMap do
   #
 
   @doc false
-  def _call(%__MODULE__{} = am, req, opts) do
+  def _call(%_{pid: _} = am, req, opts) do
     _call(am.pid, req, opts)
   end
 
@@ -652,14 +652,14 @@ defmodule AgentMap do
   # end
 
   @doc """
-  Fetches the value for a specific `key`.
+  Fetches the current value for a specific `key`.
 
   Returns `{:ok, value}` or `:error` if `key` is not present.
 
   ## Options
 
     * `!: priority`, `:now` — to return only when calls with higher
-      [priorities](#module-priority) are finished to execute for this `key`;
+      [priorities](#module-priority) are finished for this `key`;
 
     * `:timeout`, `5000`.
 
@@ -671,7 +671,7 @@ defmodule AgentMap do
       iex> fetch(am, :b)
       :error
       iex> am
-      ...> |> sleep(:b, 20)
+      ...> |> sleep(:b, 20) # creating worker for the key :a
       ...> |> put(:b, 42)
       ...> |> fetch(:b)
       :error
@@ -698,7 +698,7 @@ defmodule AgentMap do
 
   @doc """
   Fetches the value for a specific `key`, erroring out if instance doesn't
-  contain `key`.
+  contain `key` at the moment.
 
   Returns current value or raises a `KeyError`.
 
@@ -707,7 +707,7 @@ defmodule AgentMap do
   ## Options
 
     * `!: priority`, `:now` — to return only when calls with higher
-      [priorities](#module-priority) are finished to execute for this `key`;
+      [priorities](#module-priority) are finished for this `key`;
 
     * `:timeout`, `5000`.
 
@@ -719,26 +719,23 @@ defmodule AgentMap do
       iex> fetch!(am, :b)
       ** (KeyError) key :b not found
 
-      iex> AgentMap.new()
-      ...> |> sleep(:a, 10)
+      iex> am = AgentMap.new(a: 1)
+      iex> am
+      ...> |> sleep(:a, 20) # creating worker for the key :a
       ...> |> put(:a, 42)
-      ...> |> fetch!(:a, !: :min)
+      ...> |> fetch!(:a)
+      1
+      iex> fetch!(am, :a, !: :min)
       42
   """
   @spec fetch!(am, key, keyword | timeout) :: value | no_return
-  def fetch!(am, key, opts \\ [!: :now])
-
-  def fetch!(am, key, t) when is_timeout(t) do
-    fetch(am, key, timeout: t)
-  end
-
-  def fetch!(am, k, opts) do
-    case fetch(am, k, opts) do
+  def fetch!(am, key, opts \\ [!: :now]) do
+    case fetch(am, key, opts) do
       {:ok, value} ->
         value
 
       :error ->
-        raise KeyError, key: k
+        raise KeyError, key: key
     end
   end
 
@@ -978,7 +975,7 @@ defmodule AgentMap do
       false
 
       iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 20)           # creating worker for key :a
+      ...> |> sleep(:a, 20)           # creating worker for the key :a
       ...> |> delete(:a, cast: false) # wait for the removal to happen
       ...> |> has_key?(:a)
       false
@@ -1204,13 +1201,13 @@ defmodule AgentMap do
   @doc """
   Deletes entry for `key`.
 
-  Returns without waiting for the actual delete.
+  Returns without waiting for the actual delete to occur.
 
   Default [priority](#module-priority) for this call is `:max`.
 
   ## Options
 
-    * `cast: false` — to return only after the actual delete;
+    * `cast: false` — to return only after the actual removal;
 
     * `!: priority`, `:max`;
 
@@ -1240,13 +1237,13 @@ defmodule AgentMap do
   @doc """
   Drops given `keys`.
 
-  Returns without waiting for the actual drop.
+  Returns without waiting for the actual drop to occur.
 
   This call has a fixed priority `{:avg, +1}`.
 
   ## Options
 
-    * `cast: false` — to return after the actual drop;
+    * `cast: false` — to return only after the actual removal;
 
     * `:timeout`, `5000`.
 
@@ -1255,13 +1252,14 @@ defmodule AgentMap do
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
       ...> |> drop([:b, :d])
-      ...> |> take([:a, :b, :c, :d], !: :min)
+      ...> |> to_map()
       %{a: 1, c: 3}
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> drop([:b, :d], cast: false)
-      ...> |> take([:a, :b, :c, :d])
+      ...> |> sleep(:b, 10)               # creating worker for the key :b
+      ...> |> drop([:b, :d], cast: false) # wait for the removal to happen
+      ...> |> to_map()
       %{a: 1, c: 3}
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
