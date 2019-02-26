@@ -25,7 +25,7 @@ defmodule AgentMap do
       iex> am
       ...> |> AgentMap.update(:a, & &1 + 1)
       ...> |> AgentMap.update(:b, & &1 - 1)
-      ...> |> AgentMap.take([:a, :b])
+      ...> |> AgentMap.to_map()
       %{a: 43, b: 23}
       #
       iex> Enum.count(am)
@@ -47,7 +47,7 @@ defmodule AgentMap do
       true
       #
       iex> Enum.into([a: 1, b: 2], am)
-      iex> AgentMap.take(am, [:a, :b])
+      iex> AgentMap.to_map(am)
       %{a: 1, b: 2}
 
   See [README](readme.html#examples) for memoization and accounting examples.
@@ -61,13 +61,12 @@ defmodule AgentMap do
   :low` = `0`, `:avg | :mid` = `255`, `:max | :high` = `65535`. Relative value
   is also acceptable, for ex.: `{:max, -1}` = `65534`.
 
-      iex> %{state: :ready}
-      ...> |> AgentMap.new()
-      ...> |> sleep(:state, 10)
-      ...> |> cast(:state, fn :go!    -> :stop   end)                 #   ↱ 3
-      ...> |> cast(:state, fn :steady -> :go!    end, !: :max)        # ↱ 2 :
-      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1})  # 1   :
-      ...> |> get(:state)                                             #     ↳ 4
+      iex> AgentMap.new(state: :ready)
+      ...> |> sleep(:state, 10)                                       # 0 — creates worker
+      ...> |> cast(:state, fn :go!    -> :stop   end)                 # :   ↱ 3
+      ...> |> cast(:state, fn :steady -> :go!    end, !: :max)        # : ↱ 2 :
+      ...> |> cast(:state, fn :ready  -> :steady end, !: {:max, +1})  # ↳ 1   :
+      ...> |> get(:state)                                             #       ↳ 4
       :stop
 
   Also, `!: :now` option can be given in `get/4`, `get_lazy/4` or `take/3` to
@@ -78,13 +77,14 @@ defmodule AgentMap do
       iex> am =
       ...>   AgentMap.new(key: 1)
       iex> am
-      ...> |> sleep(:key, 10)
-      ...> |> put(:key, 42)
-      ...> |> fetch(:key)
-      {:ok, 1}
-      iex> get(am, :key, & &1 * 99, !: :now)
-      99
-      iex> get(am, :key, & &1 * 99)
+      ...> |> sleep(:key, 10)                 # 0 — creates sleepy worker
+      ...> |> put(:key, 42)                   # ↳  …1 ↴
+      ...>                                    #       :
+      ...> |> fetch(:key)                     # …0    :
+      {:ok, 1}                                #  :    :
+      iex> get(am, :key, & &1 * 99, !: :now)  #  ↳ 1  :
+      99                                      #       :
+      iex> get(am, :key, & &1 * 99)           #       ↳ 2
       4158
 
   ## How it works
@@ -129,15 +129,15 @@ defmodule AgentMap do
   Be aware, that when invoking callbacks, server could not handle any other
   requests. For example, this:
 
-      iex> am = AgentMap.new(key_a: 42)       # {:ok, pid} = Agent.start(fn -> %{a: 42} end)
+      iex> am = AgentMap.new(a: 42)           # {:ok, pid} = Agent.start(fn -> %{a: 42} end)
       iex> am                                 # pid
-      ...> |> cast(:key_b, fn _ ->            # |> Agent.cast(fn _ ->
+      ...> |> cast(:b, fn _ ->                # |> Agent.cast(fn _ ->
       ...>      sleep(50)                     #      sleep(50)
       ...>      24                            #      %{a: 42, b: 24}
       ...>    end, tiny: true)                #    end)
-      ...> |> get(:key_a)                     #
+      ...> |> get(:a)                         #
       42                                      #
-      iex> get(am, :key_b)                    # Agent.get(pid, & &1)
+      iex> get(am, :b)                        # Agent.get(pid, & &1)
       24                                      # %{a: 42, b: 24}
 
   will be handled in around of `50` ms. In this case `AgentMap` behaves exactly
@@ -369,7 +369,7 @@ defmodule AgentMap do
 
       iex> [:a, :b]
       ...> |> AgentMap.new(&{&1, to_string(&1)})
-      ...> |> take([:a, :b])
+      ...> |> to_map()
       %{a: "a", b: "b"}
   """
   @spec new(Enumerable.t(), (term -> {key, value})) :: am
@@ -558,8 +558,8 @@ defmodule AgentMap do
   @doc """
   Returns the value for a specific `key`.
 
-  The value is retrived only after all other calls using this `key` are
-  completed (default priority is `0`).
+  The value is retrived only after all calls using this `key` are completed
+  (default priority is `0`).
 
   See `get/4`, `AgentMap.Multi.get/3`.
 
@@ -579,12 +579,17 @@ defmodule AgentMap do
       iex> get(am, :Bob)
       nil
 
-      iex> %{Alice: 42}
-      ...> |> AgentMap.new()
-      ...> |> sleep(:Alice, 10)
-      ...> |> put(:Alice, 0)
-      ...> |> get(:Alice)
+      iex> AgentMap.new(Alice: 42)
+      ...> |> sleep(:Alice, 10)           # creating worker for this key
+      ...> |> put(:Alice, 0)              # !: :max
+      ...> |> get(:Alice)                 # !: :min
       0
+
+      iex> AgentMap.new(Alice: 42)
+      ...> |> sleep(:Alice, 10)           # 0
+      ...> |> put(:Alice, 0)              # : ↱ 2
+      ...> |> get(:Alice, !: {:max, +1})  # ↳ 1
+      42
   """
   @spec get(am, key, keyword) :: value | default
   def get(am, key, opts \\ [!: :min])
@@ -671,11 +676,11 @@ defmodule AgentMap do
       iex> fetch(am, :b)
       :error
       iex> am
-      ...> |> sleep(:b, 20) # creating worker for the key :a
-      ...> |> put(:b, 42)
-      ...> |> fetch(:b)
-      :error
-      iex> fetch(am, :b, !: :min)
+      ...> |> sleep(:b, 20)       # 0 — creating worker for the key :b
+      ...> |> put(:b, 42)         # ↳ 1 ↴
+      ...> |> fetch(:b)           # …0  :
+      :error                      #     :
+      iex> fetch(am, :b, !: :min) #     ↳ 2
       {:ok, 42}
   """
   @spec fetch(am, key, keyword | timeout) :: {:ok, value} | :error
@@ -721,11 +726,11 @@ defmodule AgentMap do
 
       iex> am = AgentMap.new(a: 1)
       iex> am
-      ...> |> sleep(:a, 20) # creating worker for the key :a
-      ...> |> put(:a, 42)
-      ...> |> fetch!(:a)
-      1
-      iex> fetch!(am, :a, !: :min)
+      ...> |> sleep(:a, 20)         # 0 — creating worker for the key :a
+      ...> |> put(:a, 42)           # ↳ 1 ↴
+      ...> |> fetch!(:a)            # …0  :
+      1                             #     :
+      iex> fetch!(am, :a, !: :min)  #     ↳ 2
       42
   """
   @spec fetch!(am, key, keyword | timeout) :: value | no_return
@@ -846,8 +851,7 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{Alice: 24}
-      ...> |> AgentMap.new()
+      iex> AgentMap.new(Alice: 24)
       ...> |> update(:Alice, & &1 + 1_000)
       ...> |> get(:Alice)
       1024
@@ -889,13 +893,12 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{Alice: 1}
-      ...> |> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                              # 0
-      ...> |> put(:Alice, 3)                                 # : ↱ 2 ↴
-      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # ↳ 1   :
-      ...> |> update!(:Alice, fn 3 -> 4 end)                 #       3
-      ...> |> update!(:Bob, & &1)                            # 0
+      iex> AgentMap.new(Alice: 1)
+      ...> |> sleep(:Alice, 20)                              # 0a
+      ...> |> put(:Alice, 3)                                 # : ↱ 2a ↴
+      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # ↳ 1a   :
+      ...> |> update!(:Alice, fn 3 -> 4 end)                 #        3a
+      ...> |> update!(:Bob, & &1)                            # …0b
       ** (KeyError) key :Bob not found
   """
   @spec update!(am, key, (value -> value), keyword | timeout) :: am | no_return
@@ -975,15 +978,15 @@ defmodule AgentMap do
       false
 
       iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 20)           # creating worker for the key :a
-      ...> |> delete(:a, cast: false) # wait for the removal to happen
+      ...> |> sleep(:a, 20)            # creating worker for the key :a
+      ...> |> delete(:a, cast: false)  # wait for the removal to happen
       ...> |> has_key?(:a)
       false
 
       iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 20)
-      ...> |> delete(:a)
-      ...> |> has_key?(:a, !: :min)
+      ...> |> sleep(:a, 20)            # 0
+      ...> |> delete(:a)               # ↳ 1
+      ...> |> has_key?(:a, !: :min)    #   ↳ 2
       false
   """
   @spec has_key?(am, key, keyword | timeout) :: boolean
@@ -1257,8 +1260,8 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> sleep(:b, 10)               # creating worker for the key :b
-      ...> |> drop([:b, :d], cast: false) # wait for the removal to happen
+      ...> |> sleep(:b, 10)                # creating worker for the key :b
+      ...> |> drop([:b, :d], cast: false)  # wait for the removal to happen
       ...> |> to_map()
       %{a: 1, c: 3}
   """
@@ -1345,11 +1348,11 @@ defmodule AgentMap do
   ## Examples
 
       iex> AgentMap.new(a: 1)
-      ...> |> sleep(:a, 20)
-      ...> |> cast(:a, fn 2 -> 3 end)           # ↱ 2
-      ...> |> cast(:a, fn 1 -> 2 end, !: :max)  # 1 :
-      ...> |> cast(:a, fn 3 -> 4 end, !: :min)  #   ↳ 3
-      ...> |> get(:a)                           #     ↳ 4
+      ...> |> sleep(:a, 20)                     # 0 — creates worker
+      ...> |> cast(:a, fn 2 -> 3 end)           # : ↱ 2
+      ...> |> cast(:a, fn 1 -> 2 end, !: :max)  # ↳ 1 :
+      ...> |> cast(:a, fn 3 -> 4 end, !: :min)  #     ↳ 3
+      ...> |> get(:a)                           #       ↳ 4
       4
   """
   @spec cast(am, key, (value | initial -> value), keyword) :: am
