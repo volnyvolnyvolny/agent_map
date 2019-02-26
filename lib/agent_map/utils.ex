@@ -131,7 +131,7 @@ defmodule AgentMap.Utils do
   ##
 
   @doc """
-  Returns property with given `key` or `default`.
+  Returns property with given `key`.
 
   See `set_prop/3`, `upd_prop/3`.
 
@@ -192,8 +192,15 @@ defmodule AgentMap.Utils do
       iex> get_prop(am, :real_size)
       1
   """
-  @spec get_prop(am, term, term) :: term
-  def get_prop(am, key, default \\ nil) do
+  @spec get_prop(am, term) :: term
+  def get_prop(am, key) do
+    req = %Req{act: :get_prop, key: key}
+    AgentMap._call(am, req, timeout: 5000)
+  end
+
+  @doc "Returns property with given `key` or `default`."
+  @deprecated "Use get_prop/3 instead"
+  def get_prop(am, key, default) do
     req = %Req{act: :get_prop, key: key, initial: default}
     AgentMap._call(am, req, timeout: 5000)
   end

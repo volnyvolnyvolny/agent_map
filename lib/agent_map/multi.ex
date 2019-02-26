@@ -131,13 +131,15 @@ defmodule AgentMap.Multi do
       ...> |> get([:a, :b], & &1, default: 1)  # ↳ 2
       [1, 1]
 
-      but:
+  But:
 
       iex> AgentMap.new(a: 1, b: 1)
       ...> |> sleep(:a, 10)                    # 0a
       ...> |> put(:a, 2)                       #  ↳ 1a
       ...> |> get([:a, :b], & &1, !: :avg)     #     ↳ 2ab
       [2, 1]
+
+  this is because of `put/3` by default has a `:max` priority.
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
   def get(am, keys, fun, opts)
@@ -373,10 +375,11 @@ defmodule AgentMap.Multi do
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)                                                         # 0a
       ...> |> put(:a, 3)                                                            # ↳ 1a
-      ...> |> put(:b, 0)                                                            # : ↱ 2b
-      ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1)  # ↳ 1 :
-      ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                             #     ↳ 3
-      ...> |> get([:a, :b])                                                         #       ↳ 4
+      ...>                                                                          #
+      ...> |> put(:b, 0)                                                            # 0b
+      ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1)  #  ↳ 1 :
+      ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                             #      ↳ 3
+      ...> |> get([:a, :b])                                                         #         ↳ 4
       [4, 4]
   """
   @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword | timeout) :: am

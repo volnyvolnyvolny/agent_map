@@ -3,6 +3,7 @@
 ## v1.1-rc.1
 
 #### [AgentMap.Utils] `upd_prop/4` is now hard deprecated.
+#### [AgentMap.Utils] `get_prop/4` is now hard deprecated.
 
 ## v1.1-rc.0
 
