@@ -372,15 +372,14 @@ defmodule AgentMap.Multi do
       ...> |> get([:a, :b])
       [nil, 2]
 
-      iex> AgentMap.new()
-      ...> |> sleep(:a, 20)                                                         # 0a
-      ...> |> put(:a, 3)                                                            # ↳ 1a
-      ...>                                                                          #
-      ...> |> put(:b, 0)                                                            # 0b
-      ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1)  #  ↳ 1 :
-      ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                             #      ↳ 3
-      ...> |> get([:a, :b])                                                         #         ↳ 4
-      [4, 4]
+      iex> AgentMap.new(a: 6)
+      ...> |> sleep(:a, 20)                                          # 0a
+      ...> |> put(:a, 1)                                             #  ↳ 1a
+      ...>                                                           #     :
+      ...> |> update([:a, :b], fn [1, 1] -> [2, 2] end, initial: 1)  #     ↳ 2ab
+      ...> |> update([:a, :b], fn [2, 2] -> [3, 3] end)              #         ↳ 3ab
+      ...> |> get([:a, :b])                                          #             ↳ 4ab
+      [3, 3]
   """
   @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword | timeout) :: am
   def update(am, keys, fun, opts \\ []) do
