@@ -999,9 +999,8 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{a: 1, b: nil, c: 3}
-      ...> |> AgentMap.new()
-      ...> |> sleep(:d, 10)
+      iex> AgentMap.new(a: 1, b: nil, c: 3)
+      ...> |> sleep(:d, 10)            # creating worker for the key :d
       ...> |> keys()
       [:a, :b, :c]
   """
@@ -1015,8 +1014,7 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{a: 1, b: 2, c: 3}
-      ...> |> AgentMap.new()
+      iex> AgentMap.new(a: 1, b: 2, c: 3)
       ...> |> sleep(:a, 20)
       ...> |> put(:a, 0, !: :avg)
       ...> |> values()
@@ -1048,12 +1046,21 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> %{a: 1}
-      ...> |> AgentMap.new()
+      iex> AgentMap.new()
       ...> |> put(:a, 42)
       ...> |> put(:b, 42)
-      ...> |> take([:a, :b], !: :min)
+      ...> |> to_map()
       %{a: 42, b: 42}
+
+  But:
+
+      iex> AgentMap.new()
+      ...> |> sleep(:a, 20)  # 0 — creates worker
+      ...> |> put(:a, 42)    # ↳  …1
+      ...>                   #
+      ...> |> put(:b, 42)    # …0
+      ...> |> to_map()       #  ↳ 1
+      %{b: 42}
   """
   @spec put(am, key, value, keyword) :: am
   def put(am, key, value, opts \\ [cast: true, !: :max]) do
@@ -1089,8 +1096,19 @@ defmodule AgentMap do
       ...> |> AgentMap.new()
       ...> |> put_new(:a, 42)
       ...> |> put_new(:b, 42)
-      ...> |> take([:a, :b], !: :min)
+      ...> |> to_map()
       %{a: 1, b: 42}
+
+  But:
+
+      iex> %{a: 1}
+      ...> |> AgentMap.new()
+      ...> |> sleep(:b, 20)    # 0 — creates worker
+      ...> |> put_new(:b, 42)  # ↳  …1
+      ...>                     #
+      ...> |> put_new(:a, 42)  # …0
+      ...> |> to_map()         #  ↳ 1
+      %{a: 1}
   """
   @spec put_new(am, key, value, keyword) :: am
   def put_new(am, key, value, opts \\ [cast: true, !: :max]) do
@@ -1130,9 +1148,9 @@ defmodule AgentMap do
       ...>
       iex> %{a: 1}
       ...> |> AgentMap.new()
-      ...> |> put_new_lazy(:a, fun)
-      ...> |> put_new_lazy(:b, fun)
-      ...> |> take([:a, :b], !: :min)
+      ...> |> put_new_lazy(:a, fun)               # 0
+      ...> |> put_new_lazy(:b, fun, cast: false)  # …0
+      ...> |> to_map()                            #    1
       %{a: 1, b: 42}
   """
   @spec put_new_lazy(am, key, (() -> value), keyword) :: am

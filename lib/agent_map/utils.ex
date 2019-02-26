@@ -138,8 +138,11 @@ defmodule AgentMap.Utils do
   ## Special properties
 
   * `:size` — current size (fast, but in some rare cases inaccurate upwards);
+
   * `:real_size` — current size (slower, but always accurate);
+
   * `:max_processes` — a limit for the number of processes allowed to spawn;
+
   * `:processes` — total number of processes being used (`+1` for server
     itself).
 
@@ -232,6 +235,8 @@ defmodule AgentMap.Utils do
   @doc """
   Updates property stored in a process dictionary of instance.
 
+  Underneath `GenServer.cast/2` is used.
+
   See `get_prop/3`, `set_prop/3`.
 
   ## Examples
@@ -257,7 +262,7 @@ defmodule AgentMap.Utils do
 
   def upd_prop(am, key, fun, default) do
     req = %Req{act: :upd_prop, key: key, fun: fun, initial: default}
-    AgentMap._call(am, req, [])
+    AgentMap._call(am, req, cast: true)
     am
   end
 
