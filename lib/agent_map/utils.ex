@@ -262,9 +262,7 @@ defmodule AgentMap.Utils do
   end
 
   @doc "Updates property stored in a process dictionary of instance."
-  @since "1.1.0"
   @deprecated "Use upd_prop/3 instead"
-  @spec upd_prop(am, term, fun, term) :: am
   def upd_prop(am, key, fun, default)
 
   def upd_prop(_am, key, _fun, _default)

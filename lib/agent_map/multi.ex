@@ -134,9 +134,9 @@ defmodule AgentMap.Multi do
       but:
 
       iex> AgentMap.new(a: 1, b: 1)
-      ...> |> sleep(:a, 10)                    # 1
-      ...> |> put(:a, 2)                       # ↳ 2
-      ...> |> get([:a, :b], & &1, !: :avg)     #   ↳ 3
+      ...> |> sleep(:a, 10)                    # 0a
+      ...> |> put(:a, 2)                       #  ↳ 1a
+      ...> |> get([:a, :b], & &1, !: :avg)     #     ↳ 2ab
       [2, 1]
   """
   @spec get(am, [key], ([value] -> get), keyword | timeout) :: get when get: var
@@ -371,9 +371,9 @@ defmodule AgentMap.Multi do
       [nil, 2]
 
       iex> AgentMap.new()
-      ...> |> sleep(:a, 20)                                                         # 0
-      ...> |> put(:a, 3)                                                            # : ↱ 2
-      ...> |> put(:b, 0)                                                            # : ↱ 2
+      ...> |> sleep(:a, 20)                                                         # 0a
+      ...> |> put(:a, 3)                                                            # ↳ 1a
+      ...> |> put(:b, 0)                                                            # : ↱ 2b
       ...> |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1)  # ↳ 1 :
       ...> |> update([:a, :b], fn [3, 2] -> [4, 4] end)                             #     ↳ 3
       ...> |> get([:a, :b])                                                         #       ↳ 4

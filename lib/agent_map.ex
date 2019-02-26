@@ -77,7 +77,7 @@ defmodule AgentMap do
       iex> am =
       ...>   AgentMap.new(key: 1)
       iex> am
-      ...> |> sleep(:key, 10)                 # 0 — creates sleepy worker
+      ...> |> sleep(:key, 100)                # 0 — creates sleepy worker
       ...> |> put(:key, 42)                   # ↳  …1 ↴
       ...>                                    #       :
       ...> |> fetch(:key)                     # …0    :
@@ -729,6 +729,7 @@ defmodule AgentMap do
       iex> am
       ...> |> sleep(:a, 20)         # 0 — creating worker for the key :a
       ...> |> put(:a, 42)           # ↳ 1 ↴
+      ...>                          #     :
       ...> |> fetch!(:a)            # …0  :
       1                             #  :  :
       iex> fetch!(am, :a, !: :min)  #  ↳  ↳ 2
@@ -858,16 +859,16 @@ defmodule AgentMap do
       1024
 
       iex> AgentMap.new()
-      ...> |> update(:Bob, fn nil -> 42 end)
-      ...> |> get(:Bob)
+      ...> |> update(:a, fn nil -> 42 end)
+      ...> |> get(:a)
       42
 
       iex> AgentMap.new()
-      ...> |> sleep(:Alice, 20)                                         # 0
-      ...> |> put(:Alice, 3)                                            # : ↱ 2 ↴
-      ...> |> update(:Alice, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # ↳ 1   :
-      ...> |> update(:Alice, fn 3 -> 4 end)                             #       3 ↴
-      ...> |> get(:Alice)                                               #         4
+      ...> |> sleep(:a, 20)                                         # 0
+      ...> |> put(:a, 3)                                            # : ↱ 2 ↴
+      ...> |> update(:a, fn 1 -> 2 end, !: {:max, +1}, initial: 1)  # ↳ 1   :
+      ...> |> update(:a, fn 3 -> 4 end)                             #       3 ↴
+      ...> |> get(:a)                                               #         4
       4
   """
   @spec update(am, key, (value | initial -> value), keyword | timeout) :: am
@@ -1000,8 +1001,9 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> AgentMap.new(a: 1, b: nil, c: 3)
-      ...> |> sleep(:d, 10)            # creating worker for the key :d
+      iex> %{a: 1, b: nil, c: 3}
+      ...> |> AgentMap.new()
+      ...> |> sleep(:d, 10)  # creates worker for the key
       ...> |> keys()
       [:a, :b, :c]
   """
@@ -1056,11 +1058,11 @@ defmodule AgentMap do
   But:
 
       iex> AgentMap.new()
-      ...> |> sleep(:a, 20)  # 0 — creates worker
-      ...> |> put(:a, 42)    # ↳  …1
+      ...> |> sleep(:a, 20)  # 0a — creates worker
+      ...> |> put(:a, 42)    #  ↳  …1a
       ...>                   #
-      ...> |> put(:b, 42)    # …0
-      ...> |> to_map()       #  ↳ 1
+      ...> |> put(:b, 42)    # …0b
+      ...> |> to_map()       #   ↳ 1
       %{b: 42}
   """
   @spec put(am, key, value, keyword) :: am
@@ -1247,8 +1249,8 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)   # 0  ↴
-      ...> |> delete(:a)      #    1
+      ...> |> sleep(:a, 100)  # 0a ↴
+      ...> |> delete(:a)      #    1a
       ...> |> to_map()        # …0
       %{a: 1, b: 2}
   """
@@ -1310,9 +1312,10 @@ defmodule AgentMap do
 
       iex> %{a: 1, b: 2, c: nil}
       ...> |> AgentMap.new()
-      ...> |> sleep(:a, 20)         # 0
-      ...> |> put(:a, 42, !: :avg)  # : ↱ 2
-      ...> |> to_map()              # ↳ 1
+      ...> |> sleep(:a, 20)         # 0a
+      ...> |> put(:a, 42, !: :avg)  #  ↳ 1a
+      ...>                          #
+      ...> |> to_map()              # …0
       %{a: 1, b: 2, c: nil}
   """
   @spec to_map(am) :: %{required(key) => value}
@@ -1339,6 +1342,7 @@ defmodule AgentMap do
       ...>                             #        :
       ...> |> sleep(:b, 20)            # …0b ↴  :
       ...> |> put(:b, 42, !: :avg)     #     1b ↴
+      ...>                             #        :
       ...> |> take([:a, :b, :d])       # …0     :
       %{a: 1, b: 2}                    #  :     :
       iex> am                          #  :     :

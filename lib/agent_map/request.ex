@@ -136,9 +136,11 @@ defmodule AgentMap.Req do
     handle(%{req | key: :max_p}, state)
   end
 
-  def handle(%{act: :upd_prop, key: prop, fun: f} = req, state) do
-    arg = Process.get(prop, Map.get(req, :initial))
-    Process.put(prop, apply(f, [arg]))
+  def handle(%{act: :upd_prop, key: prop, fun: f}, state) do
+    arg = Process.get(prop)
+    ret = apply(f, [arg])
+
+    Process.put(prop, ret)
 
     {:reply, :_done, state}
   end
