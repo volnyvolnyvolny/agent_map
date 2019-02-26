@@ -1,10 +1,10 @@
-# Changelog for AgentMap v1.0
+# Changelog for AgentMap v1
 
-## v1.0.0
+## v1.1-rc.1
 
-Complete rewrite.
+#### [AgentMap.Utils] `upd_prop/4` is now hard deprecated.
 
-## v1.1
+## v1.1-rc.0
 
 ### Enhancements
 
@@ -68,3 +68,7 @@ Complete rewrite.
 ### Bug fixes
 
   * Workers never received `:continue`.
+
+## v1.0.0
+
+Complete rewrite.

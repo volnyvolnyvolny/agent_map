@@ -1241,6 +1241,15 @@ defmodule AgentMap do
       ...> |> delete(:a)
       ...> |> to_map()
       %{b: 2}
+
+  But:
+
+      iex> %{a: 1, b: 2}
+      ...> |> AgentMap.new()
+      ...> |> sleep(:a, 20)   # 0  ↴
+      ...> |> delete(:a)      #    1
+      ...> |> to_map()        # …0
+      %{a: 1, b: 2}
   """
   @spec delete(am, key, keyword) :: am
   def delete(am, key, opts \\ [cast: true, !: :max]) do
@@ -1324,14 +1333,15 @@ defmodule AgentMap do
       iex> am =
       ...>   AgentMap.new(a: 1, b: 2, c: 3)
       iex> am
-      ...> |> sleep(:a, 20)
-      ...> |> put(:a, 42, !: :avg)
-      ...> |> sleep(:b, 20)
-      ...> |> put(:b, 42, !: :avg)
-      ...> |> take([:a, :b, :d])
-      %{a: 1, b: 2}
-      iex> am
-      ...> |> take([:a, :b], !: :min)
+      ...> |> sleep(:a, 20)            # 0a — creates worker for the :a key
+      ...> |> put(:a, 42, !: :avg)     # ↳   1a ↴
+      ...>                             #        :
+      ...> |> sleep(:b, 20)            # …0b ↴  :
+      ...> |> put(:b, 42, !: :avg)     #     1b ↴
+      ...> |> take([:a, :b, :d])       # …0     :
+      %{a: 1, b: 2}                    #        :
+      iex> am                          #        :
+      ...> |> take([:a, :b], !: :min)  #        2ab
       %{a: 42, b: 42}
   """
   @spec take(am, [key], keyword | timeout) :: map

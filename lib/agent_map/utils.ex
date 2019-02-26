@@ -235,7 +235,7 @@ defmodule AgentMap.Utils do
   @doc """
   Updates property stored in a process dictionary of instance.
 
-  Underneath `GenServer.cast/2` is used.
+  Underneath, `GenServer.cast/2` is used.
 
   See `get_prop/3`, `set_prop/3`.
 
@@ -246,14 +246,26 @@ defmodule AgentMap.Utils do
       ...> |> upd_prop(:key, fn 42 -> 24 end)
       ...> |> get_prop(:key)
       24
-
-      iex> AgentMap.new()
-      ...> |> upd_prop(:key, fn 0 -> 24 end, 0)
-      ...> |> get_prop(:key)
-      24
   """
+  @spec upd_prop(am, term, fun) :: am
+  def upd_prop(am, key, fun)
+
+  def upd_prop(_am, key, _fun)
+      when key in [:processes, :size, :real_size, :max_processes, :max_p] do
+    throw("Cannot update #{inspect(key)} prop.")
+  end
+
+  def upd_prop(am, key, fun) do
+    req = %Req{act: :upd_prop, key: key, fun: fun}
+    AgentMap._call(am, req, cast: true)
+    am
+  end
+
+  @doc "Updates property stored in a process dictionary of instance."
+  @since "1.1.0"
+  @deprecated "Use upd_prop/3 instead"
   @spec upd_prop(am, term, fun, term) :: am
-  def upd_prop(am, key, fun, default \\ nil)
+  def upd_prop(am, key, fun, default)
 
   def upd_prop(_am, key, _fun, _default)
       when key in [:processes, :size, :real_size, :max_processes, :max_p] do
