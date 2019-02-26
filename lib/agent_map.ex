@@ -83,8 +83,8 @@ defmodule AgentMap do
       ...> |> fetch(:key)                     # …0    :
       {:ok, 1}                                #  :    :
       iex> get(am, :key, & &1 * 99, !: :now)  #  ↳ 1  :
-      99                                      #       :
-      iex> get(am, :key, & &1 * 99)           #       ↳ 2
+      99                                      #    :  :
+      iex> get(am, :key, & &1 * 99)           #    ↳  ↳ 2
       4158
 
   ## How it works
@@ -678,9 +678,10 @@ defmodule AgentMap do
       iex> am
       ...> |> sleep(:b, 20)       # 0 — creating worker for the key :b
       ...> |> put(:b, 42)         # ↳ 1 ↴
+      ...>                        #     :
       ...> |> fetch(:b)           # …0  :
-      :error                      #     :
-      iex> fetch(am, :b, !: :min) #     ↳ 2
+      :error                      #  :  :
+      iex> fetch(am, :b, !: :min) #  ↳  ↳ 2
       {:ok, 42}
   """
   @spec fetch(am, key, keyword | timeout) :: {:ok, value} | :error
@@ -729,8 +730,8 @@ defmodule AgentMap do
       ...> |> sleep(:a, 20)         # 0 — creating worker for the key :a
       ...> |> put(:a, 42)           # ↳ 1 ↴
       ...> |> fetch!(:a)            # …0  :
-      1                             #     :
-      iex> fetch!(am, :a, !: :min)  #     ↳ 2
+      1                             #  :  :
+      iex> fetch!(am, :a, !: :min)  #  ↳  ↳ 2
       42
   """
   @spec fetch!(am, key, keyword | timeout) :: value | no_return
@@ -893,13 +894,13 @@ defmodule AgentMap do
 
   ## Examples
 
-      iex> AgentMap.new(Alice: 1)
-      ...> |> sleep(:Alice, 20)                              # 0a
-      ...> |> put(:Alice, 3)                                 # : ↱ 2a ↴
-      ...> |> update!(:Alice, fn 1 -> 2 end, !: {:max, +1})  # ↳ 1a   :
-      ...> |> update!(:Alice, fn 3 -> 4 end)                 #        3a
-      ...> |> update!(:Bob, & &1)                            # …0b
-      ** (KeyError) key :Bob not found
+      iex> AgentMap.new(a: 1)
+      ...> |> sleep(:a, 20)                              # 0a
+      ...> |> put(:a, 3)                                 # : ↱ 2a ↴
+      ...> |> update!(:a, fn 1 -> 2 end, !: {:max, +1})  # ↳ 1a   :
+      ...> |> update!(:a, fn 3 -> 4 end)                 #        3a
+      ...> |> update!(:b, & &1)                          # …0b
+      ** (KeyError) key :b not found
   """
   @spec update!(am, key, (value -> value), keyword | timeout) :: am | no_return
   def update!(am, key, fun, opts \\ [!: :avg]) do
@@ -1103,11 +1104,11 @@ defmodule AgentMap do
 
       iex> %{a: 1}
       ...> |> AgentMap.new()
-      ...> |> sleep(:b, 20)    # 0 — creates worker
-      ...> |> put_new(:b, 42)  # ↳  …1
+      ...> |> sleep(:b, 20)    # 0b — creates worker
+      ...> |> put_new(:b, 42)  #  ↳  …1b
       ...>                     #
-      ...> |> put_new(:a, 42)  # …0
-      ...> |> to_map()         #  ↳ 1
+      ...> |> put_new(:a, 42)  # …0a
+      ...> |> to_map()         #   ↳ 1
       %{a: 1}
   """
   @spec put_new(am, key, value, keyword) :: am
@@ -1148,9 +1149,9 @@ defmodule AgentMap do
       ...>
       iex> %{a: 1}
       ...> |> AgentMap.new()
-      ...> |> put_new_lazy(:a, fun)               # 0
-      ...> |> put_new_lazy(:b, fun, cast: false)  # …0
-      ...> |> to_map()                            #    1
+      ...> |> put_new_lazy(:a, fun, cast: false)
+      ...> |> put_new_lazy(:b, fun, cast: false)
+      ...> |> to_map()
       %{a: 1, b: 42}
   """
   @spec put_new_lazy(am, key, (() -> value), keyword) :: am
@@ -1334,14 +1335,14 @@ defmodule AgentMap do
       ...>   AgentMap.new(a: 1, b: 2, c: 3)
       iex> am
       ...> |> sleep(:a, 20)            # 0a — creates worker for the :a key
-      ...> |> put(:a, 42, !: :avg)     # ↳   1a ↴
+      ...> |> put(:a, 42, !: :avg)     #  ↳  1a ↴
       ...>                             #        :
       ...> |> sleep(:b, 20)            # …0b ↴  :
       ...> |> put(:b, 42, !: :avg)     #     1b ↴
       ...> |> take([:a, :b, :d])       # …0     :
-      %{a: 1, b: 2}                    #        :
-      iex> am                          #        :
-      ...> |> take([:a, :b], !: :min)  #        2ab
+      %{a: 1, b: 2}                    #  :     :
+      iex> am                          #  :     :
+      ...> |> take([:a, :b], !: :min)  #  ↳     2ab
       %{a: 42, b: 42}
   """
   @spec take(am, [key], keyword | timeout) :: map
