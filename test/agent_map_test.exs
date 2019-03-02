@@ -109,12 +109,14 @@ defmodule AgentMapTest do
            |> keys() == [:a, :b, :c, :d]
   end
 
-  # test "update/4" do
-  #   assert AgentMap.new(a: 1)
-  #          |> sleep(:a, 20)
-  #          |> put(:a, 3)
-  #          |> update(:a, fn 3 -> 4 end)
-  #          |> update(:a, fn 1 -> 2 end, !: {:max, +1})
-  #          |> get(:a) == 4
-  # end
+  test "update/4" do
+    am = AgentMap.new(a: 1)
+
+    assert am
+           |> sleep(:a, 20)
+           |> put(:a, 3)
+           |> cast(:a, fn 3 -> 4 end)
+           |> update(:a, fn 1 -> 2 end, !: {:max, +1})
+           |> get(:a) == 4
+  end
 end

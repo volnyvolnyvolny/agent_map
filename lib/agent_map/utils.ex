@@ -104,14 +104,14 @@ defmodule AgentMap.Utils do
 
     * `cast: false` — to return after the actual sleep;
 
-    * `!: priority`, `:avg` — to postpone sleep until calls with a higher
+    * `!: priority`, `{:max, +2}` — to postpone sleep until calls with a higher
       [priority](#module-priority) are executed.
   """
   @spec sleep(am, key, pos_integer | :infinity, keyword) :: am
-  def sleep(am, key, t, opts \\ [!: :avg, cast: true]) do
+  def sleep(am, key, t, opts \\ [!: {:max, +2}, cast: true]) do
     opts =
       opts
-      |> Keyword.put_new(:!, :avg)
+      |> Keyword.put_new(:!, {:max, +2})
       |> Keyword.put_new(:cast, true)
 
     AgentMap.get_and_update(
