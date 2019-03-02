@@ -1,6 +1,7 @@
 defmodule AgentMap.Utils do
   alias AgentMap.Req
 
+  import AgentMap.Worker, only: [dict: 1]
   import Task, only: [yield: 2, shutdown: 1]
 
   @type am :: AgentMap.am()
@@ -127,13 +128,14 @@ defmodule AgentMap.Utils do
   end
 
   ##
-  ## GET_PROP / PUT_PROP
+  ## GET_PROP / SET_PROP / UPD_PROP
   ##
 
   @doc """
   Returns property with given `key`.
 
-  See `set_prop/3`, `upd_prop/3`.
+  Functions `get_prop/2`, `upd_prop/3`, `set_prop/3` can be used inside
+  callbacks.
 
   ## Special properties
 
@@ -193,9 +195,37 @@ defmodule AgentMap.Utils do
       1
   """
   @spec get_prop(am, term) :: term
-  def get_prop(am, key) do
-    req = %Req{act: :get_prop, key: key}
-    AgentMap._call(am, req, timeout: 5000)
+  def get_prop(am, key)
+
+  def get_prop(%{pid: p}, key) do
+    get_prop(p, key)
+  end
+
+  def get_prop(pid, :max_processes) do
+    get_prop(pid, :max_p)
+  end
+
+  @forbidden [:size, :real_size, :max_p]
+
+  def get_prop(pid, k) when k in @forbidden do
+    if self() == pid do
+      raise """
+      Sorry, but get_prop(am, #{inspect(k)})/2 (the same is for
+      `#{@forbidden |> List.delete(k) |> Enum.join(" and ")}`) cannot be called
+      from servers process (`tiny: true` was given).
+      """
+    else
+      AgentMap._call(pid, %Req{act: :get_prop, key: k}, timeout: 5000)
+    end
+  end
+
+  def get_prop(pid, key) do
+    if self() == pid do
+      # we are inside tiny: true :-)
+      Process.get(key)
+    else
+      dict(pid)[key]
+    end
   end
 
   @doc "Returns property with given `key` or `default`."
@@ -204,6 +234,8 @@ defmodule AgentMap.Utils do
     req = %Req{act: :get_prop, key: key, initial: default}
     AgentMap._call(am, req, timeout: 5000)
   end
+
+  #
 
   @doc """
   Stores property in a process dictionary of instance.
@@ -226,7 +258,8 @@ defmodule AgentMap.Utils do
       iex> get_prop(am, :max_processes)
       5000
 
-  Properties could be used inside callbacks:
+  Functions `get_prop/2`, `upd_prop/3`, `set_prop/3` can be used inside
+  callbacks:
 
       iex> am = AgentMap.new()
       iex> am
@@ -238,6 +271,8 @@ defmodule AgentMap.Utils do
   def set_prop(am, key, value) do
     upd_prop(am, key, fn _ -> value end)
   end
+
+  #
 
   @doc """
   Updates property stored in a process dictionary of instance.
@@ -259,13 +294,12 @@ defmodule AgentMap.Utils do
 
   def upd_prop(_am, key, _fun)
       when key in [:processes, :size, :real_size, :max_processes, :max_p] do
-    throw("Cannot update #{inspect(key)} prop.")
+    raise "Cannot update #{inspect(key)} prop."
   end
 
   def upd_prop(am, key, fun) do
     req = %Req{act: :upd_prop, key: key, fun: fun}
     AgentMap._call(am, req, cast: true)
-    am
   end
 
   @doc "Updates property stored in a process dictionary of instance."
@@ -284,7 +318,7 @@ defmodule AgentMap.Utils do
   end
 
   ##
-  ## INC/DEC
+  ## INC / DEC
   ##
 
   @doc """

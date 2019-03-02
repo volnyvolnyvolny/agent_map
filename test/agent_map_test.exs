@@ -97,7 +97,11 @@ defmodule AgentMapTest do
   end
 
   test "update/4" do
-    assert AgentMap.new(a: 1)
+    %{pid: p} = am = AgentMap.new(a: 1)
+
+    :sys.trace(p, true)
+
+    assert am
            |> sleep(:a, 20)
            |> put(:a, 3)
            |> update(:a, fn 3 -> 4 end)

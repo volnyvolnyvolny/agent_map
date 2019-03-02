@@ -1073,7 +1073,7 @@ defmodule AgentMap do
       iex> AgentMap.new(a: 42)     #                 server    worker  queue
       ...> |> sleep(:a, 20)        #                 %{a: 42}  —       —
       ...>                         #
-      ...> |> put(:a, 1, !: :min)  #     ↱ 3a ┐      %{}   →   42      [min]
+      ...> |> put(:a, 1, !: :min)  #     ↱ 3a ┐      %{}       42      [min]
       ...> |> put(:a, 2, !: :avg)  #  ↱ 2a    :      %{}       42      [avg, min]
       ...> |> put(:a, 3)           # 1a       :      %{}       42      [max, avg, min]
       ...> |> get(:a)              #          ↳ 4a   %{}       42      [max, avg, min, get]
