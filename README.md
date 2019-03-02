@@ -206,12 +206,12 @@ end
 
 ## Installation
 
-`AgentMap` requires Elixir `v1.7` Add `:agent_map`to your list of dependencies
+`AgentMap` requires Elixir `v1.8` Add `:agent_map`to your list of dependencies
 in `mix.exs`:
 
 ```elixir
 def deps do
-    [{:agent_map, "~> 1.1.0-rc.0"}]
+    [{:agent_map, "~> 1.1.0-rc"}]
 end
 ```
 
