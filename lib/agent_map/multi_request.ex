@@ -51,7 +51,7 @@ defmodule AgentMap.Multi.Req do
   ##      (`[ret | value]`) and individual actions to be taken;
   ##
   ##    * sugar: `{ret} ≅ {ret, :id}`, `:pop ≅ [:pop, …]`, `:id ≅ [:id, …]`.
-  ##   └———————————————————┬———————————————————————————————————————————————————┘
+  ##   └———————————————————┬————————————————————————————————————————————————┘
   ##                       ⮟
   ## 3. ↳ finalize(req, result, known, {workers (get_upd), only_upd (upd)})
   ##

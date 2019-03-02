@@ -138,6 +138,11 @@ defmodule AgentMap.Req do
 
   def handle(%{act: :upd_prop, key: prop, fun: f} = req, state) do
     arg = Process.get(prop, Map.get(req, :initial))
+
+    # To be changed to simply:
+    #
+    # arg = Process.get(prop)
+
     ret = apply(f, [arg])
 
     Process.put(prop, ret)

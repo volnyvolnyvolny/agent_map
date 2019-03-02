@@ -76,11 +76,32 @@ defmodule AgentMapTest do
     assert to_map(am) == map
   end
 
-  test "delete" do
+  test "delete/3" do
     assert AgentMap.new(a: 1)
            |> sleep(:a, 20)
            |> delete(:a, !: :min)
            |> put(:a, 2)
            |> get(:a) == nil
+
+    assert AgentMap.new(a: 1, b: 2)
+           |> sleep(:a, 20)
+           |> delete(:a)
+           |> to_map() == %{a: 1, b: 2}
+  end
+
+  test "keys/1" do
+    assert %{a: 1, b: nil, c: 3}
+           |> AgentMap.new()
+           |> sleep(:d, 20)
+           |> keys() == [:a, :b, :c, :d]
+  end
+
+  test "update/4" do
+    assert AgentMap.new(a: 1)
+           |> sleep(:a, 20)
+           |> put(:a, 3)
+           |> update(:a, fn 3 -> 4 end)
+           |> update(:a, fn 1 -> 2 end, !: {:max, +1})
+           |> get(:a) == 4
   end
 end
