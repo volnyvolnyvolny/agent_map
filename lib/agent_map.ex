@@ -1280,17 +1280,33 @@ defmodule AgentMap do
 
   This call has a fixed priority `{:avg, +1}`.
 
+  ## Options
+
+    * `cast: false` — to return only after delete is finished for all
+      `keys`;
+
+    * `:timeout`, `5000`.
+
   ## Examples
 
       iex> %{a: 1, b: 2, c: 3}
       ...> |> AgentMap.new()
-      ...> |> drop([:b, :d])
+      ...> |> drop([:b, :d], cast: false)
       ...> |> to_map()
       %{a: 1, c: 3}
   """
-  @spec drop(am, Enumerable.t()) :: am
-  def drop(am, keys) do
-    _call(am, %Multi.Req{drop: keys}, cast: true)
+  @spec drop(am, Enumerable.t(), keyword) :: am
+  def drop(am, keys, opts \\ [cast: true]) do
+    opts = Keyword.put_new(opts, :cast, true)
+
+    Multi.get_and_update(
+      am,
+      keys,
+      fn _ -> {:_done, :drop} end,
+      opts
+    )
+
+    am
   end
 
   ##

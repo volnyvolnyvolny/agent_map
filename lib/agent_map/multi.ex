@@ -47,7 +47,7 @@ defmodule AgentMap.Multi do
       ...> end)
       [0, 1_000_000]
 
-  More on `get_and_update` syntax:
+  More on `get_and_update/4` syntax:
 
       iex> am = AgentMap.new(Alice: 0, Bob: 1_000_000)
       ...>
@@ -62,7 +62,7 @@ defmodule AgentMap.Multi do
 
   Each multi-key call is handled in a dedicated process. This process is
   responsible for collecting values, invoking callback, updating values,
-  returning a result and dealing with a possible errors.
+  returning a result and dealing with possible errors.
 
   Computation can start only after all the values are known. If it's a
   `get_and_update/4`, `update/4` or a `cast/4` call, to each key involved will

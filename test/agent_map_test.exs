@@ -89,6 +89,19 @@ defmodule AgentMapTest do
            |> to_map() == %{a: 1, b: 2}
   end
 
+  test "drop/3" do
+    am =
+      %{a: 1, b: 2, c: 3}
+      |> AgentMap.new()
+      |> drop([:b, :d])
+
+    assert to_map(am) == %{a: 1, b: 2, c: 3}
+
+    sleep(20)
+
+    assert to_map(am) == %{a: 1, c: 3}
+  end
+
   test "keys/1" do
     assert %{a: 1, b: nil, c: 3}
            |> AgentMap.new()
@@ -96,16 +109,12 @@ defmodule AgentMapTest do
            |> keys() == [:a, :b, :c, :d]
   end
 
-  test "update/4" do
-    %{pid: p} = am = AgentMap.new(a: 1)
-
-    :sys.trace(p, true)
-
-    assert am
-           |> sleep(:a, 20)
-           |> put(:a, 3)
-           |> update(:a, fn 3 -> 4 end)
-           |> update(:a, fn 1 -> 2 end, !: {:max, +1})
-           |> get(:a) == 4
-  end
+  # test "update/4" do
+  #   assert AgentMap.new(a: 1)
+  #          |> sleep(:a, 20)
+  #          |> put(:a, 3)
+  #          |> update(:a, fn 3 -> 4 end)
+  #          |> update(:a, fn 1 -> 2 end, !: {:max, +1})
+  #          |> get(:a) == 4
+  # end
 end
