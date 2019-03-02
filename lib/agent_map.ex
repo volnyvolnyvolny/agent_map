@@ -233,9 +233,7 @@ defmodule AgentMap do
 
   def _call(am, req, opts) do
     opts =
-      opts
-      |> Keyword.update(:!, to_num(:avg), &prep!(:!, &1))
-      |> Keyword.put_new(:initial, opts[:default])
+      Keyword.put_new(opts, :initial, opts[:default])
 
     req = struct(req, opts)
     pid = (is_map(am) && am.pid) || am
@@ -255,24 +253,11 @@ defmodule AgentMap do
 
   #
 
-  defp to_num(:now), do: :now
-
-  defp to_num(p) when p in [:min, :low], do: 0
-  defp to_num(p) when p in [:avg, :mid], do: 255
-  defp to_num(p) when p in [:max, :high], do: 65535
-  defp to_num(i) when is_integer(i) and i >= 0, do: i
-  defp to_num({p, delta}), do: to_num(p) + delta
-
-  #
-
-  defp prep!(:max_processes, max_p)
-       when is_timeout(max_p) do
-    #
+  defp prep!(max_p) when is_timeout(max_p) do
     {max_p, :infinity}
   end
 
-  defp prep!(:max_processes, {soft, hard})
-       when hard < soft do
+  defp prep!({soft, hard}) when hard < soft do
     #
     raise """
     Hard limit must be greater than soft.
@@ -280,18 +265,16 @@ defmodule AgentMap do
     """
   end
 
-  defp prep!(:max_processes, {_soft, _h} = max_p) do
+  defp prep!({_soft, _h} = max_p) do
     max_p
   end
 
-  defp prep!(:max_processes, malformed) do
+  defp prep!(malformed) do
     raise """
     Value for option :max_processes is malformed.
     Got: #{inspect(malformed)}
     """
   end
-
-  defp prep!(:!, p), do: to_num(p)
 
   ##
   ## NEW
@@ -492,7 +475,7 @@ defmodule AgentMap do
         timeout: opts[:timeout] || 5000,
         max_p: opts[:max_processes] || @max_p
       ]
-      |> Keyword.update!(:max_p, &prep!(:max_processes, &1))
+      |> Keyword.update!(:max_p, &prep!(&1))
 
     # Global timeout must be turned off.
     opts =

@@ -17,7 +17,7 @@ defmodule AgentMap.Req do
     :from,
     :key,
     :fun,
-    !: 255,
+    !: :avg,
     tiny: false
   ]
 

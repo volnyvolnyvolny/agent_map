@@ -4,17 +4,17 @@ defmodule AgentMapMultiTest do
   import :timer
   import AgentMap.Utils, only: [sleep: 3]
   import AgentMap, only: [put: 3]
-  #  import AgentMap.Multi
+  import AgentMap.Multi
 
   doctest AgentMap.Multi, import: true
 
-  # test "…" do
-  #   # assert AgentMap.new()
-  #   # |> sleep(:a, 30)                                                         # 0 | | |
-  #   # |> put(:a, 3)                                                            # | | 2 |
-  #   # |> put(:b, 0)                                                            # | | 2 |
-  #   # |> update([:a, :b], fn [1, 0] -> [2, 2] end, !: {:max, +1}, initial: 1)  # | 1 | |
-  #   # |> update([:a, :b], fn [3, 2] -> [4, 4] end)                             # | | | 3
-  #   # |> get([:a, :b]) ==      [4, 4]
-  # end
+  test "…" do
+    assert AgentMap.new(a: 6)
+           |> sleep(:a, 20)
+           |> put(:a, 1)
+           |> update([:a, :b], fn [1, 1] -> [2, 2] end, initial: 1)
+           |> update([:a, :b], fn [2, 2] -> [3, 3] end)
+           |> get([:a, :b])
+    [3, 3]
+  end
 end

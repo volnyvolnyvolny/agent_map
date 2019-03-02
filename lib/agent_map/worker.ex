@@ -20,6 +20,16 @@ defmodule AgentMap.Worker do
 
   #
 
+  defp to_num(:now), do: :now
+
+  defp to_num(p) when p in [:min, :low], do: 0
+  defp to_num(p) when p in [:avg, :mid], do: 255
+  defp to_num(p) when p in [:max, :high], do: 65535
+  defp to_num(i) when is_integer(i) and i >= 0, do: i
+  defp to_num({p, delta}), do: to_num(p) + delta
+
+  #
+
   def dict(pid) do
     info(pid, :dictionary) |> elem(1)
   end
@@ -208,7 +218,7 @@ defmodule AgentMap.Worker do
         heap
 
       req ->
-        Heap.push(heap, {req[:!], -now(), req})
+        Heap.push(heap, {to_num(req[:!]), -now(), req})
     end
   end
 end
