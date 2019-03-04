@@ -276,6 +276,7 @@ defmodule AgentMap do
     """
   end
 
+
   ##
   ## NEW
   ##
@@ -371,6 +372,7 @@ defmodule AgentMap do
   def new(enumerable, transform) do
     new(Map.new(enumerable, transform))
   end
+
 
   ##
   ## START / START_LINK
@@ -494,6 +496,39 @@ defmodule AgentMap do
       GenServer.start(AgentMap.Server, args, opts)
     end
   end
+
+
+  ##
+  ## STOP
+  ##
+
+  @doc """
+  Synchronously stops the `AgentMap` instance with the given `reason`.
+
+  Returns `:ok` if terminated with the given reason. If it terminates with
+  another reason, the call will exit.
+
+  This function keeps OTP semantics regarding error reporting. If the reason is
+  any other than `:normal`, `:shutdown` or `{:shutdown, _}`, an error report
+  will be logged.
+
+  ### Examples
+
+      iex> {:ok, pid} = AgentMap.start_link()
+      iex> AgentMap.stop(pid)
+      :ok
+  """
+  @spec stop(am, reason :: term, timeout) :: :ok
+  def stop(am, reason \\ :normal, timeout \\ :infinity)
+
+  def stop(%__MODULE__{} = am, reason, timeout) do
+    GenServer.stop(am.pid, reason, timeout)
+  end
+
+  def stop(pid, reason, timeout) do
+    GenServer.stop(pid, reason, timeout)
+  end
+
 
   ##
   ## GET / GET_LAZY / FETCH / FETCH!
@@ -737,6 +772,7 @@ defmodule AgentMap do
     end
   end
 
+
   ##
   ## GET_AND_UPDATE
   ##
@@ -821,6 +857,7 @@ defmodule AgentMap do
 
     _call(am, req, opts, !: :avg)
   end
+
 
   ##
   ## UPDATE / UPDATE! / REPLACE!
@@ -940,6 +977,7 @@ defmodule AgentMap do
     update!(am, key, fn _ -> v end, [{:tiny, true} | opts])
   end
 
+
   ##
   ## HAS_KEY? / KEYS / VALUES
   ##
@@ -1027,6 +1065,7 @@ defmodule AgentMap do
   def values(am) do
     _call(am, %Req{act: :values}, timeout: 5000)
   end
+
 
   ##
   ## PUT / PUT_NEW / PUT_NEW_LAZY
@@ -1173,6 +1212,7 @@ defmodule AgentMap do
     am
   end
 
+
   ##
   ## POP / DELETE / DROP
   ##
@@ -1296,6 +1336,7 @@ defmodule AgentMap do
     am
   end
 
+
   ##
   ## TO_MAP / TAKE
   ##
@@ -1371,6 +1412,7 @@ defmodule AgentMap do
     _call(am, %Multi.Req{get: keys}, opts, !: :now)
   end
 
+
   ##
   ## CAST
   ##
@@ -1407,36 +1449,5 @@ defmodule AgentMap do
       |> Keyword.put_new(:cast, true)
 
     update(am, key, fun, opts)
-  end
-
-  ##
-  ## STOP
-  ##
-
-  @doc """
-  Synchronously stops the `AgentMap` instance with the given `reason`.
-
-  Returns `:ok` if terminated with the given reason. If it terminates with
-  another reason, the call will exit.
-
-  This function keeps OTP semantics regarding error reporting. If the reason is
-  any other than `:normal`, `:shutdown` or `{:shutdown, _}`, an error report
-  will be logged.
-
-  ### Examples
-
-      iex> {:ok, pid} = AgentMap.start_link()
-      iex> AgentMap.stop(pid)
-      :ok
-  """
-  @spec stop(am, reason :: term, timeout) :: :ok
-  def stop(am, reason \\ :normal, timeout \\ :infinity)
-
-  def stop(%__MODULE__{} = am, reason, timeout) do
-    GenServer.stop(am.pid, reason, timeout)
-  end
-
-  def stop(pid, reason, timeout) do
-    GenServer.stop(pid, reason, timeout)
   end
 end
