@@ -419,6 +419,8 @@ defmodule AgentMap do
 
   ## Examples
 
+  To start server with a single key `:k`.
+
       iex> {:ok, pid} =
       ...>   AgentMap.start_link(k: fn -> 42 end)
       iex> get(pid, :k)
@@ -426,18 +428,20 @@ defmodule AgentMap do
       iex> get_prop(pid, :max_processes)
       {#{@max_p}, :infinity}
 
-  — starts server with a predefined single key `:k`.
+  The following will not work:
 
       iex> AgentMap.start(k: 3)
       {:error, k: :badfun}
+      #
       iex> AgentMap.start(k: & &1)
       {:error, k: :badarity}
+      #
       iex> {:error, k: {e, _st}} =
       ...>   AgentMap.start(k: fn -> raise "oops" end)
       iex> e
       %RuntimeError{message: "oops"}
 
-  #
+  To start server without any keys use:
 
       iex> AgentMap.start([], name: Account)
       iex> Account
@@ -460,7 +464,8 @@ defmodule AgentMap do
       iex> err =
       ...>   AgentMap.start([a: 42,
       ...>                   b: fn -> sleep(:infinity) end,
-      ...>                   c: fn -> raise "oops" end],
+      ...>                   c: fn -> raise "oops" end,
+      ...>                   d: fn -> :ok end],
       ...>                   timeout: 10)
       ...>
       iex> {:error, a: :badfun, b: :timeout, c: {e, _st}} = err
@@ -473,9 +478,8 @@ defmodule AgentMap do
       [
         funs: funs,
         timeout: opts[:timeout] || 5000,
-        max_p: opts[:max_processes] || @max_p
+        max_p: prep!(opts[:max_processes] || @max_p)
       ]
-      |> Keyword.update!(:max_p, &prep!(&1))
 
     # Global timeout must be turned off.
     opts =
