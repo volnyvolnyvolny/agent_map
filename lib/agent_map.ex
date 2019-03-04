@@ -113,14 +113,14 @@ defmodule AgentMap do
 
   or:
 
-      iex> am = AgentMap.new(a: 1)            # server   worker  queue
-      iex> am                                 # %{a: 1}  —       —
-      ...> |> cast(:a, & &1 + 1)              # %{}    → 1       [& &1 + 1]
-      ...> |> get(:a)                         # %{}      1       [& &1 + 1, get]
-      2                                       # %{}      2       []
+      iex> am = AgentMap.new(a: 1)            # server    worker   queue
+      iex> am                                 # %{a: 1}   —        —
+      ...> |> cast(:a, & &1 + 1)              # %{}       1        [& &1 + 1]
+      ...> |> get(:a)                         # %{}       1        [& &1 + 1, get]
+      2                                       # %{}       2        []
                                               #
       iex> sleep(40)                          # …worker dies
-      iex> get(am, :a, & &1 + 1)              # %{a: 2}  —       —
+      iex> get(am, :a, & &1 + 1)              # %{a: 2}   —        —
       3
 
   Sometimes, like in the above example, it's more expensive to spawn a new
