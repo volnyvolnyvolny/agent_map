@@ -281,6 +281,10 @@ defmodule AgentMap.Utils do
 
   See `get_prop/3`, `set_prop/3`.
 
+  ## Options
+
+  * `cast: false` — to wait for the actual update to occur.
+
   ## Examples
 
       iex> AgentMap.new()
@@ -290,31 +294,16 @@ defmodule AgentMap.Utils do
       24
   """
   @spec upd_prop(am, term, fun) :: am
-  def upd_prop(am, key, fun)
+  def upd_prop(am, key, fun, opts \\ [cast: true])
 
-  def upd_prop(_am, key, _fun)
+  def upd_prop(_am, key, _fun, _opts)
       when key in [:processes, :size, :real_size, :max_processes, :max_p] do
     raise "Cannot update #{inspect(key)} prop."
   end
 
-  def upd_prop(am, key, fun) do
+  def upd_prop(am, key, fun, opts) do
     req = %Req{act: :upd_prop, key: key, fun: fun}
-    AgentMap._call(am, req, cast: true)
-  end
-
-  @doc "Updates property stored in a process dictionary of instance."
-  @deprecated "Use upd_prop/3 instead"
-  def upd_prop(am, key, fun, default)
-
-  def upd_prop(_am, key, _fun, _default)
-      when key in [:processes, :size, :real_size, :max_processes, :max_p] do
-    throw("Cannot update #{inspect(key)} prop.")
-  end
-
-  def upd_prop(am, key, fun, default) do
-    req = %Req{act: :upd_prop, key: key, fun: fun, initial: default}
-    AgentMap._call(am, req, cast: true)
-    am
+    AgentMap._call(am, req, opts)
   end
 
   ##

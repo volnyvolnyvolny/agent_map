@@ -1,5 +1,9 @@
 # Changelog for AgentMap v1
 
+## v1.1
+
+#### [AgentMap.Utils] new (and single) option for `upd_prop/4` — `cast: false`.
+
 ## v1.1-rc.1
 
 #### [AgentMap.Utils] `upd_prop/4` is now hard deprecated.
