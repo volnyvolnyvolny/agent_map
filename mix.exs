@@ -11,7 +11,7 @@ defmodule AgentMap.Mixfile do
         memoization, computational framework and, sometimes, as an alternative
         to `GenServer`.
       """,
-      version: "1.1.0",
+      version: "1.1.1",
       elixir: "~> 1.8",
       deps: deps(),
       aliases: aliases(),
