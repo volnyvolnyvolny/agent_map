@@ -1,5 +1,9 @@
 # Changelog for AgentMap v1
 
+## v1.1.1
+
+#### [README.md] Fix a confusing example (sorry, "I noticed not the elephant at all").
+
 ## v1.1
 
 #### [AgentMap.Utils] new (and single) option for `upd_prop/4` — `cast: false`.

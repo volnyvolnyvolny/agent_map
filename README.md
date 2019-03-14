@@ -6,28 +6,28 @@ different keys.
 For instance, this call:
 
 ```elixir
-iex> fun =
-...>   fn v ->
-...>     :timer.sleep(10)
-...>     {:_get, v + 1}
-...>   end
+iex> f1 =
+...>   &(:timer.sleep(10) && {:_get, &1 + 1})
 ...>
-iex> map = Map.new(a: 1, b: 1)                        # | am = AgentMap.new(a: 1, b: 1)
-iex> {:_get, map} = Map.get_and_update(map, :a, fun)  # | AgentMap.get_and_update(am, :a, fun)
-iex> {:_get, map} = Map.get_and_update(map, :b, fun)  # | AgentMap.get_and_update(am, :b, fun)
-iex> Map.get(map, :a)                                 # | AgentMap.get(am, :a)
-2                                                     # |
-iex> Map.get(map, :b)                                 # | AgentMap.get(am, :b)
+iex> f2 =
+...>   &(:timer.sleep(10) && &1 + 1)
+...>
+iex> map = Map.new(a: 1, b: 1)                       # | am = AgentMap.new(a: 1, b: 1)
+iex> {:_get, map} = Map.get_and_update(map, :a, f1)  # | AgentMap.get_and_update(am, :a, f1)
+iex> map = Map.update(map, :b, f2)                   # | AgentMap.cast(am, :b, f2)
+iex> Map.get(map, :a)                                # | AgentMap.get(am, :a)
+2                                                    # |
+iex> Map.get(map, :b)                                # | AgentMap.get(am, :b)
 2
 ```
 
-will be executed in `20` ms. While this, because of parallelization:
+will be executed in `20` ms. While next, because of parallelization:
 
 ```elixir
 iex> am = AgentMap.new(a: 1, b: 1)
-iex> AgentMap.get_and_update(am, :a, fun)
+iex> AgentMap.get_and_update(am, :a, f1)
 :_get
-iex> AgentMap.get_and_update(am, :b, fun)
+iex> AgentMap.cast(am, :b, f2)
 iex> AgentMap.get(am, :a)
 2
 iex> AgentMap.get(am, :b)
