@@ -3,42 +3,36 @@
 `AgentMap` can be seen as a stateful `Map` that parallelize operations made on
 different keys.
 
-For instance, this call:
+For instance, execution of this code:
 
 ```elixir
-iex> f1 =
-...>   &(:timer.sleep(10) && {:_get, &1 + 1})
-...>
-iex> f2 =
-...>   &(:timer.sleep(10) && &1 + 1)
-...>
-iex> map = Map.new(a: 1, b: 1)                       # | am = AgentMap.new(a: 1, b: 1)
-iex> {:_get, map} = Map.get_and_update(map, :a, f1)  # | AgentMap.get_and_update(am, :a, f1)
-iex> map = Map.update(map, :b, f2)                   # | AgentMap.cast(am, :b, f2)
-iex> Map.get(map, :a)                                # | AgentMap.get(am, :a)
-2                                                    # |
-iex> Map.get(map, :b)                                # | AgentMap.get(am, :b)
-2
+map =                                         #  am =
+  %{a: 1, b: 1}                               #    %{a: 1, b: 1}
+  |> Map.new()                                #    |> AgentMap.new()
+  |> Map.update!(:a, &(sleep(10) && &1 + 1))  #    |> AgentMap.cast(:a, …)
+  |> Map.update!(:b, &(sleep(10) && &1 + 1))  #    |> AgentMap.cast(:b, …)
+                                              #
+Map.get(map, :a) == 2                         #  AgentMap.get(am, :a) == 2
+Map.get(map, :b) == 2                         #  AgentMap.get(am, :b) == 2
 ```
 
-will be executed in `20` ms. While next, because of parallelization:
+will take about `20` ms. While the following is twice as fast, because of
+parallelization:
 
 ```elixir
-iex> am = AgentMap.new(a: 1, b: 1)
-iex> AgentMap.get_and_update(am, :a, f1)
-:_get
-iex> AgentMap.cast(am, :b, f2)
-iex> AgentMap.get(am, :a)
-2
-iex> AgentMap.get(am, :b)
-2
+am =
+  %{a: 1, b: 1}
+  |> AgentMap.new()
+  |> AgentMap.cast(:a, &(sleep(10) && &1 + 1))
+  |> AgentMap.cast(:b, &(sleep(10) && &1 + 1))
+                          
+AgentMap.get(am, :a) == 2 
+AgentMap.get(am, :b) == 2 
 ```
 
-in around of `10` ms.
-
-Basically, `AgentMap` can be used as a cache, memoization, computational
-framework and, sometimes, as an alternative to `GenServer`. `AgentMap` supports
-operations made on a group of keys (["multi-key" calls](AgentMap.Multi.html)).
+Basically, `AgentMap` can be used as a memoization, computational framework and,
+sometimes, as an alternative to `GenServer`. `AgentMap` supports operations made
+on a group of keys (["multi-key" calls](AgentMap.Multi.html)).
 
 See [documentation](https://hexdocs.pm/agent_map) for the details.
 
@@ -211,7 +205,7 @@ in `mix.exs`:
 
 ```elixir
 def deps do
-    [{:agent_map, "~> 1.1.0-rc.1"}]
+    [{:agent_map, "~> 1.1"}]
 end
 ```
 
