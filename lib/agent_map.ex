@@ -259,7 +259,7 @@ defmodule AgentMap do
 
   defp prep!({soft, hard}) when hard < soft do
     #
-    raise """
+    raise ArgumentError, """
     Hard limit must be greater than soft.
     Got contrary: #{inspect({soft, hard})}
     """
@@ -270,7 +270,7 @@ defmodule AgentMap do
   end
 
   defp prep!(malformed) do
-    raise """
+    raise ArgumentError, """
     Value for option :max_processes is malformed.
     Got: #{inspect(malformed)}
     """
@@ -852,7 +852,9 @@ defmodule AgentMap do
     req = %Req{act: :upd, key: k, fun: f}
 
     if opts[:!] == :now do
-      raise "`:now` priority cannot be used in a `get_and_update/4` call!"
+      raise ArgumentError, """
+      `:now` priority cannot be used in a `get_and_update/4` call!
+      """
     end
 
     _call(am, req, opts, !: :avg)
