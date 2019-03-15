@@ -16,7 +16,7 @@ Map.get(map, :a) == 2                         #  AgentMap.get(am, :a) == 2
 Map.get(map, :b) == 2                         #  AgentMap.get(am, :b) == 2
 ```
 
-will take about `20` ms. While the following is twice as fast, because of
+will take about `20` ms. While the following is twice as fast due to
 parallelization:
 
 ```elixir
