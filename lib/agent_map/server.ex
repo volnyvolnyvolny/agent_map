@@ -72,7 +72,18 @@ defmodule AgentMap.Server do
       funs
       |> map(fn {_key, fun} ->
         Task.async(fn ->
-          Utils.safe_apply(fun, [])
+          try do
+            {:ok, apply(fun, [])}
+          rescue
+            BadFunctionError ->
+              {:error, :badfun}
+
+            BadArityError ->
+              {:error, :badarity}
+
+            exception ->
+              {:error, {exception, __STACKTRACE__}}
+          end
         end)
       end)
       |> Task.yield_many(timeout)

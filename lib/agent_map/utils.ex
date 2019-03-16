@@ -15,32 +15,8 @@ defmodule AgentMap.Utils do
   ## SAFE_APPLY
   ##
 
-  @doc """
-  Wraps `fun` in a `try…catch` block before applying `args`.
-
-  Returns `{:ok, reply}`, `{:error, reason}`, where `reason` is `:badfun`,
-  `:badarity`, `{exception, stacktrace}` or `{:exit, reason}`.
-
-  ## Examples
-
-      iex> safe_apply(:notfun, [])
-      {:error, :badfun}
-
-      iex> safe_apply(fn -> 1 end, [:extra_arg])
-      {:error, :badarity}
-
-      iex> fun = fn -> exit :reason end
-      iex> safe_apply(fun, [])
-      {:error, {:exit, :reason}}
-
-      iex> {:error, {e, _stacktrace}} =
-      ...>   safe_apply(fn -> raise "oops" end, [])
-      iex> e
-      %RuntimeError{message: "oops"}
-
-      iex> safe_apply(fn -> 1 end, [])
-      {:ok, 1}
-  """
+  @doc since: "1.1.2"
+  @deprecated "Just use the `try … rescue / catch` block instead"
   def safe_apply(fun, args) do
     {:ok, apply(fun, args)}
   rescue
@@ -52,28 +28,10 @@ defmodule AgentMap.Utils do
 
     exception ->
       {:error, {exception, __STACKTRACE__}}
-  catch
-    :exit, reason ->
-      {:error, {:exit, reason}}
   end
 
-  @doc """
-  Executes `safe_apply(fun, args)` in a separate `Task`. If call takes too long
-  — stops its execution.
-
-  Returns `{:ok, reply}`, `{:error, reason}`, where `reason` is `:badfun`,
-  `:badarity`, `{exception, stacktrace}`, `{:exit, reason}` or `:timeout`.
-
-  ## Examples
-
-      iex> fun = fn -> sleep(:infinity) end
-      iex> safe_apply(fun, [], 20)
-      {:error, :timeout}
-
-      iex> fun = fn -> sleep(10); 42 end
-      iex> safe_apply(fun, [], 20)
-      {:ok, 42}
-  """
+  @doc since: "1.1.2"
+  @deprecated "Just use `Task.async` → `Task.yield` instead."
   def safe_apply(fun, args, timeout) do
     started_at = now()
 
@@ -96,9 +54,9 @@ defmodule AgentMap.Utils do
   ##
 
   @doc """
-  Sleeps the given `key` for `t` ms.
+  Suspends the queue for `key` for `t` ms.
 
-  Returns without waiting for the actual sleep to happen.
+  Returns without waiting for the actual suspend to happen.
 
   ## Options
 
@@ -229,7 +187,7 @@ defmodule AgentMap.Utils do
   end
 
   @doc "Returns property with given `key` or `default`."
-  @deprecated "Use get_prop/3 instead"
+  @deprecated "Use `get_prop/3` instead"
   def get_prop(am, key, default) do
     req = %Req{act: :get_prop, key: key, initial: default}
     AgentMap._call(am, req, timeout: 5000)

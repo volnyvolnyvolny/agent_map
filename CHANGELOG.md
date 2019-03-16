@@ -1,17 +1,21 @@
 # Changelog for AgentMap v1
 
+## v1.1.2
+
+#### [Utils] deprecating rudimentary `safe_apply/2` and `safe_apply/3` functions.
+
 ## v1.1.1
 
 #### [README.md] Fix a confusing example (sorry, "I noticed not the elephant at all").
 
 ## v1.1
 
-#### [AgentMap.Utils] new (and single) option for `upd_prop/4` — `cast: false`.
+#### [Utils] new (and single) option for `upd_prop/4` — `cast: false`.
 
 ## v1.1-rc.1
 
-#### [AgentMap.Utils] `upd_prop/4` is now hard deprecated.
-#### [AgentMap.Utils] `get_prop/4` is now hard deprecated.
+#### [Utils] `upd_prop/4` is now hard deprecated.
+#### [Utils] `get_prop/4` is now hard deprecated.
 
 ## v1.1-rc.0
 
@@ -63,16 +67,16 @@
 
 ### Hard-deprecations
 
-  * [AgentMap] `size/1` is deprecated in favour of `Enum.count/1` and
-    `get_prop(am, :size)`.
+  * `size/1` is deprecated in favour of `Enum.count/1` and `get_prop(am,
+    :size)`.
 
-  * [AgentMap] `update/5` in favor of using the `:initial` option.
-  * [AgentMap] `pid/1` is deprecated in favour of using `am.pid` :).
-  * [AgentMap] `max_processes/3` is deprecated.
-  * [AgentMap] `info/3` is deprecated.
+  * `update/5` in favor of using the `:initial` option.
+  * `pid/1` is deprecated in favour of using `am.pid` :).
+  * `max_processes/3` is deprecated.
+  * `info/3` is deprecated.
 
-  * [AgentMap] `get_lazy/4`. It may return later in form of a whole new `:lazy`
-    option wherever `:initial` option is applicable.
+  * `get_lazy/4`. It may return later in form of a whole new `:lazy` option
+    wherever `:initial` option is applicable.
 
 ### Bug fixes
 
