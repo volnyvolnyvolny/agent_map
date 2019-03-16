@@ -128,6 +128,13 @@ defmodule AgentMap.Server do
   ## CALL / CAST
   ##
 
+  # @impl true
+  # def handle_call({:get, fun}, from, state) do
+  #   # Called as Agent.get(am, fun):
+  #   AgentMap.put()
+  #   r.handle(%{req | from: from}, state)
+  # end
+
   @impl true
   def handle_call(%r{} = req, from, state) do
     r.handle(%{req | from: from}, state)

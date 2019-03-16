@@ -89,6 +89,7 @@ defmodule AgentMap.Utils do
   ## META / UPD_META / PUT_META
   ##
 
+  @doc since: "1.1.2"
   @doc """
   Reads metadata information stored under `key`.
 
@@ -201,6 +202,7 @@ defmodule AgentMap.Utils do
 
   #
 
+  @doc since: "1.1.2"
   @doc """
   Stores metadata information under `key`.
 
@@ -237,6 +239,7 @@ defmodule AgentMap.Utils do
 
   #
 
+  @doc since: "1.1.2"
   @doc """
   Updates metadata information stored under `key`.
 

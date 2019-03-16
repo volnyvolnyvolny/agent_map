@@ -18,6 +18,7 @@ defmodule AgentMap do
   Create and use it as an ordinary `Map` (`new/0`, `new/1` and `new/2`):
 
       iex> am = AgentMap.new(a: 42, b: 24)
+      ...>
       iex> AgentMap.get(am, :a)
       42
       iex> AgentMap.keys(am)
@@ -196,19 +197,22 @@ defmodule AgentMap do
   @type delta :: integer
   @type priority :: alias | {alias, delta} | :now | non_neg_integer
 
-  @doc false
-  def child_spec(funs_and_opts) do
-    %{id: AgentMap, start: {AgentMap, :start_link, [funs_and_opts]}}
-  end
+  #
 
   @doc false
   defmacro __using__(opts) do
     quote location: :keep, bind_quoted: [opts: opts] do
-      @doc false
-      def child_spec(funs_and_opts) do
+      if Module.get_attribute(__MODULE__, :doc) == nil do
+        @doc """
+        Returns a specification to start this module under a supervisor.
+        See `Supervisor`.
+        """
+      end
+
+      def child_spec(args) do
         default = %{
           id: __MODULE__,
-          start: {__MODULE__, :start_link, [funs_and_opts]}
+          start: {__MODULE__, :start_link, [args]}
         }
 
         Supervisor.child_spec(default, unquote(Macro.escape(opts)))
@@ -498,6 +502,24 @@ defmodule AgentMap do
       GenServer.start(AgentMap.Server, args, opts)
     end
   end
+
+  ##
+  ## CHILD_SPEC
+  ##
+
+  @doc since: "1.1.2"
+  @doc """
+  See the "Child specification" section in the `Supervisor` module for more
+  detailed information.
+  """
+  def child_spec([funs, opts]) when is_list(funs) and is_list(opts) do
+    %{
+      id: AgentMap,
+      start: {AgentMap, :start_link, [funs, opts]}
+    }
+  end
+
+  def child_spec([funs]), do: child_spec([funs, []])
 
   ##
   ## STOP

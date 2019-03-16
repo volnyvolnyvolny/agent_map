@@ -4,15 +4,21 @@
 
 ### Enhancements
 
-#### AgentMap.Multi
+#### AgentMap
 
-  * [new option] `collect: :all`
+  * Now `Agent` module interface can be used with `AgentMap` processes (thanks
+    for idea to alexogar).
 
 #### AgentMap.Utils
 
   * [rename] `upd_prop/4` → `upd_meta/4`
   * [rename] `get_prop/2` → `meta/2`
   * [rename] `set_prop/3` → `put_meta/4`
+
+### Bug fixes
+
+  * Starting `AgentMap` under the `Supervisor`.
+  * `child_spec/1` was missing docs.
 
 ### Hard-deprecations
 
