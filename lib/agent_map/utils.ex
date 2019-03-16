@@ -86,72 +86,197 @@ defmodule AgentMap.Utils do
   end
 
   ##
-  ## GET_PROP / SET_PROP / UPD_PROP
+  ## META / UPD_META / PUT_META
   ##
 
   @doc """
-  Returns property with given `key`.
+  Reads metadata information stored under `key`.
 
-  Functions `get_prop/2`, `upd_prop/3`, `set_prop/3` can be used inside
+  Functions `meta/2`, `upd_meta/4` and `put_meta/3` can be used inside
   callbacks.
 
-  ## Special properties
+  ## Special keys
 
-  * `:size` — current size (fast, but in some rare cases inaccurate upwards);
+    * `:size` — current size (fast, but in some rare cases inaccurate upwards);
 
-  * `:real_size` — current size (slower, but always accurate);
+    * `:real_size` — current size (slower, but always accurate);
 
-  * `:max_processes` — a limit for the number of processes allowed to spawn;
+    * `:max_processes` — a limit for the number of processes allowed to spawn;
 
-  * `:processes` — total number of processes being used (`+1` for server
-    itself).
+    * `:processes` — total number of processes being used (`+1` for server
+      itself).
 
   ## Examples
 
       iex> am = AgentMap.new()
-      iex> get_prop(am, :processes)
+      iex> meta(am, :processes)
       1
-      iex> get_prop(am, :max_processes)
+      iex> meta(am, :max_processes)
       5000
       iex> am
       ...> |> sleep(:a, 10)
       ...> |> sleep(:b, 100)
-      ...> |> get_prop(:processes)
+      ...> |> meta(:processes)
       3
       #
       iex> sleep(50)
-      iex> get_prop(am, :processes)
+      iex> meta(am, :processes)
       2
       #
       iex> sleep(200)
-      iex> get_prop(am, :processes)
+      iex> meta(am, :processes)
       1
 
   #
 
       iex> am = AgentMap.new()
-      iex> get_prop(am, :size)
+      iex> meta(am, :size)
       0
       iex> am
       ...> |> sleep(:a, 10)
       ...> |> sleep(:b, 50)
       ...> |> put(:b, 42)
       ...>
-      iex> get_prop(am, :size)       # size calculation is inaccurate, but fast
+      iex> meta(am, :size)       # size calculation is inaccurate, but fast
       2
-      iex> get_prop(am, :real_size)  # that's better
+      iex> meta(am, :real_size)  # that's better
       0
       iex> sleep(50)
-      iex> get_prop(am, :size)       # worker for :a just died
+      iex> meta(am, :size)       # worker for :a just died
       1
-      iex> get_prop(am, :real_size)
+      iex> meta(am, :real_size)
       0
-      iex> sleep(40)                 # worker for :b just died
-      iex> get_prop(am, :size)
+      iex> sleep(40)             # worker for :b just died
+      iex> meta(am, :size)
       1
-      iex> get_prop(am, :real_size)
+      iex> meta(am, :real_size)
       1
+
+  #
+
+      iex> {:ok, am} =
+      ...>   AgentMap.start_link([key: 1], meta: [custom_key: "custom_value"])
+      ...>
+      iex> meta(am, :custom_key)
+      "custom_value"
+      iex> meta(am, :unknown_key)
+      nil
   """
+  @spec meta(am, term) :: term
+  def meta(am, key)
+
+  def meta(%{pid: p}, key) do
+    meta(p, key)
+  end
+
+  def meta(pid, :max_processes) do
+    meta(pid, :max_p)
+  end
+
+  @forbidden [:size, :real_size, :max_p]
+
+  def meta(pid, k) when k in @forbidden do
+    if self() == pid do
+      raise """
+      Sorry, but meta(am, #{inspect(k)} (or `#{
+        @forbidden
+        |> List.delete(k)
+        |> Enum.join(" and ")
+      }`) cannot be called from server process with `tiny:
+      true`.
+      """
+    else
+      AgentMap._call(pid, %Req{act: :meta, key: k}, timeout: 5000)
+    end
+  end
+
+  def meta(pid, key) do
+    if self() == pid do
+      # we are inside tiny: true :-)
+      Process.get(key)
+    else
+      dict(pid)[key]
+    end
+  end
+
+  #
+
+  @doc """
+  Stores metadata information under `key`.
+
+  See `meta/2`, `upd_meta/4`.
+
+  ## Examples
+
+      iex> am = AgentMap.new()
+      iex> am
+      ...> |> put_meta(:key, 42)
+      ...> |> meta(:key)
+      42
+
+      iex> am = AgentMap.new()
+      iex> meta(am, :bar)
+      nil
+      iex> meta(am, :bar, :baz)
+      :baz
+      iex> meta(am, :max_processes)
+      5000
+
+  Functions `meta/2`, `upd_meta/3`, `put_meta/4` can be used inside callbacks:
+
+      iex> am = AgentMap.new()
+      iex> am
+      ...> |> get(:a, fn _ -> put_meta(am, :foo, :bar) end)
+      ...> |> get(:b, fn _ -> meta(am, :foo) end)
+      :bar
+  """
+  @spec put_meta(am, term, term, keyword) :: am
+  def put_meta(am, key, value, opts \\ [cast: true]) do
+    upd_meta(am, key, fn _ -> value end, opts)
+  end
+
+  #
+
+  @doc """
+  Updates metadata information stored under `key`.
+
+  Underneath, `GenServer.cast/2` is used.
+
+  See `meta/2`, `put_meta/4`.
+
+  ## Options
+
+    * `cast: false` — to wait for the actual update to occur.
+
+  ## Examples
+
+      iex> AgentMap.new()
+      ...> |> put_meta(:key, 42)
+      ...> |> upd_meta(:key, fn 42 -> 24 end)
+      ...> |> meta(:key)
+      24
+  """
+  @spec upd_meta(am, term, fun, keyword) :: am
+  def upd_meta(am, key, fun, opts \\ [cast: true])
+
+  def upd_meta(_am, key, _fun, _opts)
+      when key in [:processes, :size, :real_size, :max_processes, :max_p] do
+    raise """
+    Cannot update #{inspect(key)} metadata information stored under key #{inspect(key)}.
+    """
+  end
+
+  def upd_meta(am, key, fun, opts) do
+    req = %Req{act: :upd_meta, key: key, fun: fun}
+    AgentMap._call(am, req, opts)
+  end
+
+  ##
+  ## GET_PROP / SET_PROP / UPD_PROP
+  ##
+
+  @doc since: "1.1.2"
+  @deprecated "Use `meta/2` instead."
   @spec get_prop(am, term) :: term
   def get_prop(am, key)
 
@@ -173,7 +298,7 @@ defmodule AgentMap.Utils do
       from servers process (`tiny: true` was given).
       """
     else
-      AgentMap._call(pid, %Req{act: :get_prop, key: k}, timeout: 5000)
+      AgentMap._call(pid, %Req{act: :meta, key: k}, timeout: 5000)
     end
   end
 
@@ -187,44 +312,16 @@ defmodule AgentMap.Utils do
   end
 
   @doc "Returns property with given `key` or `default`."
-  @deprecated "Use `get_prop/3` instead"
+  @deprecated "Use `meta/2` instead"
   def get_prop(am, key, default) do
-    req = %Req{act: :get_prop, key: key, initial: default}
+    req = %Req{act: :meta, key: key, initial: default}
     AgentMap._call(am, req, timeout: 5000)
   end
 
   #
 
-  @doc """
-  Stores property in a process dictionary of instance.
-
-  See `get_prop/3`, `upd_prop/4`.
-
-  ## Examples
-
-      iex> am = AgentMap.new()
-      iex> am
-      ...> |> set_prop(:key, 42)
-      ...> |> get_prop(:key)
-      42
-
-      iex> am = AgentMap.new()
-      iex> get_prop(am, :bar)
-      nil
-      iex> get_prop(am, :bar, :baz)
-      :baz
-      iex> get_prop(am, :max_processes)
-      5000
-
-  Functions `get_prop/2`, `upd_prop/3`, `set_prop/3` can be used inside
-  callbacks:
-
-      iex> am = AgentMap.new()
-      iex> am
-      ...> |> get(:a, fn _ -> set_prop(am, :foo, :bar) end)
-      ...> |> get(:b, fn _ -> get_prop(am, :foo) end)
-      :bar
-  """
+  @doc since: "1.1.2"
+  @deprecated "Use `put_meta/3` instead"
   @spec set_prop(am, term, term) :: am
   def set_prop(am, key, value) do
     upd_prop(am, key, fn _ -> value end)
@@ -232,25 +329,8 @@ defmodule AgentMap.Utils do
 
   #
 
-  @doc """
-  Updates property stored in a process dictionary of instance.
-
-  Underneath, `GenServer.cast/2` is used.
-
-  See `get_prop/3`, `set_prop/3`.
-
-  ## Options
-
-  * `cast: false` — to wait for the actual update to occur.
-
-  ## Examples
-
-      iex> AgentMap.new()
-      ...> |> set_prop(:key, 42)
-      ...> |> upd_prop(:key, fn 42 -> 24 end)
-      ...> |> get_prop(:key)
-      24
-  """
+  @doc since: "1.1.2"
+  @deprecated "Use `upd_meta/4` instead"
   @spec upd_prop(am, term, fun) :: am
   def upd_prop(am, key, fun, opts \\ [cast: true])
 
@@ -260,7 +340,7 @@ defmodule AgentMap.Utils do
   end
 
   def upd_prop(am, key, fun, opts) do
-    req = %Req{act: :upd_prop, key: key, fun: fun}
+    req = %Req{act: :upd_meta, key: key, fun: fun}
     AgentMap._call(am, req, opts)
   end
 
@@ -311,7 +391,7 @@ defmodule AgentMap.Utils do
       3
   """
   @spec inc(am, key, keyword) :: am
-  def inc(am, key, opts \\ [step: 1, initial: 0, !: :avg, cast: true]) do
+  def inc(am, key, opts \\ [step: 1, cast: true, initial: 0, !: :avg]) do
     opts =
       opts
       |> Keyword.put_new(:step, 1)

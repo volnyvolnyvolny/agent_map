@@ -132,36 +132,36 @@ defmodule AgentMap.Req do
   # :max_p ≅ :max_processes
   #
 
-  def handle(%{act: :upd_prop, key: :max_processes} = req, state) do
+  def handle(%{act: :upd_meta, key: :max_processes} = req, state) do
     handle(%{req | key: :max_p}, state)
   end
 
-  def handle(%{act: :upd_prop, key: prop, fun: f}, state) do
-    arg = Process.get(prop)
+  def handle(%{act: :upd_meta, key: p, fun: f}, state) do
+    arg = Process.get(p)
     ret = apply(f, [arg])
 
-    Process.put(prop, ret)
+    Process.put(p, ret)
 
     {:reply, :_done, state}
   end
 
   #
 
-  def handle(%{act: :get_prop, key: :real_size}, state) do
+  def handle(%{act: :meta, key: :real_size}, state) do
     {:reply, map_size(to_map(state)), state}
   end
 
-  def handle(%{act: :get_prop, key: :size}, {map, workers} = state) do
+  def handle(%{act: :meta, key: :size}, {map, workers} = state) do
     {:reply, map_size(map) + map_size(workers), state}
   end
 
-  def handle(%{act: :get_prop, key: :max_processes} = req, state) do
+  def handle(%{act: :meta, key: :max_processes} = req, state) do
     handle(%{req | key: :max_p}, state)
   end
 
-  def handle(%{act: :get_prop, key: prop} = req, state) do
-    value = Process.get(prop, Map.get(req, :initial))
-    # value = Process.get(prop)
+  def handle(%{act: :meta, key: p} = req, state) do
+    value = Process.get(p, Map.get(req, :initial))
+    # value = Process.get(p)
 
     {:reply, value, state}
   end

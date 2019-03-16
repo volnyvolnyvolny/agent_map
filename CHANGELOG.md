@@ -2,9 +2,18 @@
 
 ## v1.1.2
 
+### Enhancements
+
+#### AgentMap.Utils
+
+  * [rename] `upd_prop/4` → `upd_meta/4`
+  * [rename] `get_prop/2` → `meta/2`
+  * [rename] `set_prop/3` → `put_meta/4`
+
 ### Hard-deprecations
 
-  * [Utils] deprecating rudimentary `safe_apply/2` `safe_apply/3`.
+  * [AgentMap.Utils] deprecating `upd_prop/4`, `get_prop/2`, `set_prop/3`.
+  * [AgentMap.Utils] deprecating rudimentary `safe_apply/2` `safe_apply/3`.
 
 ## v1.1.1
 
@@ -32,7 +41,7 @@
 
 ### Enhancements
 
-#### [AgentMap]
+#### AgentMap
 
   * [optimized] `get_prop(am, :size)` executes fast, but may behave a little
     unaccurate upwards (rare cases);

@@ -232,8 +232,7 @@ defmodule AgentMap do
   end
 
   def _call(am, req, opts) do
-    opts =
-      Keyword.put_new(opts, :initial, opts[:default])
+    opts = Keyword.put_new(opts, :initial, opts[:default])
 
     req = struct(req, opts)
     pid = (is_map(am) && am.pid) || am
@@ -275,7 +274,6 @@ defmodule AgentMap do
     Got: #{inspect(malformed)}
     """
   end
-
 
   ##
   ## NEW
@@ -373,7 +371,6 @@ defmodule AgentMap do
     new(Map.new(enumerable, transform))
   end
 
-
   ##
   ## START / START_LINK
   ##
@@ -395,9 +392,14 @@ defmodule AgentMap do
     * `:spawn_opt` — is passed as options to the underlying process as in
       `Process.spawn/4`;
 
-    * `:timeout`, `5000` — `AgentMap` is allowed to spend at most
-      the given number of milliseconds on the whole process of initialization or
-      it will be terminated;
+    * `:hibernate_after` — if present, the GenServer process awaits any message
+      for the given number of milliseconds and if no message is received, the
+      process goes into hibernation automatically (by calling
+      `:proc_lib.hibernate/3`);
+
+    * `:timeout`, `5000` — `AgentMap` is allowed to spend at most the given
+      number of milliseconds on the whole process of initialization or it will
+      be terminated and the start function will return `{:error, :timeout}`;
 
     * `max_processes: pos_integer | :infinity | {pos_integer, pos_integer}`,
       `#{@max_p}` — a maximum number of processes instance can have. Limit can
@@ -406,7 +408,11 @@ defmodule AgentMap do
       requests are handled in a server process, one by one. For example,
       `max_processes: 100` ≅ `max_processes: {100, :infinity}` mean `99`
       processes can be spawned before optimizations are made, and no
-      hard-limitation is given.
+      hard-limitation is given;
+
+    * `:meta`, `[]` — a keyword list of metadata to be attached to the
+      `AgentMap` instance. See `AgentMap.Utils.meta/2`,
+      `AgentMap.Utils.put_meta/3` or `AgentMap.Utils.upd_meta/4`.
 
   ## Return values
 
@@ -427,7 +433,7 @@ defmodule AgentMap do
       ...>   AgentMap.start_link(k: fn -> 42 end)
       iex> get(pid, :k)
       42
-      iex> get_prop(pid, :max_processes)
+      iex> meta(pid, :max_processes)
       {#{@max_p}, :infinity}
 
   The following will not work:
@@ -451,7 +457,7 @@ defmodule AgentMap do
       ...> |> get(:a)
       42
   """
-  @spec start_link([{key, (() -> any)}], GenServer.options()) :: on_start
+  @spec start_link([{key, (() -> any)}], keyword) :: on_start
   def start_link(funs \\ [], opts \\ [max_processes: @max_p]) do
     start(funs, [{:link, true} | opts])
   end
@@ -474,21 +480,17 @@ defmodule AgentMap do
       iex> e
       %RuntimeError{message: "oops"}
   """
-  @spec start([{key, (() -> any)}], GenServer.options()) :: on_start
+  @spec start([{key, (() -> any)}], keyword) :: on_start
   def start(funs \\ [], opts \\ [max_processes: @max_p]) do
-    args =
-      [
-        funs: funs,
-        timeout: opts[:timeout] || 5000,
-        max_p: prep!(opts[:max_processes] || @max_p)
-      ]
+    args = [
+      funs: funs,
+      timeout: opts[:timeout] || 5000,
+      max_p: prep!(opts[:max_processes] || @max_p),
+      meta: opts[:meta] || []
+    ]
 
     # Global timeout must be turned off.
-    opts =
-      opts
-      |> Keyword.put(:timeout, :infinity)
-      |> Keyword.delete(:max_processes)
-      |> Keyword.delete(:link)
+    opts = Keyword.put(opts, :timeout, :infinity)
 
     if opts[:link] do
       GenServer.start_link(AgentMap.Server, args, opts)
@@ -496,7 +498,6 @@ defmodule AgentMap do
       GenServer.start(AgentMap.Server, args, opts)
     end
   end
-
 
   ##
   ## STOP
@@ -529,7 +530,6 @@ defmodule AgentMap do
     GenServer.stop(pid, reason, timeout)
   end
 
-
   ##
   ## GET / GET_LAZY / FETCH / FETCH!
   ##
@@ -559,7 +559,7 @@ defmodule AgentMap do
           ...>   end)
           ...> end
           iex> sleep(10)
-          iex> get_prop(am, :processes)
+          iex> meta(am, :processes)
           102
 
     * `:timeout`, `5000`.
@@ -772,7 +772,6 @@ defmodule AgentMap do
     end
   end
 
-
   ##
   ## GET_AND_UPDATE
   ##
@@ -859,7 +858,6 @@ defmodule AgentMap do
 
     _call(am, req, opts, !: :avg)
   end
-
 
   ##
   ## UPDATE / UPDATE! / REPLACE!
@@ -979,7 +977,6 @@ defmodule AgentMap do
     update!(am, key, fn _ -> v end, [{:tiny, true} | opts])
   end
 
-
   ##
   ## HAS_KEY? / KEYS / VALUES
   ##
@@ -1067,7 +1064,6 @@ defmodule AgentMap do
   def values(am) do
     _call(am, %Req{act: :values}, timeout: 5000)
   end
-
 
   ##
   ## PUT / PUT_NEW / PUT_NEW_LAZY
@@ -1214,7 +1210,6 @@ defmodule AgentMap do
     am
   end
 
-
   ##
   ## POP / DELETE / DROP
   ##
@@ -1338,7 +1333,6 @@ defmodule AgentMap do
     am
   end
 
-
   ##
   ## TO_MAP / TAKE
   ##
@@ -1413,7 +1407,6 @@ defmodule AgentMap do
   def take(am, keys, opts) do
     _call(am, %Multi.Req{get: keys}, opts, !: :now)
   end
-
 
   ##
   ## CAST

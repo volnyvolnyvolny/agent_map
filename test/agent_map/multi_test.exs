@@ -15,6 +15,7 @@ defmodule AgentMapMultiTest do
            |> update([:a, :b], fn [1, 1] -> [2, 2] end, initial: 1)
            |> update([:a, :b], fn [2, 2] -> [3, 3] end)
            |> get([:a, :b])
+
     [3, 3]
   end
 end

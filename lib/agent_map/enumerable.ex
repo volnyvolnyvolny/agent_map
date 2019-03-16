@@ -3,7 +3,7 @@ defimpl Enumerable, for: AgentMap do
   import AgentMap.Utils
 
   def count(am) do
-    {:ok, get_prop(am, :size)}
+    {:ok, meta(am, :size)}
   end
 
   def member?(am, {key, value}) do

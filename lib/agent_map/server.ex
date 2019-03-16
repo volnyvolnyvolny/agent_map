@@ -5,7 +5,7 @@ defmodule AgentMap.Server do
 
   use GenServer
 
-  alias AgentMap.{Worker, Utils}
+  alias AgentMap.Worker
 
   import Worker, only: [dict: 1, dec: 1, dec: 2, inc: 2, value?: 1]
   import Enum, only: [map: 2, zip: 2, empty?: 1]
