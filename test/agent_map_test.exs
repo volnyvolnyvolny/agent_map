@@ -32,29 +32,30 @@ defmodule AgentMapTest do
 
   test "Account example" do
     alias Test.Account
+    import Test.Account
 
     Account.start_link()
 
     #
 
-    assert Account.balance(:Alice) == :error
+    assert balance(:Alice) == :error
 
-    assert Account.deposit(:Alice, 10_000) == {:ok, 10_000}
-    assert Account.deposit(:Alice, 10_000) == {:ok, 20_000}
+    assert deposit(:Alice, 10_000) == {:ok, 10_000}
+    assert deposit(:Alice, 10_000) == {:ok, 20_000}
 
-    assert Account.withdraw(:Alice, 30) == {:ok, 19_970}
+    assert withdraw(:Alice, 30) == {:ok, 19_970}
 
-    assert Account.withdraw(:Alice, 20_000) == :error
+    assert withdraw(:Alice, 20_000) == :error
 
     #
-    assert Account.balance(:Alice) == {:ok, 19_970}
-    assert Account.transfer(:Alice, :Bob, 30) == :error
+    assert balance(:Alice) == {:ok, 19_970}
+    assert transfer(:Alice, :Bob, 30) == :error
 
-    assert Account.open(:Bob) == :ok
+    assert open(:Bob) == :ok
 
-    assert Account.transfer(:Alice, :Bob, 30) == :ok
-    assert Account.balance(:Alice) == {:ok, 19_940}
-    assert Account.balance(:Bob) == {:ok, 30}
+    assert transfer(:Alice, :Bob, 30) == :ok
+    assert balance(:Alice) == {:ok, 19_940}
+    assert balance(:Bob) == {:ok, 30}
 
     #
 

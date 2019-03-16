@@ -4,6 +4,10 @@
 
 ### Enhancements
 
+#### AgentMap.Multi
+
+  * [new option] `collect: :all`
+
 #### AgentMap.Utils
 
   * [rename] `upd_prop/4` → `upd_meta/4`

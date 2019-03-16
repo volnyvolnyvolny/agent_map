@@ -263,10 +263,14 @@ defmodule AgentMap.Multi do
       argument:
 
           iex> am = AgentMap.new(a: 1, b: 2)
-          ...> get_and_update(am, [:sum], fn [1, 2] ->
-          ...>   {3, [1 + 2]}
+          ...>
+          iex> get_and_update(am, [:sum], fn [1, 2] ->
+          ...>   {"the sum is 3", [1 + 2]}
           ...> end, collect: [:a, :b])
-          3
+          "the sum is 3"
+          #
+          iex> get(am, [:a, :b, :sum])
+          [1, 2, 3]
           #
           iex> am
           ...> |> update([:a, :b], fn [] ->
@@ -349,7 +353,9 @@ defmodule AgentMap.Multi do
   Callback `fun` may return:
 
     * `[new value]`;
+
     * `:id` — to leave values as they are;
+
     * `:drop` — to drop `keys`.
 
   For this call `{:avg, +1}` priority is used.
@@ -381,7 +387,8 @@ defmodule AgentMap.Multi do
       ...> |> get([:a, :b])                                          #             ↳ 4ab
       [3, 3]
   """
-  @spec update(am, ([value] -> [value] | :drop | :id), [key], keyword | timeout) :: am
+  @spec update(am, [key], ([value] -> [value]), keyword | timeout) :: am
+  @spec update(am, [key], ([value] -> :drop | :id), keyword | timeout) :: am
   def update(am, keys, fun, opts \\ []) do
     get_and_update(am, keys, &{am, fun.(&1)}, opts)
   end
@@ -409,8 +416,8 @@ defmodule AgentMap.Multi do
       ...> |> get([:a, :b])
       [3, 3]
   """
-  @spec cast(am, ([value] -> [value]), [key], keyword) :: am
-  @spec cast(am, ([value] -> :drop | :id), [key], keyword) :: am
+  @spec cast(am, [key], ([value] -> [value]), keyword) :: am
+  @spec cast(am, [key], ([value] -> :drop | :id), keyword) :: am
   def cast(am, keys, fun, opts \\ [])
 
   def cast(am, keys, fun, t) when is_timeout(t) do
