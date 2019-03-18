@@ -5,12 +5,9 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Worker, Server, CallbackError}
 
-  # !
-  import Kernel, except: [apply: 2]
-
-  import Server, only: [to_map: 1, spawn_worker: 2, apply: 2]
+  import Server, only: [spawn_worker: 2]
   import Map, only: [put: 3, fetch: 2, keys: 1, delete: 2]
-  import Worker, only: [value?: 1, inc: 1]
+  import Worker, only: [value?: 1, values: 1, inc: 1]
 
   @enforce_keys [:act]
 
@@ -116,19 +113,30 @@ defmodule AgentMap.Req do
   ## HANDLE
   ##
 
+  # !
   # this method subjects to an inaccuracy, supposing that
   # each worker holds a value
-  def handle(%{act: :keys}, {map, workers} = state) do
-    keys = keys(map) ++ Map.keys(workers)
+  # !
+  def handle(%{act: :keys}, {values, workers} = state) do
+    keys = Map.keys(values) ++ Map.keys(workers)
+
     {:reply, keys, state}
   end
 
-  def handle(%{act: :values}, state) do
-    {:reply, to_map(state) |> Map.values(), state}
+  def handle(%{act: :values}, {values, workers} = state) do
+    w_values = Map.values(values(workers))
+    k_values = Map.values(values)
+
+    {:reply, w_values ++ k_values, state}
   end
 
-  def handle(%{act: :to_map}, state) do
-    {:reply, to_map(state), state}
+  def handle(%{act: :to_map}, {values, workers} = state) do
+    map =
+      workers
+      |> values()
+      |> Enum.into(values)
+
+    {:reply, map, state}
   end
 
   #
@@ -141,7 +149,7 @@ defmodule AgentMap.Req do
 
   def handle(%{act: :upd_meta, key: p, fun: f}, state) do
     arg = Process.get(p)
-    ret = apply(f, [arg])
+    ret = f.(arg)
 
     Process.put(p, ret)
 
