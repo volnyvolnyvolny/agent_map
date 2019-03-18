@@ -11,14 +11,13 @@ defmodule AgentMap.Server do
   import Enum, only: [map: 2, zip: 2, empty?: 1]
   import Task, only: [shutdown: 2]
   import Map, only: [put: 3, fetch: 2, delete: 2]
-  import Kernel, except: [apply: 2]
 
-  # TODO: remove
-  def to_map({values, workers}) do
-    workers
-    |> values()
-    |> Enum.into(values)
-  end
+  #
+
+  def to_fun({m, f, args}), do: &apply(m, f, [&1 | args])
+  def to_fun(fun), do: fun
+
+  #
 
   def spawn_worker({values, workers} = state, key, quota \\ 1) do
     if Map.has_key?(workers, key) do
@@ -60,15 +59,6 @@ defmodule AgentMap.Server do
 
   #
 
-  @doc false
-  def apply({m, f, args}, extra) do
-    apply(m, f, extra ++ args)
-  end
-
-  def apply(fun, args) do
-    Kernel.apply(fun, args)
-  end
-
   ##
   ## GenServer callbacks
   ##
@@ -85,7 +75,7 @@ defmodule AgentMap.Server do
       |> map(fn {_key, fun} ->
         Task.async(fn ->
           try do
-            {:ok, apply(fun, [])}
+            {:ok, fun.()}
           rescue
             BadFunctionError ->
               {:error, :badfun}
@@ -143,40 +133,35 @@ defmodule AgentMap.Server do
   @impl true
   # Agent.get(am, f):
   def handle_call({:get, f}, from, state) do
-    Multi.Req
-    |> struct(
-      get: :all,
-      upd: [],
-      fun: &{f.(&1), []},
-      !: :avg
+    handle_call(
+      %Multi.Req{
+        get: :all,
+        upd: [],
+        fun: &{to_fun(f).(&1), []},
+        !: :avg
+      },
+      from,
+      state
     )
-    |> handle_call(from, state)
   end
 
   # Agent.update(am, f):
   def handle_call({:update, f}, from, state) do
-    f =
-      case f do
-        {m, f, args} ->
-          &{:ok, apply(m, f, [&1 | args])}
-
-        _ ->
-          &{:ok, f.(&1)}
-      end
-
-    handle_call({:get_and_update, f}, from, state)
+    handle_call({:get_and_update, &{:ok, to_fun(f)}}, from, state)
   end
 
   # Agent.get_and_update(am, f):
   def handle_call({:get_and_update, f}, from, state) do
-    Multi.Req
-    |> struct(
-      get: :all,
-      upd: :all,
-      fun: f,
-      !: :avg
+    handle_call(
+      %Multi.Req{
+        get: :all,
+        upd: :all,
+        fun: to_fun(f),
+        !: :avg
+      },
+      from,
+      state
     )
-    |> handle_call(from, state)
   end
 
   #
@@ -227,7 +212,7 @@ defmodule AgentMap.Server do
   end
 
   @impl true
-  def handle_info({worker, :die?}, {map, workers} = state) do
+  def handle_info({worker, :die?}, {values, workers} = state) do
     # Msgs could came during a small delay between
     # this call happen and :die? was sent.
     mq_len = Process.info(worker, :message_queue_len) |> elem(1)
@@ -243,24 +228,25 @@ defmodule AgentMap.Server do
       p = dict[:processes]
       q = dict[:quota]
 
+      #???
       key =
         case Enum.find(workers, fn {_key, pid} -> pid == worker end) do
           {key, _pid} ->
             key
 
           nil ->
-            raise "This is an AgentMap-library design error please report it!"
+            raise "This is an AgentMap-library design error. Please report it!"
         end
 
-      map =
+      values =
         if value? do
-          put(map, key, elem(value?, 0))
-        end || map
+          Map.put(values, key, elem(value?, 0))
+        end || values
 
       # return quota
       dec(:processes, q - p)
 
-      {:noreply, {map, Map.delete(workers, key)}}
+      {:noreply, {values, Map.delete(workers, key)}}
     else
       send(worker, :continue)
 
@@ -274,6 +260,7 @@ defmodule AgentMap.Server do
 
   @impl true
   def code_change(_old, state, fun) do
+    # TODO: WRONG!!!
     {:noreply, apply(fun, [state])}
   end
 end
