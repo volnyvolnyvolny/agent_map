@@ -244,6 +244,8 @@ defmodule AgentMap do
   #
 
   @doc false
+  def _call(am, req, opts \\ [])
+
   def _call(%_{pid: _} = am, req, opts) do
     _call(am.pid, req, opts)
   end
@@ -368,7 +370,11 @@ defmodule AgentMap do
     new(pid)
   end
 
-  def new(p) when is_pid(p), do: %__MODULE__{pid: GenServer.whereis(p)}
+  def new(p) when is_pid(p) do
+    %__MODULE__{
+      pid: GenServer.whereis(p)
+    }
+  end
 
   @doc """
   Creates an `AgentMap` instance from `enumerable` via the given transformation
@@ -1073,7 +1079,7 @@ defmodule AgentMap do
   """
   @spec keys(am) :: [key]
   def keys(am) do
-    _call(am, %Req{act: :keys}, timeout: 5000)
+    _call(am, %Req{act: :keys})
   end
 
   @doc """
@@ -1097,7 +1103,7 @@ defmodule AgentMap do
   """
   @spec values(am) :: [value]
   def values(am) do
-    _call(am, %Req{act: :values}, timeout: 5000)
+    _call(am, %Req{act: :values})
   end
 
   ##
@@ -1395,7 +1401,7 @@ defmodule AgentMap do
   """
   @spec to_map(am) :: %{required(key) => value}
   def to_map(am) do
-    _call(am, %Req{act: :to_map}, timeout: 5000)
+    _call(am, %Req{act: :to_map})
   end
 
   @doc """
