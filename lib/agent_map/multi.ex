@@ -1,7 +1,7 @@
 defmodule AgentMap.Multi do
   alias AgentMap.Multi
 
-  import AgentMap, only: [_call: 4, is_timeout: 1, take: 3]
+  import AgentMap, only: [_call: 4, is_timeout: 1]
   import Enum, only: [uniq: 1, map: 2]
 
   @moduledoc """
@@ -154,9 +154,7 @@ defmodule AgentMap.Multi do
     get_and_update(
       am,
       [],
-      fn keys ->
-        {fun.(keys), []}
-      end,
+      &{fun.(&1), []},
       [{:collect, keys} | opts]
     )
   end
@@ -195,7 +193,7 @@ defmodule AgentMap.Multi do
       |> Keyword.put_new(:!, :min)
       |> Keyword.put_new(:initial, opts[:default])
 
-    known = take(am, keys, opts)
+    known = AgentMap.take(am, keys, opts)
     map(keys, &Map.get(known, &1, opts[:initial]))
   end
 
@@ -318,7 +316,8 @@ defmodule AgentMap.Multi do
              | {ret, [value] | :drop | :id}
              | [{ret} | {ret, value} | :pop | :id]
              | :pop
-             | :id)
+             | :id
+             | map)
 
   @spec get_and_update(am, [key], cb_m(ret), keyword | timeout) :: ret | [ret | value]
         when ret: var

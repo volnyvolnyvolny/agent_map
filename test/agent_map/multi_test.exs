@@ -6,7 +6,7 @@ defmodule AgentMapMultiTest do
   import AgentMap, only: [put: 3]
   import AgentMap.Multi
 
-  doctest AgentMap.Multi, import: true
+#  doctest AgentMap.Multi, import: true
 
   test "…" do
     assert AgentMap.new(a: 6)

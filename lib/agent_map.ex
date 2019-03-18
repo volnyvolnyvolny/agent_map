@@ -40,6 +40,19 @@ defmodule AgentMap do
       ...> |> AgentMap.get(:a)
       1
 
+  You can even use it with `Agent` module interface:
+
+      iex> {:ok, am_pid} = AgentMap.start_link()
+      ...>
+      iex> Agent.update(am_pid, &Map.put(&1, :a, 1))
+      :ok
+      iex> Agent.get(am_pid, & &1[:a])
+      1
+      iex> Agent.get_and_update(am_pid, & {&1, %{}})
+      %{a: 1}
+      iex> Agent.get(am_pid, & &1[:a])
+      nil
+
   Struct `%AgentMap{}` allows to use `Enumerable` and `Collectable` protocols:
 
       iex> {:ok, pid} = AgentMap.start_link()

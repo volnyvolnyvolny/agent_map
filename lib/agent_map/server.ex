@@ -5,26 +5,27 @@ defmodule AgentMap.Server do
 
   use GenServer
 
-  alias AgentMap.Worker
+  alias AgentMap.{Worker, Multi}
 
-  import Worker, only: [dict: 1, dec: 1, dec: 2, inc: 2, value?: 1]
+  import Worker, only: [dict: 1, dec: 1, dec: 2, inc: 2, values: 1]
   import Enum, only: [map: 2, zip: 2, empty?: 1]
   import Task, only: [shutdown: 2]
   import Map, only: [put: 3, fetch: 2, delete: 2]
+  import Kernel, except: [apply: 2]
 
-  #
-  def to_map({map, workers}) do
-    for {key, w} <- workers, v? = value?(w), v?, into: map do
-      {key, v? |> elem(0)}
-    end
+  # TODO: remove
+  def to_map({values, workers}) do
+    workers
+    |> values()
+    |> Enum.into(values)
   end
 
-  def spawn_worker({map, workers} = state, key, quota \\ 1) do
+  def spawn_worker({values, workers} = state, key, quota \\ 1) do
     if Map.has_key?(workers, key) do
       state
     else
       value? =
-        case fetch(map, key) do
+        case fetch(values, key) do
           {:ok, value} ->
             {value}
 
@@ -50,12 +51,23 @@ defmodule AgentMap.Server do
       inc(:processes, quota)
 
       #
-      {delete(map, key), Map.put(workers, key, pid)}
+      {delete(values, key), Map.put(workers, key, pid)}
     end
   end
 
   def extract_state({:noreply, state}), do: state
   def extract_state({:reply, _get, state}), do: state
+
+  #
+
+  @doc false
+  def apply({m, f, args}, extra) do
+    apply(m, f, extra ++ args)
+  end
+
+  def apply(fun, args) do
+    Kernel.apply(fun, args)
+  end
 
   ##
   ## GenServer callbacks
@@ -128,21 +140,65 @@ defmodule AgentMap.Server do
   ## CALL / CAST
   ##
 
-  # @impl true
-  # def handle_call({:get, fun}, from, state) do
-  #   # Called as Agent.get(am, fun):
-  #   AgentMap.put()
-  #   r.handle(%{req | from: from}, state)
-  # end
-
   @impl true
+  # Agent.get(am, f):
+  def handle_call({:get, f}, from, state) do
+    Multi.Req
+    |> struct(
+      get: :all,
+      upd: [],
+      fun: &{f.(&1), []},
+      !: :avg
+    )
+    |> handle_call(from, state)
+  end
+
+  # Agent.update(am, f):
+  def handle_call({:update, f}, from, state) do
+    f =
+      case f do
+        {m, f, args} ->
+          &{:ok, apply(m, f, [&1 | args])}
+
+        _ ->
+          &{:ok, f.(&1)}
+      end
+
+    handle_call({:get_and_update, f}, from, state)
+  end
+
+  # Agent.get_and_update(am, f):
+  def handle_call({:get_and_update, f}, from, state) do
+    Multi.Req
+    |> struct(
+      get: :all,
+      upd: :all,
+      fun: f,
+      !: :avg
+    )
+    |> handle_call(from, state)
+  end
+
+  #
+
   def handle_call(%r{} = req, from, state) do
     r.handle(%{req | from: from}, state)
   end
 
+  #
+  #
+
   @impl true
-  def handle_cast(%r{} = req, state) do
-    {:noreply, extract_state(r.handle(req, state))}
+  def handle_cast({:cast, fun}, state) do
+    resp = handle_call({:update, fun}, nil, state)
+    {:noreply, extract_state(resp)}
+  end
+
+  #
+
+  def handle_cast(%_{} = req, state) do
+    resp = handle_call(req, nil, state)
+    {:noreply, extract_state(resp)}
   end
 
   ##

@@ -5,7 +5,7 @@ defmodule AgentMap.CallbackError do
 
   def message(%{multi_key?: false, got: got}) do
     """
-    callback can return:
+    "get_and_update"-callback can return:
 
       * {get, value}
       * {get}
@@ -37,9 +37,9 @@ defmodule AgentMap.CallbackError do
 
   def message(%{multi_key?: true, got: got}) do
     """
-    callback can return:
+    "get_and_update"-callback can return:
 
-      * {get, [value] | :id | :drop}
+      * {get, [value] | :id | :drop | map}
       * [{get, value} | {get} | :id | :pop]
 
       * {get} = {get, :id}

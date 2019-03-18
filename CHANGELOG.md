@@ -7,7 +7,12 @@
 #### AgentMap
 
   * Now `Agent` module interface can be used with `AgentMap` processes (thanks
-    for idea to alexogar).
+    to @alexogar for the idea).
+
+#### AgentMap.Multi
+  
+  * `get_and_update/4` callbacks now can return `{get, map with a new keys}` (in
+    many cases it's the easier to use syntax).
 
 #### AgentMap.Utils
 

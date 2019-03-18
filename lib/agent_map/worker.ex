@@ -40,7 +40,15 @@ defmodule AgentMap.Worker do
 
   def dec(key, step \\ 1), do: inc(key, -step)
 
+  #
+
   def value?(pid), do: dict(pid)[:value?]
+
+  def values(workers) do
+    for {k, worker} <- workers, v? = value?(worker), into: %{} do
+      {k, elem(v?, 0)}
+    end
+  end
 
   #
 

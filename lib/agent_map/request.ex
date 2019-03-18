@@ -5,7 +5,10 @@ defmodule AgentMap.Req do
 
   alias AgentMap.{Worker, Server, CallbackError}
 
-  import Server, only: [to_map: 1, spawn_worker: 2]
+  # !
+  import Kernel, except: [apply: 2]
+
+  import Server, only: [to_map: 1, spawn_worker: 2, apply: 2]
   import Map, only: [put: 3, fetch: 2, keys: 1, delete: 2]
   import Worker, only: [value?: 1, inc: 1]
 
