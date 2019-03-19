@@ -6,7 +6,6 @@ defmodule AgentMap.Req do
   alias AgentMap.{Worker, Server, CallbackError}
 
   import Server, only: [spawn_worker: 2]
-  import Map, only: [put: 3, fetch: 2, keys: 1, delete: 2]
   import Worker, only: [value?: 1, values: 1, inc: 1]
 
   @enforce_keys [:act]
@@ -29,8 +28,8 @@ defmodule AgentMap.Req do
 
   #
 
-  defp collect(key, {map, workers} = _state) do
-    case fetch(map, key) do
+  defp collect(key, {values, workers} = _state) do
+    case Map.fetch(values, key) do
       {:ok, value} ->
         {value}
 
@@ -158,8 +157,11 @@ defmodule AgentMap.Req do
 
   #
 
-  def handle(%{act: :meta, key: :real_size}, state) do
-    {:reply, map_size(to_map(state)), state}
+  def handle(%{act: :meta, key: :real_size}, {values, workers} = state) do
+    w_size = map_size(values(workers))
+    v_size = map_size(values)
+
+    {:reply, w_size + v_size, state}
   end
 
   def handle(%{act: :meta, key: :size}, {map, workers} = state) do
@@ -185,7 +187,7 @@ defmodule AgentMap.Req do
     {:noreply, state}
   end
 
-  def handle(%{tiny: true} = req, {map, workers} = state) do
+  def handle(%{tiny: true} = req, {values, workers} = state) do
     worker = workers[req.key]
 
     state =
@@ -198,10 +200,10 @@ defmodule AgentMap.Req do
 
         case run_and_reply(req, value?) do
           {value} ->
-            {put(map, req.key, value), workers}
+            {Map.put(values, req.key, value), workers}
 
           nil ->
-            {delete(map, req.key), workers}
+            {Map.delete(values, req.key), workers}
 
           :id ->
             # unchanged

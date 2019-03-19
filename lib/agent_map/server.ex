@@ -7,10 +7,8 @@ defmodule AgentMap.Server do
 
   alias AgentMap.{Worker, Multi}
 
-  import Worker, only: [dict: 1, dec: 1, dec: 2, inc: 2, values: 1]
+  import Worker, only: [dict: 1, dec: 1, dec: 2, inc: 2]
   import Enum, only: [map: 2, zip: 2, empty?: 1]
-  import Task, only: [shutdown: 2]
-  import Map, only: [put: 3, fetch: 2, delete: 2]
 
   #
 
@@ -24,7 +22,7 @@ defmodule AgentMap.Server do
       state
     else
       value? =
-        case fetch(values, key) do
+        case Map.fetch(values, key) do
           {:ok, value} ->
             {value}
 
@@ -50,7 +48,7 @@ defmodule AgentMap.Server do
       inc(:processes, quota)
 
       #
-      {delete(values, key), Map.put(workers, key, pid)}
+      {Map.delete(values, key), Map.put(workers, key, pid)}
     end
   end
 
@@ -90,7 +88,7 @@ defmodule AgentMap.Server do
       end)
       |> Task.yield_many(timeout)
       |> map(fn {task, res} ->
-        res || shutdown(task, :brutal_kill)
+        res || Task.shutdown(task, :brutal_kill)
       end)
       |> map(fn
         {:ok, result} ->
@@ -133,35 +131,33 @@ defmodule AgentMap.Server do
   @impl true
   # Agent.get(am, f):
   def handle_call({:get, f}, from, state) do
-    handle_call(
-      %Multi.Req{
+    req =
+      struct(Multi.Req, %{
         get: :all,
         upd: [],
         fun: &{to_fun(f).(&1), []},
         !: :avg
-      },
-      from,
-      state
-    )
+      })
+
+    handle_call(req, from, state)
   end
 
   # Agent.update(am, f):
   def handle_call({:update, f}, from, state) do
-    handle_call({:get_and_update, &{:ok, to_fun(f)}}, from, state)
+    handle_call({:get_and_update, &{:ok, to_fun(f).(&1)}}, from, state)
   end
 
   # Agent.get_and_update(am, f):
   def handle_call({:get_and_update, f}, from, state) do
-    handle_call(
-      %Multi.Req{
+    req =
+      struct(Multi.Req, %{
         get: :all,
         upd: :all,
         fun: to_fun(f),
         !: :avg
-      },
-      from,
-      state
-    )
+      })
+
+    handle_call(req, from, state)
   end
 
   #
@@ -228,7 +224,7 @@ defmodule AgentMap.Server do
       p = dict[:processes]
       q = dict[:quota]
 
-      #???
+      # ???
       key =
         case Enum.find(workers, fn {_key, pid} -> pid == worker end) do
           {key, _pid} ->

@@ -111,18 +111,14 @@ defmodule AgentMap.Multi.Req do
   ##    to be dropped (`:drop`) and a keyword with update data (`:upd`). Also,
   ##    request is sent to collected unknown values.
 
-  alias AgentMap.{CallbackError, Req, Multi, Server, Worker, Req.Commit}
+  alias AgentMap.{CallbackError, Req, Multi, Server, Worker, Multi.Req.Commit}
 
-  # !
-  import Kernel, except: [apply: 2]
-  import Server, only: [apply: 2, spawn_worker: 2, extract_state: 1]
-
+  import Server, only: [spawn_worker: 2]
   import Worker, only: [values: 1]
-
   import Req, only: [reply: 2]
 
   import MapSet, only: [intersection: 2, difference: 2, to_list: 1]
-  import Enum, only: [into: 2, uniq: 1, zip: 2, reduce: 3, filter: 2, map: 2, split_with: 2]
+  import Enum, only: [into: 2, zip: 2, reduce: 3, filter: 2, map: 2, split_with: 2]
   import List, only: [delete: 2]
 
   ##
@@ -169,8 +165,6 @@ defmodule AgentMap.Multi.Req do
               init = req.initial
               Enum.map(req.get, &Map.get(known, &1, init))
             end
-
-          #          IO.inspect(req, label: :req)
 
           ret = apply(req.fun, [arg])
 
@@ -348,7 +342,7 @@ defmodule AgentMap.Multi.Req do
       upd: new_values
     })
 
-    ret
+    reply(req.from, ret)
   end
 
   # {ret}
@@ -361,7 +355,7 @@ defmodule AgentMap.Multi.Req do
       send(worker, :id)
     end
 
-    ret
+    reply(req.from, ret)
   end
 
   defp finalize(req, {ret, :drop}, _k, {get_upd, upd}) do
@@ -371,7 +365,7 @@ defmodule AgentMap.Multi.Req do
 
     GenServer.cast(req.server, %Commit{drop: upd})
 
-    ret
+    reply(req.from, ret)
   end
 
   # wrong length of the new values list
@@ -399,7 +393,7 @@ defmodule AgentMap.Multi.Req do
 
     GenServer.cast(req.server, %Commit{upd: new_values})
 
-    ret
+    reply(req.from, ret)
   end
 
   # :id | :pop

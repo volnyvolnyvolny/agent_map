@@ -1446,7 +1446,11 @@ defmodule AgentMap do
   end
 
   def take(am, keys, opts) do
-    _call(am, %Multi.Req{get: keys}, opts, !: :now)
+    values = _call(am, %Multi.Req{get: keys, fun: & &1}, opts, !: :now)
+
+    keys
+    |> Enum.zip(values)
+    |> Map.new()
   end
 
   ##

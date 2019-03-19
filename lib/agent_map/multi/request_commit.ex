@@ -1,7 +1,9 @@
 defmodule AgentMap.Multi.Req.Commit do
   @moduledoc false
 
-  alias AgentMap.Req
+  alias AgentMap.{Req, Server}
+
+  import Server, only: [extract_state: 1]
 
   @type key :: AgentMap.key()
   @type value :: AgentMap.value()
@@ -26,6 +28,12 @@ defmodule AgentMap.Multi.Req.Commit do
           from: pid
         }
 
+  defstruct [
+    :from,
+    upd: %{},
+    drop: []
+  ]
+
   ##
   ## HANDLE
   ##
@@ -36,7 +44,7 @@ defmodule AgentMap.Multi.Req.Commit do
     pop = fn _ -> :pop end
 
     state =
-      reduce(req.drop, state, fn k, state ->
+      Enum.reduce(req.drop, state, fn k, state ->
         %Req{act: :upd, key: k, fun: pop, tiny: true, !: {:avg, +1}}
         |> Req.handle(state)
         |> extract_state()
@@ -45,7 +53,7 @@ defmodule AgentMap.Multi.Req.Commit do
     # UPDATE:
 
     state =
-      reduce(req.upd, state, fn {k, new_value}, state ->
+      Enum.reduce(req.upd, state, fn {k, new_value}, state ->
         upd = fn _ -> {:_ret, new_value} end
 
         %Req{act: :upd, key: k, fun: upd, tiny: true, !: {:avg, +1}}
