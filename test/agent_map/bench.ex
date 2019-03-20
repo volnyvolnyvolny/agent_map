@@ -128,6 +128,6 @@ defmodule AgentMap.Bench do
             Agent.get(a, &Map.get(&1, div(k * 342, 7)))
           end
         end)
-    }, [{:inputs, datasets} | opts])
+    }, [{:inputs, datasets} | benchee_opts])
   end
 end
