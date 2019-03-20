@@ -262,7 +262,15 @@ defmodule AgentMap.Utils do
   def upd_meta(am, key, fun, opts \\ [cast: true])
 
   def upd_meta(_am, key, _fun, _opts)
-      when key in [:processes, :size, :real_size, :max_concurrency, :max_c, :max_p, :max_processes] do
+      when key in [
+             :processes,
+             :size,
+             :real_size,
+             :max_concurrency,
+             :max_c,
+             :max_p,
+             :max_processes
+           ] do
     raise """
     Cannot update #{inspect(key)} metadata information stored under key #{inspect(key)}.
     """
@@ -337,7 +345,15 @@ defmodule AgentMap.Utils do
   def upd_prop(am, key, fun, opts \\ [cast: true])
 
   def upd_prop(_am, key, _fun, _opts)
-      when key in [:processes, :size, :real_size, :max_concurrency, :max_c, :max_processes, :max_p] do
+      when key in [
+             :processes,
+             :size,
+             :real_size,
+             :max_concurrency,
+             :max_c,
+             :max_processes,
+             :max_p
+           ] do
     raise "Cannot update #{inspect(key)} prop."
   end
 

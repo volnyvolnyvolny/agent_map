@@ -20,7 +20,8 @@ defmodule AgentMap.Mixfile do
     ]
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test"]
+  defp elixirc_paths(:test), do: ["lib", "test", "test/agent_map"]
+  defp elixirc_paths(:dev), do: ["lib", "test/agent_map"]
   defp elixirc_paths(_), do: ["lib"]
 
   def application do
