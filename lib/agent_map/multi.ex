@@ -102,7 +102,6 @@ defmodule AgentMap.Multi do
       ...>   Chris: 1_000_000_000
       ...> )
       ...>
-      iex> all = AgentMap.keys(am)
       iex> Multi.call(am, fn accounts ->
       ...>
       ...>   all_money = Enum.sum(Map.values(accounts))
@@ -110,7 +109,7 @@ defmodule AgentMap.Multi do
       ...>
       ...>   {"now everyone is happy!", accounts}
       ...>
-      ...> end, get: all, upd: all)
+      ...> end, get: :all, upd: :all)
       "now everyone is happy!"
       #
       iex> get(am, [:Alice, :Bob, :Chris])
@@ -186,6 +185,28 @@ defmodule AgentMap.Multi do
     * `!: priority`, `:now`;
 
     * `:timeout`, `5000`.
+
+  ## Examples
+
+      iex> am = AgentMap.new(a: 1, b: 2, c: 3)
+      ...>
+      iex> Multi.call(am, fn m ->
+      ...>   {"the sum is \#{Enum.sum(Map.values(m))}"}
+      ...> end, get: :all)
+      "the sum is 6"
+      #
+      iex> Multi.call(am, fn %{} ->
+      ...>   {:ok, %{a: 6}}
+      ...> end, upd: :all)
+      :ok
+      #
+      iex> Multi.call(am, fn m ->
+      ...>   {m, :drop}
+      ...> end, get: :all, upd: :all)
+      %{a: 6}
+      #
+      iex> get(am, [:a, :b, :c], default: :no)
+      [:no, :no, :no]
   """
   @spec call(am, (map -> {ret, map}), keyword | timeout) :: ret when ret: var
   @spec call(am, (map -> {ret, :id}), keyword) :: ret when ret: var
@@ -201,7 +222,7 @@ defmodule AgentMap.Multi do
 
     keys = opts[:upd] || []
 
-    unless keys == uniq(keys) do
+    unless keys == :all || keys == uniq(keys) do
       raise ArgumentError, """
       expected uniq keys for:
 

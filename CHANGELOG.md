@@ -13,7 +13,10 @@
 
   * [new] `call/3` function that greatly simplifies making the multi-key calls.
   * [loose] `get_and_update/4`, `update/4`, `cast/4` looses `collect` option
-    (use `call/3`).
+    (use `call/3` instead).
+  * [new] `get_and_update/4`, `update/4`, `cast/4` are now support `:all`
+    passing as a keys argument.
+  * [new] `call/3` are now support `get: :all` and `upd: :all` being provided.
 
 #### AgentMap.Utils
 
