@@ -1,10 +1,6 @@
 defmodule AgentMap.Multi.Req.Commit do
   @moduledoc false
 
-  alias AgentMap.{Req, Server}
-
-  import Server, only: [extract_state: 1]
-
   @type key :: AgentMap.key()
   @type value :: AgentMap.value()
 
@@ -14,13 +10,9 @@ defmodule AgentMap.Multi.Req.Commit do
   @typedoc """
   Fields:
 
-    * initial: value for missing keys;
-    * server: pid;
-    * from: replying to;
-    * !: priority to be used when collecting values;
-    # * get: keys whose values are returned;
     * upd: a map with a new values;
-    * drop: keys that will be dropped.
+    * drop: keys that will be dropped;
+    * from: replying to.
   """
   @type t :: %__MODULE__{
           upd: %{required(key) => value},
@@ -37,30 +29,53 @@ defmodule AgentMap.Multi.Req.Commit do
   ##
   ## HANDLE
   ##
+  def handle(%{from: {pid, _ref}} = req, state) do
+    handle(%{req | from: pid}, state)
+  end
 
-  def handle(req, state) do
+  def handle(%{from: pid} = req, state) do
+    #
+    #
     # DROP:
+    #
 
-    pop = fn _ -> :pop end
+    {state, keys} =
+      Enum.reduce(req.drop, {state, []}, fn k, {{values, workers} = state, acc} ->
+        if Map.has_key?(workers, k) do
+          send(workers[k], %{act: :drop, key: k, !: {:avg, +1}, from: pid})
 
-    state =
-      Enum.reduce(req.drop, state, fn k, state ->
-        %Req{act: :upd, key: k, fun: pop, tiny: true, !: {:avg, +1}}
-        |> Req.handle(state)
-        |> extract_state()
+          {state, acc}
+        else
+          values = Map.delete(values, k)
+          {{values, workers}, [k | acc]}
+        end
       end)
 
+    #
     # UPDATE:
+    #
 
-    state =
-      Enum.reduce(req.upd, state, fn {k, new_value}, state ->
-        upd = fn _ -> {:_ret, new_value} end
+    {state, keys} =
+      Enum.reduce(req.upd, {state, keys}, fn {k, new_v}, {{values, workers} = state, acc} ->
+        if Map.has_key?(workers, k) do
+          upd = fn v, value? ->
+            if value? do
+              {{k, {v}}, new_v}
+            else
+              {{k, nil}, new_v}
+            end
+          end
 
-        %Req{act: :upd, key: k, fun: upd, tiny: true, !: {:avg, +1}}
-        |> Req.handle(state)
-        |> extract_state()
+          send(workers[k], %{act: :get_upd, key: k, fun: upd, !: {:avg, +1}, from: pid})
+
+          {state, acc}
+        else
+          values = Map.put(values, k, new_v)
+          {{values, workers}, [k | acc]}
+        end
       end)
 
-    {:noreply, state}
+    # keys that ↓ were processed on server
+    {:reply, keys, state}
   end
 end

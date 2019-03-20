@@ -10,10 +10,10 @@
     to [@alexogar](https://github.com/alexogar) for the idea).
 
 #### AgentMap.Multi
-  
-  * `get_and_update/4` callbacks now can return `{get, map with a new keys}`. In
-    many cases it's the best syntax.
-  * `update/4` callbacks now can return `map with a new keys`.
+
+  * [new] `call/3` function that greatly simplifies making the multi-key calls.
+  * [loose] `get_and_update/4`, `update/4`, `cast/4` looses `collect` option
+    (use `call/3`).
 
 #### AgentMap.Utils
 
@@ -23,8 +23,10 @@
 
 ### Bug fixes
 
-  * Starting `AgentMap` under the `Supervisor`.
-  * `child_spec/1` was missing docs.
+  * [`AgentMap`] starting under the `Supervisor`.
+  * [`AgentMap`] `child_spec/1` was missing docs.
+  * [`AgentMap.Server`] `code_change/3` was done wrong.
+  * [`AgentMap.Utils`] `inc/3`, `dec/3` wrong default `:initial` value.
 
 ### Hard-deprecations
 

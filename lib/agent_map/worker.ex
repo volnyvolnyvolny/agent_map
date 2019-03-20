@@ -1,11 +1,11 @@
 defmodule AgentMap.Worker do
+  @moduledoc false
+
   require Logger
 
   alias AgentMap.Req
 
   import Process, only: [get: 1, put: 2, info: 2, delete: 1, alive?: 1]
-
-  @moduledoc false
 
   @compile {:inline, rand: 1, dict: 1, inc: 1, dec: 1}
 
@@ -110,7 +110,7 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp handle(%{act: :upd} = r) do
+  defp handle(%{act: act} = r) when act in [:get_upd, :drop] do
     case Req.run_and_reply(r, get(:value?)) do
       {_value} = v? ->
         put(:value?, v?)
@@ -145,7 +145,8 @@ defmodule AgentMap.Worker do
 
   defp handle(msg) do
     Logger.warn("""
-    Worker got unexpected message.
+    Worker #{inspect(self())} got unexpected message.
+
     Message: #{inspect(msg)}.
     """)
   end
@@ -185,7 +186,7 @@ defmodule AgentMap.Worker do
             :bye
 
           :continue ->
-            # Next time wait a few ms more.
+            # next time wait a few ms longer
             wait = get(:wait)
             put(:wait, wait + rand(5))
             loop(heap)

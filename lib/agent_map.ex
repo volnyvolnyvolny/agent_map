@@ -264,6 +264,8 @@ defmodule AgentMap do
     end
   end
 
+  #
+
   @doc false
   def _call(am, req, opts, defs) do
     _call(am, req, Keyword.merge(defs, opts))
@@ -889,7 +891,7 @@ defmodule AgentMap do
   end
 
   def get_and_update(am, k, f, opts) do
-    req = %Req{act: :upd, key: k, fun: f}
+    req = %Req{act: :get_upd, key: k, fun: f}
 
     if opts[:!] == :now do
       raise ArgumentError, """
@@ -1334,7 +1336,6 @@ defmodule AgentMap do
       |> Keyword.put(:tiny, true)
 
     get_and_update(am, key, fn _ -> :pop end, opts)
-
     am
   end
 
@@ -1362,14 +1363,12 @@ defmodule AgentMap do
   """
   @spec drop(am, Enumerable.t(), keyword) :: am
   def drop(am, keys, opts \\ [cast: true]) do
-    opts = Keyword.put_new(opts, :cast, true)
-
-    Multi.get_and_update(
-      am,
-      keys,
-      fn _ -> {:_done, :drop} end,
+    opts =
       opts
-    )
+      |> Keyword.put_new(:cast, true)
+      |> Keyword.put(:upd, keys)
+
+    Multi.call(am, fn %{} -> {:_done, :drop} end, opts)
 
     am
   end
@@ -1446,11 +1445,10 @@ defmodule AgentMap do
   end
 
   def take(am, keys, opts) do
-    values = _call(am, %Multi.Req{get: keys, fun: & &1}, opts, !: :now)
+    opts = Keyword.put_new(opts, :!, :now)
+    t = opts[:timeout]
 
-    keys
-    |> Enum.zip(values)
-    |> Map.new()
+    Multi.call(am, &{&1, :id}, get: keys, !: opts[:!], timeout: t)
   end
 
   ##

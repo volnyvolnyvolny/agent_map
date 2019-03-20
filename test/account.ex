@@ -42,9 +42,9 @@ defmodule Test.Account do
     AgentMap.get_and_update(
       __MODULE__,
       account,
-      fn
-        b ->
-          {{:ok, b + amount}, b + amount}
+      fn b ->
+        new_amount = b + amount
+        {{:ok, new_amount}, new_amount}
       end,
       initial: 0
     )

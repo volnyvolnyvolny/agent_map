@@ -183,8 +183,7 @@ defmodule AgentMap.Utils do
         @forbidden
         |> List.delete(k)
         |> Enum.join(" and ")
-      }`) cannot be called from server process with `tiny:
-      true`.
+      }`) cannot be called from server process (`tiny: true` was given).
       """
     else
       AgentMap._call(pid, %Req{act: :meta, key: k}, timeout: 5000)
@@ -379,11 +378,11 @@ defmodule AgentMap.Utils do
       iex> am = AgentMap.new(a: 1.5)
       iex> am
       ...> |> inc(:a, step: 1.5)
-      ...> |> inc(:b)
+      ...> |> inc(:b, step: 1.5)
       ...> |> get(:a)
       3.0
       iex> get(am, :b)
-      1
+      1.5
 
       iex> AgentMap.new()
       ...> |> sleep(:a, 20)
@@ -398,7 +397,7 @@ defmodule AgentMap.Utils do
     opts =
       opts
       |> Keyword.put_new(:step, 1)
-      |> Keyword.put_new(:initial, 1)
+      |> Keyword.put_new(:initial, 0)
       |> Keyword.put_new(:cast, true)
       |> Keyword.put_new(:!, :avg)
 
@@ -416,10 +415,10 @@ defmodule AgentMap.Utils do
             k = inspect(key)
             v = inspect(value)
 
-            m = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
-            m = m.((step > 0 && "inc") || "dec")
+            msg = &"cannot #{&1}rement key #{k} because it has a non-numerical value #{v}"
+            msg = msg.((step > 0 && "inc") || "dec")
 
-            raise ArithmeticError, message: m
+            raise ArithmeticError, msg
           end
         else
           if init do

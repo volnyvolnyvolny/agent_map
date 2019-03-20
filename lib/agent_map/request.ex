@@ -42,6 +42,7 @@ defmodule AgentMap.Req do
 
   #
 
+  # TODO: rewrite
   defp args(%{fun: f} = req, value?) do
     init = Map.get(req, :initial)
     value = if value?, do: elem(value?, 0), else: init
@@ -53,12 +54,20 @@ defmodule AgentMap.Req do
     end
   end
 
+  #
+
   def run_and_reply(%{act: :get} = req, value?) do
     args = args(req, value?)
     from = Map.get(req, :from)
     ret = apply(req.fun, args)
 
     reply(from, ret) && :id
+  end
+
+  def run_and_reply(%{act: :drop} = req, value?) do
+    from = Map.get(req, :from)
+
+    reply(from, {req.key, value?}) && nil
   end
 
   def run_and_reply(req, value?) do
@@ -92,7 +101,7 @@ defmodule AgentMap.Req do
     |> Map.delete(:key)
     |> Enum.reject(&match?({_, nil}, &1))
     |> Enum.reject(&match?({:tiny, false}, &1))
-    |> Enum.into(%{})
+    |> Map.new()
   end
 
   # handle request in a separate task
@@ -238,7 +247,7 @@ defmodule AgentMap.Req do
       {:noreply, state}
     else
       case req do
-        %{act: :upd} ->
+        %{act: :get_upd} ->
           handle(req, spawn_worker(state, req.key))
 
         %{act: :get} ->

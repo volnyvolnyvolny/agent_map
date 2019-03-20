@@ -12,11 +12,6 @@ defmodule AgentMap.Server do
 
   #
 
-  def to_fun({m, f, args}), do: &apply(m, f, [&1 | args])
-  def to_fun(fun), do: fun
-
-  #
-
   def spawn_worker({values, workers} = state, key, quota \\ 1) do
     if Map.has_key?(workers, key) do
       state
@@ -73,7 +68,7 @@ defmodule AgentMap.Server do
       |> map(fn {_key, fun} ->
         Task.async(fn ->
           try do
-            {:ok, fun.()}
+            {:ok, run(fun, [])}
           rescue
             BadFunctionError ->
               {:error, :badfun}
@@ -135,7 +130,7 @@ defmodule AgentMap.Server do
       struct(Multi.Req, %{
         get: :all,
         upd: [],
-        fun: &{to_fun(f).(&1), []},
+        fun: &{run(f, [&1]), :id},
         !: :avg
       })
 
@@ -144,7 +139,9 @@ defmodule AgentMap.Server do
 
   # Agent.update(am, f):
   def handle_call({:update, f}, from, state) do
-    handle_call({:get_and_update, &{:ok, to_fun(f).(&1)}}, from, state)
+    fun = &{:ok, run(f, [&1])}
+
+    handle_call({:get_and_update, fun}, from, state)
   end
 
   # Agent.get_and_update(am, f):
@@ -153,7 +150,7 @@ defmodule AgentMap.Server do
       struct(Multi.Req, %{
         get: :all,
         upd: :all,
-        fun: to_fun(f),
+        fun: &run(f, [&1]),
         !: :avg
       })
 
@@ -210,34 +207,30 @@ defmodule AgentMap.Server do
   @impl true
   def handle_info({worker, :die?}, {values, workers} = state) do
     # Msgs could came during a small delay between
-    # this call happen and :die? was sent.
+    # :die? was sent and this call happen.
     mq_len = Process.info(worker, :message_queue_len) |> elem(1)
 
-    unless mq_len > 0 do
+    if mq_len == 0 do
+      # no messages in the workers mailbox
+
       #!
       dict = dict(worker)
       send(worker, :die!)
 
       #!
-      value? = dict[:value?]
-
       p = dict[:processes]
       q = dict[:quota]
 
-      # ???
-      key =
-        case Enum.find(workers, fn {_key, pid} -> pid == worker end) do
-          {key, _pid} ->
-            key
-
-          nil ->
-            raise "This is an AgentMap-library design error. Please report it!"
-        end
+      {key, _pid} = Enum.find(workers, fn {_key, pid} -> pid == worker end)
 
       values =
-        if value? do
-          Map.put(values, key, elem(value?, 0))
-        end || values
+        case dict[:value?] do
+          {value} ->
+            Map.put(values, key, value)
+
+          nil ->
+            values
+        end
 
       # return quota
       dec(:processes, q - p)
@@ -256,7 +249,11 @@ defmodule AgentMap.Server do
 
   @impl true
   def code_change(_old, state, fun) do
-    # TODO: WRONG!!!
-    {:noreply, apply(fun, [state])}
+    {:ok, run(fun, [state])}
   end
+
+  #
+
+  defp run({m, f, args}, extra), do: apply(m, f, extra ++ args)
+  defp run(fun, extra), do: apply(fun, extra)
 end
