@@ -191,7 +191,7 @@ defmodule AgentMap do
   See `Supervisor` docs.
   """
 
-  @max_p 5000
+  @max_c 5000
 
   @typedoc "Return values for `start` and `start_link` functions"
   @type on_start :: {:ok, pid} | {:error, {:already_started, pid} | [{key, reason}]}
@@ -273,8 +273,8 @@ defmodule AgentMap do
 
   #
 
-  defp prep!(max_p) when is_timeout(max_p) do
-    {max_p, :infinity}
+  defp prep!(max_c) when is_timeout(max_c) do
+    {max_c, :infinity}
   end
 
   defp prep!({soft, hard}) when hard < soft do
@@ -285,13 +285,13 @@ defmodule AgentMap do
     """
   end
 
-  defp prep!({_soft, _h} = max_p) do
-    max_p
+  defp prep!({_soft, _h} = max_c) do
+    max_c
   end
 
   defp prep!(malformed) do
     raise ArgumentError, """
-    Value for option :max_processes is malformed.
+    Value for option :max_concurrency is malformed.
     Got: #{inspect(malformed)}
     """
   end
@@ -426,12 +426,12 @@ defmodule AgentMap do
       number of milliseconds on the whole process of initialization or it will
       be terminated and the start function will return `{:error, :timeout}`;
 
-    * `max_processes: pos_integer | :infinity | {pos_integer, pos_integer}`,
-      `#{@max_p}` — a maximum number of processes instance can have. Limit can
+    * `max_concurrency: pos_integer | :infinity | {pos_integer, pos_integer}`,
+      `#{@max_c}` — a maximum number of processes instance can have. Limit can
       be "soft" — if it is exceeded, optimizations are applied; or "hard" — if
       it's exceeded and no optimization can be made to spawn workers, all
       requests are handled in a server process, one by one. For example,
-      `max_processes: 100` ≅ `max_processes: {100, :infinity}` mean `99`
+      `max_concurrency: 100` ≅ `max_concurrency: {100, :infinity}` mean `99`
       processes can be spawned before optimizations are made, and no
       hard-limitation is given;
 
@@ -458,8 +458,8 @@ defmodule AgentMap do
       ...>   AgentMap.start_link(k: fn -> 42 end)
       iex> get(pid, :k)
       42
-      iex> meta(pid, :max_processes)
-      {#{@max_p}, :infinity}
+      iex> meta(pid, :max_concurrency)
+      {#{@max_c}, :infinity}
 
   The following will not work:
 
@@ -483,7 +483,7 @@ defmodule AgentMap do
       42
   """
   @spec start_link([{key, (() -> any)}], keyword) :: on_start
-  def start_link(funs \\ [], opts \\ [max_processes: @max_p]) do
+  def start_link(funs \\ [], opts \\ [max_concurrency: @max_c]) do
     start(funs, [{:link, true} | opts])
   end
 
@@ -506,11 +506,11 @@ defmodule AgentMap do
       %RuntimeError{message: "oops"}
   """
   @spec start([{key, (() -> any)}], keyword) :: on_start
-  def start(funs \\ [], opts \\ [max_processes: @max_p]) do
+  def start(funs \\ [], opts \\ [max_concurrency: @max_c]) do
     args = [
       funs: funs,
       timeout: opts[:timeout] || 5000,
-      max_p: prep!(opts[:max_processes] || @max_p),
+      max_c: prep!(opts[:max_processes] || opts[:max_concurrency] || @max_c),
       meta: opts[:meta] || []
     ]
 

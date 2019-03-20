@@ -148,11 +148,16 @@ defmodule AgentMap.Req do
   end
 
   #
-  # :max_p ≅ :max_processes
+  # :max_c ≅ :max_concurrency
   #
 
-  def handle(%{act: :upd_meta, key: :max_processes} = req, state) do
-    handle(%{req | key: :max_p}, state)
+  # legacy
+  def handle(%{key: :max_processes} = req, state) do
+    handle(%{req | key: :max_concurrency}, state)
+  end
+
+  def handle(%{act: :upd_meta, key: :max_concurrency} = req, state) do
+    handle(%{req | key: :max_c}, state)
   end
 
   def handle(%{act: :upd_meta, key: p, fun: f}, state) do
@@ -177,8 +182,8 @@ defmodule AgentMap.Req do
     {:reply, map_size(map) + map_size(workers), state}
   end
 
-  def handle(%{act: :meta, key: :max_processes} = req, state) do
-    handle(%{req | key: :max_p}, state)
+  def handle(%{act: :meta, key: :max_concurrency} = req, state) do
+    handle(%{req | key: :max_c}, state)
   end
 
   def handle(%{act: :meta, key: p} = req, state) do
@@ -227,7 +232,7 @@ defmodule AgentMap.Req do
 
   # :get
   def handle(%{!: :now} = req, state) do
-    {_s, hard} = Process.get(:max_p)
+    {_s, hard} = Process.get(:max_c)
 
     if Process.get(:processes) <= hard do
       spawn_task(req, collect(req.key, state))

@@ -102,7 +102,7 @@ defmodule AgentMap.Utils do
 
     * `:real_size` — current size (slower, but always accurate);
 
-    * `:max_processes` — a limit for the number of processes allowed to spawn;
+    * `:max_concurrency` — a limit for the number of processes allowed to spawn;
 
     * `:processes` — total number of processes being used (`+1` for server
       itself).
@@ -112,7 +112,7 @@ defmodule AgentMap.Utils do
       iex> am = AgentMap.new()
       iex> meta(am, :processes)
       1
-      iex> meta(am, :max_processes)
+      iex> meta(am, :max_concurrency)
       5000
       iex> am
       ...> |> sleep(:a, 10)
@@ -170,11 +170,11 @@ defmodule AgentMap.Utils do
     meta(p, key)
   end
 
-  def meta(pid, :max_processes) do
-    meta(pid, :max_p)
+  def meta(pid, :max_concurrency) do
+    meta(pid, :max_c)
   end
 
-  @forbidden [:size, :real_size, :max_p]
+  @forbidden [:size, :real_size, :max_c]
 
   def meta(pid, k) when k in @forbidden do
     if self() == pid do
@@ -220,7 +220,7 @@ defmodule AgentMap.Utils do
       nil
       iex> meta(am, :bar, :baz)
       :baz
-      iex> meta(am, :max_processes)
+      iex> meta(am, :max_concurrency)
       5000
 
   Functions `meta/2`, `upd_meta/3`, `put_meta/4` can be used inside callbacks:
@@ -262,7 +262,7 @@ defmodule AgentMap.Utils do
   def upd_meta(am, key, fun, opts \\ [cast: true])
 
   def upd_meta(_am, key, _fun, _opts)
-      when key in [:processes, :size, :real_size, :max_processes, :max_p] do
+      when key in [:processes, :size, :real_size, :max_concurrency, :max_c, :max_p, :max_processes] do
     raise """
     Cannot update #{inspect(key)} metadata information stored under key #{inspect(key)}.
     """
@@ -286,11 +286,11 @@ defmodule AgentMap.Utils do
     get_prop(p, key)
   end
 
-  def get_prop(pid, :max_processes) do
-    get_prop(pid, :max_p)
+  def get_prop(pid, :max_concurrency) do
+    get_prop(pid, :max_c)
   end
 
-  @forbidden [:size, :real_size, :max_p]
+  @forbidden [:size, :real_size, :max_c]
 
   def get_prop(pid, k) when k in @forbidden do
     if self() == pid do
@@ -337,7 +337,7 @@ defmodule AgentMap.Utils do
   def upd_prop(am, key, fun, opts \\ [cast: true])
 
   def upd_prop(_am, key, _fun, _opts)
-      when key in [:processes, :size, :real_size, :max_processes, :max_p] do
+      when key in [:processes, :size, :real_size, :max_concurrency, :max_c, :max_processes, :max_p] do
     raise "Cannot update #{inspect(key)} prop."
   end
 

@@ -8,6 +8,8 @@
 
   * Now `Agent` module interface can be used with `AgentMap` processes (thanks
     to [@alexogar](https://github.com/alexogar) for the idea).
+  * [rename] `max_processes` (`max_p`) is now `max_concurrency` (`max_c`) to
+    accord canon `Task.async_stream` option.
 
 #### AgentMap.Multi
 

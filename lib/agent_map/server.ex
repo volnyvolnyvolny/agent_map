@@ -103,7 +103,7 @@ defmodule AgentMap.Server do
       end
 
     if empty?(errors) do
-      Process.put(:max_p, args[:max_p])
+      Process.put(:max_c, args[:max_c])
       Process.put(:processes, 1)
 
       map =
@@ -194,7 +194,7 @@ defmodule AgentMap.Server do
   # worker asks to increase quota
   @impl true
   def handle_info({ref, worker, :more?}, state) do
-    {soft, _h} = Process.get(:max_p)
+    {soft, _h} = Process.get(:max_c)
 
     if Process.get(:processes) < soft do
       send(worker, {ref, %{act: :quota, inc: 1}})

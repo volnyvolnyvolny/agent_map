@@ -13,7 +13,7 @@ defmodule AgentMapServerTest do
         d: fn -> 42 end
       ],
       timeout: 40,
-      max_p: {10, :infinity}
+      max_c: {10, :infinity}
     ]
 
     assert Server.init(args) == {:stop, [a: :badfun, b: :timeout, c: :timeout]}
@@ -29,7 +29,7 @@ defmodule AgentMapServerTest do
         e: & &1
       ],
       timeout: 5000,
-      max_p: {10, :infinity}
+      max_c: {10, :infinity}
     ]
 
     assert {:stop,
@@ -51,10 +51,10 @@ defmodule AgentMapServerTest do
         end
       ],
       timeout: 40,
-      max_p: {10, :infinity}
+      max_c: {10, :infinity}
     ]
 
     assert Server.init(args) == {:ok, {%{a: 42, b: 42}, %{}}}
-    assert Process.get(:max_p) == {10, :infinity}
+    assert Process.get(:max_c) == {10, :infinity}
   end
 end
