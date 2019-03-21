@@ -41,8 +41,11 @@ defmodule AgentMap.Multi.Req.Commit do
 
     {state, keys} =
       Enum.reduce(req.drop, {state, []}, fn k, {{values, workers} = state, acc} ->
-        if Map.has_key?(workers, k) do
-          send(workers[k], %{act: :drop, key: k, !: {:avg, +1}, from: pid})
+        worker = Map.get(workers, k)
+
+        if worker do
+          req_msg = %{act: :drop, key: k, !: {:avg, +1}, from: pid}
+          send(worker, req_msg)
 
           {state, acc}
         else
@@ -57,7 +60,9 @@ defmodule AgentMap.Multi.Req.Commit do
 
     {state, keys} =
       Enum.reduce(req.upd, {state, keys}, fn {k, new_v}, {{values, workers} = state, acc} ->
-        if Map.has_key?(workers, k) do
+        worker = Map.get(workers, k)
+
+        if worker do
           upd = fn v, value? ->
             if value? do
               {{k, {v}}, new_v}
@@ -66,7 +71,8 @@ defmodule AgentMap.Multi.Req.Commit do
             end
           end
 
-          send(workers[k], %{act: :get_upd, key: k, fun: upd, !: {:avg, +1}, from: pid})
+          req_msg = %{act: :get_upd, key: k, !: {:avg, +1}, from: pid, fun: upd}
+          send(worker, req_msg)
 
           {state, acc}
         else

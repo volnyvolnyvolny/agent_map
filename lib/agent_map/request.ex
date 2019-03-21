@@ -44,8 +44,12 @@ defmodule AgentMap.Req do
 
   # TODO: rewrite
   defp args(%{fun: f} = req, value?) do
-    init = Map.get(req, :initial)
-    value = if value?, do: elem(value?, 0), else: init
+    value =
+      if value? do
+        elem(value?, 0)
+      else
+        Map.get(req, :initial)
+      end
 
     if is_function(f, 2) do
       [value, value? && true]
@@ -64,6 +68,8 @@ defmodule AgentMap.Req do
     reply(from, ret) && :id
   end
 
+  # special request message used in Multi.Commit
+  # this case is only called from worker
   def run_and_reply(%{act: :drop} = req, value?) do
     from = Map.get(req, :from)
 
@@ -95,6 +101,7 @@ defmodule AgentMap.Req do
   #
 
   # Compress before sending to worker.
+  # TODO: rewrite
   defp compress(%_{} = req) do
     req
     |> Map.from_struct()

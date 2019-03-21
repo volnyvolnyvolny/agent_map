@@ -76,15 +76,15 @@ defmodule AgentMap.Bench do
 
   # Supported `cases` are:
 
-  #   * `:ets` — read (`:ets.lookup/2`) and write (`:ets.insert/2`) to `ETS`;
+  #   * `ETS` — read (`:ets.lookup/2`) and write (`:ets.insert/2`) to `ETS`;
 
-  #   * `:map` — read (`Map.get/2`) and write (`Map.put/3`) to `Map`;
+  #   * `Map` — read (`Map.get/2`) and write (`Map.put/3`) to `Map`;
 
-  #   * `:agent_map` — read (`AgentMap.get/2`) and write (`AgentMap.put/3`) to an
+  #   * `AgentMap` — read (`AgentMap.get/2`) and write (`AgentMap.put/3`) to an
   #     `AgentMap` instance;
 
-  #   * `:agent_holds_map` — read (`Agent.get(agent, &Map.get(&1, key))`) and
-  #     write (`Agent.update(agent, &Map.put(&1, key, new_value))`).
+  #   * `Agent` — read (`Agent.get(agent, &Map.get(&1, key))`) and write
+  #     (`Agent.update(agent, &Map.put(&1, key, new_value))`).
 
   @doc """
   Run benchmarks.
