@@ -249,6 +249,7 @@ defmodule AgentMap.Multi.Req do
       send(worker, %{
         act: :get,
         fun: &share(key, &1, &2),
+        fun_arity: 2,
         from: leader,
         tiny: true,
         !: req.!
@@ -263,6 +264,7 @@ defmodule AgentMap.Multi.Req do
       send(worker, %{
         act: :get_upd,
         fun: &share_accept(key, &1, &2, from: leader, timeout: t),
+        fun_arity: 2,
         from: leader,
         !: {:avg, +1}
       })

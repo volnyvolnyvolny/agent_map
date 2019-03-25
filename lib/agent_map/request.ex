@@ -6,7 +6,7 @@ defmodule AgentMap.Req do
   alias AgentMap.{Worker, Server, CallbackError}
 
   import Server, only: [spawn_worker: 2]
-  import Worker, only: [value?: 1, values: 1, inc: 1]
+  import Worker, only: [value?: 1, values: 1, inc: 1, to_msg: 1]
 
   @enforce_keys [:act]
 
@@ -16,8 +16,9 @@ defmodule AgentMap.Req do
     :from,
     :key,
     :fun,
-    !: :avg,
-    tiny: false
+    :tiny,
+    :fun_arity,
+    !: :avg
   ]
 
   #
@@ -42,20 +43,20 @@ defmodule AgentMap.Req do
 
   #
 
-  # TODO: rewrite
-  defp args(%{fun: f} = req, value?) do
-    value =
-      if value? do
-        elem(value?, 0)
-      else
-        Map.get(req, :initial)
-      end
+  defp args(%{fun_arity: 2}, {value}) do
+    [value, true]
+  end
 
-    if is_function(f, 2) do
-      [value, value? && true]
-    else
-      [value]
-    end
+  defp args(%{fun_arity: 2} = req, nil) do
+    [Map.get(req, :initial), false]
+  end
+
+  defp args(_r, {value}) do
+    [value]
+  end
+
+  defp args(req, nil) do
+    [Map.get(req, :initial)]
   end
 
   #
@@ -66,14 +67,6 @@ defmodule AgentMap.Req do
     ret = apply(req.fun, args)
 
     reply(from, ret) && :id
-  end
-
-  # special request message used in Multi.Commit
-  # this case is only called from worker
-  def run_and_reply(%{act: :drop} = req, value?) do
-    from = Map.get(req, :from)
-
-    reply(from, {req.key, value?}) && nil
   end
 
   def run_and_reply(req, value?) do
@@ -99,17 +92,6 @@ defmodule AgentMap.Req do
   end
 
   #
-
-  # Compress before sending to worker.
-  # TODO: rewrite
-  defp compress(%_{} = req) do
-    req
-    |> Map.from_struct()
-    |> Map.delete(:key)
-    |> Enum.reject(&match?({_, nil}, &1))
-    |> Enum.reject(&match?({:tiny, false}, &1))
-    |> Map.new()
-  end
 
   # handle request in a separate task
   def spawn_task(r, value?) do
@@ -213,7 +195,7 @@ defmodule AgentMap.Req do
 
     state =
       if worker do
-        send(worker, compress(req))
+        send(worker, to_msg(req))
         # unchanged
         state
       else
@@ -254,7 +236,7 @@ defmodule AgentMap.Req do
     worker = workers[req.key]
 
     if worker do
-      send(worker, compress(req))
+      send(worker, to_msg(req))
 
       {:noreply, state}
     else

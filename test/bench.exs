@@ -1,1 +1,1 @@
-AgentMap.Bench.run()
+AgentMap.Bench.run(:lookup)

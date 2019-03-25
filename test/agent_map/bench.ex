@@ -87,24 +87,85 @@ defmodule AgentMap.Bench do
   #     (`Agent.update(agent, &Map.put(&1, key, new_value))`).
 
   @doc """
-  Run benchmarks.
+  Run benchmarks with `scenario`.
   """
-  @spec run(keyword) :: no_return
-  def run(benchee_opts \\ []) do
+  @spec run(atom, keyword) :: no_return
+  def run(scenario, benchee_opts \\ [])
+
+  # def run(:state, benchee_opts) do
+  #   # :)
+  #   datasets =
+  #     [
+  #       "100 from 1_000": {1_000, 100},
+  #       # "1_000 from 10_000": {1_000, 10_000},
+  #       # "10_000 from 100_000": {10_000, 100_000},
+  #       # "100_000 from 1_000_000": {100_000, 1_000_000}
+  #     ]
+
+  #   benchee_opts = [{:inputs, datasets} | ++ benchee_opts
+
+  #   #
+
+  #   Benchee.run(%{
+  #     "ets_read_write" =>
+  #       fn {global, _, _} ->
+
+  #         :ets.insert(global, {:value, 42})   # write
+  #         :ets.lookup(global, :value) |> hd() # read
+  #       end,
+
+  #     "agent_read_write" =>
+  #       fn {_, agent, _} ->
+  #         Agent.update(agent, fn _ ->
+  #           {:value, 42}
+  #         end)
+
+  #         Agent.get(agent, &{:value, &1})
+  #       end,
+
+  #     "agent_with_p_dict" =>
+  #       fn {_, _, p_dict} ->
+  #         Agent.update(p_dict, fn _ ->
+  #           Process.put(:value, 42)
+  #         end)
+
+  #         Process.info(p_dict, :dictionary) |> elem(1) |> hd()
+  #       end
+  #   },
+  #   [
+  #     before_scenario: fn _ ->
+  #     global = :ets.new(:global, [])
+
+  #     {:ok, agent} = Agent.start(fn -> {:value, nil} end)
+  #     {:ok, p_dict} = Agent.start(fn -> :no_state end)
+
+  #     {global, agent, p_dict}
+  #     end
+  #   ])
+  # end
+
+  def run(:lookup, benchee_opts) do
     # :)
     datasets =
       [
         "100 from 1_000": {1_000, 100},
-        "1_000 from 10_000": {1_000, 10_000},
-        "10_000 from 100_000": {10_000, 100_000},
-        "100_000 from 1_000_000": {100_000, 1_000_000}
+        # "1_000 from 10_000": {1_000, 10_000},
+        # "10_000 from 100_000": {10_000, 100_000},
+        # "100_000 from 1_000_000": {100_000, 1_000_000}
       ]
 
     Benchee.run(%{
-      ":ets.lookup/2" =>
-        scenario(ETS, fn {t, n} ->
+      # ":ets.lookup/2" =>
+      #   scenario(ETS, fn {t, n} ->
+      #     for k <- 1..n do
+      #       fn -> :ets.lookup(t, div(k * 342, 7)) end.()
+      #     end
+      #   end),
+
+      "&Map.get(&1, key)" =>
+        scenario(Map, fn {m, n} ->
           for k <- 1..n do
-            :ets.lookup(t, div(k * 342, 7))
+            &Map.get(&1, div(k * 342, 7)).(m)
           end
         end),
 
@@ -115,19 +176,19 @@ defmodule AgentMap.Bench do
           end
         end),
 
-      "AgentMap.get/2" =>
-        scenario(AgentMap, fn {m, n} ->
-          for k <- 1..n do
-            AgentMap.get(m, div(k * 342, 7))
-          end
-        end),
+      # "AgentMap.get/2" =>
+      #   scenario(AgentMap, fn {m, n} ->
+      #     for k <- 1..n do
+      #       AgentMap.get(m, div(k * 342, 7))
+      #     end
+      #   end),
 
-      "Agent.get(a, &Map.get(&1, key))" =>
-        scenario(Agent, fn {a, n} ->
-          for k <- 1..n do
-            Agent.get(a, &Map.get(&1, div(k * 342, 7)))
-          end
-        end)
+      # "Agent.get(a, &Map.get(&1, key))" =>
+      #   scenario(Agent, fn {a, n} ->
+      #     for k <- 1..n do
+      #       Agent.get(a, &Map.get(&1, div(k * 342, 7)))
+      #     end
+      #   end)
     }, [{:inputs, datasets} | benchee_opts])
   end
 end

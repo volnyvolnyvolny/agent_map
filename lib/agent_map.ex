@@ -774,10 +774,10 @@ defmodule AgentMap do
     get(
       am,
       key,
-      fn value, exist ->
-        (exist && {:ok, value}) || :error
+      fn value, exist? ->
+        (exist? && {:ok, value}) || :error
       end,
-      [{:tiny, true} | opts]
+      [{:tiny, true}, {:fun_arity, 2} | opts]
     )
   end
 
@@ -977,7 +977,7 @@ defmodule AgentMap do
       (exist? && {:ok, fun.(value)}) || {:error}
     end
 
-    case get_and_update(am, key, fun, opts) do
+    case get_and_update(am, key, fun, [{:fun_arity, 2} | opts]) do
       :error ->
         raise KeyError, key: key
 
@@ -1244,6 +1244,7 @@ defmodule AgentMap do
       opts
       |> Keyword.put_new(:!, :max)
       |> Keyword.put_new(:cast, true)
+      |> Keyword.put(:fun_arity, 2)
 
     fun = fn _, exist? ->
       (exist? && :id) || {:_ret, fun.()}

@@ -30,6 +30,17 @@ defmodule AgentMap.Worker do
 
   #
 
+  # # Compress before sending to worker.
+  def to_msg(%_{} = req) do
+    req
+    |> Map.from_struct()
+    |> Map.delete(:key)
+    |> Enum.reject(&match?({_, nil}, &1))
+    |> Map.new()
+  end
+
+  #
+
   def dict(pid) do
     info(pid, :dictionary) |> elem(1)
   end
@@ -110,7 +121,13 @@ defmodule AgentMap.Worker do
     end
   end
 
-  defp handle(%{act: act} = r) when act in [:get_upd, :drop] do
+  defp handle(%{act: :drop, key: k, from: leader}) do
+    IO.inspect(:drop)
+    send(leader, {k, get(:value?)})
+    delete(:value?)
+  end
+
+  defp handle(%{act: :get_upd} = r) do
     case Req.run_and_reply(r, get(:value?)) do
       {_value} = v? ->
         put(:value?, v?)
