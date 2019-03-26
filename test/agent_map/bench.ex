@@ -155,12 +155,12 @@ defmodule AgentMap.Bench do
       ]
 
     Benchee.run(%{
-      # ":ets.lookup/2" =>
-      #   scenario(ETS, fn {t, n} ->
-      #     for k <- 1..n do
-      #       fn -> :ets.lookup(t, div(k * 342, 7)) end.()
-      #     end
-      #   end),
+      ":ets.lookup/2" =>
+        scenario(ETS, fn {t, n} ->
+          for k <- 1..n do
+            fn -> :ets.lookup(t, div(k * 342, 7)) end.()
+          end
+        end),
 
       "&Map.get(&1, key)" =>
         scenario(Map, fn {m, n} ->
@@ -176,19 +176,19 @@ defmodule AgentMap.Bench do
           end
         end),
 
-      # "AgentMap.get/2" =>
-      #   scenario(AgentMap, fn {m, n} ->
-      #     for k <- 1..n do
-      #       AgentMap.get(m, div(k * 342, 7))
-      #     end
-      #   end),
+      "AgentMap.get/2" =>
+        scenario(AgentMap, fn {m, n} ->
+          for k <- 1..n do
+            AgentMap.get(m, div(k * 342, 7))
+          end
+        end),
 
-      # "Agent.get(a, &Map.get(&1, key))" =>
-      #   scenario(Agent, fn {a, n} ->
-      #     for k <- 1..n do
-      #       Agent.get(a, &Map.get(&1, div(k * 342, 7)))
-      #     end
-      #   end)
+      "Agent.get(a, &Map.get(&1, key))" =>
+        scenario(Agent, fn {a, n} ->
+          for k <- 1..n do
+            Agent.get(a, &Map.get(&1, div(k * 342, 7)))
+          end
+        end)
     }, [{:inputs, datasets} | benchee_opts])
   end
 end
