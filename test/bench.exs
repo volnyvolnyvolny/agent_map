@@ -1,1 +1,6 @@
+# AgentMap.Bench.run(:lookup, pows: 3..4)
+# AgentMap.Bench.run(:insert, parallel: 50, pows: 3..4)
+# AgentMap.Bench.run(:lookup_insert, parallel: 50, pows: 3..4)
 AgentMap.Bench.run(:lookup)
+AgentMap.Bench.run(:insert, parallel: 50)
+AgentMap.Bench.run(:lookup_insert, parallel: 50)

@@ -13,7 +13,7 @@ defmodule AgentMap.Bench do
   end
 
   defp setup(ETS, size) do
-    table = :ets.new(:"ETS / #{size}", [read_concurrency: true])
+    table = :ets.new(:"ETS / #{size}", read_concurrency: true, write_concurrency: true)
 
     for k <- 1..size do
       value = Enum.random(1..size)
@@ -41,7 +41,42 @@ defmodule AgentMap.Bench do
   defp teardown(Map, _m), do: :nothing
   #
 
-  def scenario(obj, fun) do
+  #
+
+  defp benchee_run(s_name, suite, opts) do
+    only =
+      if opts[:only] do
+        Enum.map(opts[:only], &name(s_name, &1))
+      end || Map.keys(suite)
+
+    datasets =
+      for p <- opts[:pows] || 3..6 do
+        {size, iterations} =
+          {floor(:math.pow(10, p)), floor(:math.pow(10, p - 1))}
+
+        {"#{iterations} from #{size}", {size, iterations}}
+      end
+
+    benchee_opts =
+      opts
+      |> Keyword.delete(:only)
+      |> Keyword.delete(:pows)
+
+    # # :)
+    # datasets =
+    #   [
+    #     "100 from 1_000": {1_000, 100},
+    #     # "1_000 from 10_000": {1_000, 10_000},
+    #     # "10_000 from 100_000": {10_000, 100_000},
+    #     # "100_000 from 1_000_000": {100_000, 1_000_000}
+    #   ]
+
+    Benchee.run(Map.take(suite, only), [{:inputs, datasets} | benchee_opts])
+  end
+
+  #
+
+  defp scenario(obj, fun) do
     {
       fun,
       before_scenario: fn {size, iterations} ->
@@ -52,6 +87,29 @@ defmodule AgentMap.Bench do
       end
     }
   end
+
+  #
+
+  defp name(suite, obj)
+
+  #
+
+  defp name(:lookup, ETS), do: ":ets.lookup(table, key)"
+  defp name(:lookup, Map), do: "&(Map.get(&1, key)).(map)"
+  defp name(:lookup, Agent), do: "Agent.get(a, &Map.get(&1, key))"
+  defp name(:lookup, AgentMap), do: "AgentMap.get(am, key)"
+
+  #
+
+  defp name(:insert, ETS), do: ":ets.insert(table, {key, :value})"
+  defp name(:insert, Agent), do: "Agent.update(a, &Map.put(&1, key, :value))"
+  defp name(:insert, AgentMap), do: "AgentMap.put(am, key, :value)"
+
+  #
+
+  defp name(:lookup_insert, ETS), do: "ETS lookup/insert"
+  defp name(:lookup_insert, Agent), do: "Agent lookup/insert"
+  defp name(:lookup_insert, AgentMap), do: "AgentMap lookup/insert"
 
   #
 
@@ -118,9 +176,9 @@ defmodule AgentMap.Bench do
   #   ])
   # end
 
-  def run(:lookup, opts) do
+  def run(:lookup = s_name, opts) do
     suite = %{
-      ":ets.lookup/2" =>
+      name(s_name, ETS) =>
         scenario(ETS, fn {obj, size, n} ->
           d = 2 * floor(size / n)
 
@@ -129,7 +187,7 @@ defmodule AgentMap.Bench do
           end
         end),
 
-      "&Map.get(&1, key)" =>
+      name(s_name, Map) =>
         scenario(Map, fn {obj, size, n} ->
           d = 2 * floor(size / n)
 
@@ -138,16 +196,16 @@ defmodule AgentMap.Bench do
           end
         end),
 
-      "Map.get/2" =>
-        scenario(Map, fn {obj, size, n} ->
-          d = 2 * floor(size / n)
+      # "Map.get/2" =>
+      #   scenario(Map, fn {obj, size, n} ->
+      #     d = 2 * floor(size / n)
 
-          for k <- 1..n do
-            Map.get(obj, k * d)
-          end
-        end),
+      #     for k <- 1..n do
+      #       Map.get(obj, k * d)
+      #     end
+      #   end),
 
-      "AgentMap.get/2" =>
+      name(s_name, AgentMap) =>
         scenario(AgentMap, fn {obj, size, n} ->
           d = 2 * floor(size / n)
 
@@ -156,7 +214,7 @@ defmodule AgentMap.Bench do
           end
         end),
 
-      "Agent.get(a, &Map.get(&1, key))" =>
+      name(s_name, Agent) =>
         scenario(Agent, fn {obj, size, n} ->
           d = 2 * floor(size / n)
 
@@ -166,18 +224,75 @@ defmodule AgentMap.Bench do
         end)
     }
 
-    only = opts[:only] || Map.keys(suite)
-    benchee_opts = Keyword.delete(opts, :only)
+    benchee_run(s_name, suite, opts)
+  end
 
-    # :)
-    datasets =
-      [
-        "100 from 1_000": {1_000, 100},
-        # "1_000 from 10_000": {1_000, 10_000},
-        # "10_000 from 100_000": {10_000, 100_000},
-        # "100_000 from 1_000_000": {100_000, 1_000_000}
-      ]
+  def run(:insert = s_name, opts) do
+    suite = %{
+      name(s_name, ETS) =>
+        scenario(ETS, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
 
-    Benchee.run(Map.take(suite, only), [{:inputs, datasets} | benchee_opts])
+          for k <- 1..n do
+            :ets.insert(obj, {k * d, :value})
+          end
+        end),
+
+      name(s_name, AgentMap) =>
+        scenario(AgentMap, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            AgentMap.put(obj, k * d, :value)
+          end
+        end),
+
+      name(s_name, Agent) =>
+        scenario(Agent, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            Agent.update(obj, &Map.put(&1, k * d, :value))
+          end
+        end)
+    }
+
+    benchee_run(s_name, suite, opts)
+  end
+
+  def run(:lookup_insert = s_name, opts) do
+    suite = %{
+      name(s_name, ETS) =>
+        scenario(ETS, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            :ets.insert(obj, {k * d, :value})
+            :ets.lookup(obj, k * d)
+          end
+        end),
+
+      name(s_name, AgentMap) =>
+        scenario(AgentMap, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            AgentMap.put(obj, k * d, :value)
+            AgentMap.get(obj, k * d)
+          end
+        end),
+
+      name(s_name, Agent) =>
+        scenario(Agent, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            Agent.update(obj, &Map.put(&1, k * d, :value))
+            Agent.get(obj, &Map.get(&1, k * d))
+          end
+        end)
+    }
+
+    benchee_run(s_name, suite, opts)
   end
 end
