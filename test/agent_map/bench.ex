@@ -5,6 +5,8 @@ defmodule AgentMap.Bench do
   To run use `mix bench` or `run/2`.
   """
 
+  import Process, only: [sleep: 1]
+
   @ets_opts [read_concurrency: true, write_concurrency: true]
 
   defp setup(Map, size) do
@@ -108,6 +110,11 @@ defmodule AgentMap.Bench do
   defp name(:counter, ETS), do: "ETS update_counter + lookup"
   defp name(:counter, Agent), do: "Agent.update (Map.update + Map.get)"
   defp name(:counter, AgentMap), do: "AgentMap.Utils.inc(am, key)"
+
+  #
+
+  defp name(:update, Agent), do: "Agent.update (Map.update [sleep(1) + inc] + Map.get)"
+  defp name(:update, AgentMap), do: "AgentMap.update(am, key, [sleep(1) + inc])"
 
   #
 
@@ -259,6 +266,36 @@ defmodule AgentMap.Bench do
           for k <- 1..n do
             key = k * d
             Agent.update(obj, &Map.update(&1, key, 1, fn v -> v + 1 end))
+            Agent.get(obj, &Map.get(&1, key))
+          end
+        end)
+    }
+
+    benchee_run(s_name, suite, opts)
+  end
+
+  def run(:update = s_name, opts) do
+    upd = &(sleep(100) && &1 + 1)
+
+    suite = %{
+      name(s_name, AgentMap) =>
+        scenario(AgentMap, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            key = k * d
+            AgentMap.update(obj, key, upd, initial: 0)
+            AgentMap.get(obj, key)
+          end
+        end),
+
+      name(s_name, Agent) =>
+        scenario(Agent, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            key = k * d
+            Agent.update(obj, &Map.update(&1, key, 1, upd))
             Agent.get(obj, &Map.get(&1, key))
           end
         end)

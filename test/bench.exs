@@ -2,3 +2,4 @@
 # AgentMap.Bench.run(:insert, powers: 3..4, parallel: 50)
 # AgentMap.Bench.run(:lookup_insert, powers: 3..4, parallel: 50)
 # AgentMap.Bench.run(:counter, powers: 2..3, parallel: 500)
+AgentMap.Bench.run(:update, powers: 1..1, parallel: 50)
