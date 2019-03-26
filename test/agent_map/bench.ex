@@ -5,92 +5,66 @@ defmodule AgentMap.Bench do
   To run use `mix bench` or `run/2`.
   """
 
-  @type size :: pos_integer
-  @type reads :: pos_integer
-
-  defp setup(obj, {size, iterations}) do
-    setup(obj, size, iterations)
+  defp setup(Map, size) do
+    Enum.reduce(1..size, Map.new(), fn k, map ->
+      value = Enum.random(1..size)
+      Map.put(map, k, value)
+    end)
   end
 
-  defp setup(obj, size, iterations) when obj in [Map, AgentMap] do
-    m =
-      Enum.reduce(1..size, obj.new(), fn k, map ->
-        value = Enum.random(1..size)
-        obj.put(map, k, value)
-      end)
-
-    {m, iterations}
-  end
-
-  defp setup(ETS, size, iterations) do
-    name = :"#{inspect({size, iterations})}"
-    table = :ets.new(name, [read_concurrency: true])
+  defp setup(ETS, size) do
+    table = :ets.new(:"ETS / #{size}", [read_concurrency: true])
 
     for k <- 1..size do
       value = Enum.random(1..size)
       :ets.insert(table, {k, value})
     end
 
-    {table, iterations}
+    table
   end
 
-  defp setup(Agent, size, iterations) do
-    {map, _} = setup(Map, size, iterations)
+  defp setup(Agent, size) do
+    {:ok, agent} =
+      Agent.start(fn ->
+        setup(Map, size)
+      end)
 
-    {:ok, agent} = Agent.start(fn -> map end)
-
-    {agent, iterations}
+    agent
   end
+
+  defp setup(AgentMap, size), do: AgentMap.new(setup(Map, size))
+
 
   #
-  defp teardown(obj, {id, iterations}) do
-    teardown(obj, id, iterations)
-  end
-
-  defp teardown(ETS, table, _i) do
-    :ets.delete(table)
-  end
-
-  defp teardown(AgentMap, am, _i) do
-    AgentMap.stop(am)
-  end
-
-  defp teardown(Agent, a, _i) do
-    Agent.stop(a)
-  end
-
-  defp teardown(_o, _, _), do: :noop
-
+  defp teardown(ETS, table), do: :ets.delete(table)
+  defp teardown(obj, o) when obj in [Agent, AgentMap], do: obj.stop(o)
+  defp teardown(Map, _m), do: :nothing
   #
 
   def scenario(obj, fun) do
     {
       fun,
-      before_scenario: &setup(obj, &1),
-      after_scenario: &teardown(obj, &1)
+      before_scenario: fn {size, iterations} ->
+        {setup(obj, size), size, iterations}
+      end,
+      after_scenario: fn {o, _size, _iterations} ->
+        teardown(obj, o)
+      end
     }
   end
 
   #
 
-
-  # Supported `cases` are:
-
-  #   * `ETS` — read (`:ets.lookup/2`) and write (`:ets.insert/2`) to `ETS`;
-
-  #   * `Map` — read (`Map.get/2`) and write (`Map.put/3`) to `Map`;
-
-  #   * `AgentMap` — read (`AgentMap.get/2`) and write (`AgentMap.put/3`) to an
-  #     `AgentMap` instance;
-
-  #   * `Agent` — read (`Agent.get(agent, &Map.get(&1, key))`) and write
-  #     (`Agent.update(agent, &Map.put(&1, key, new_value))`).
-
   @doc """
   Run benchmarks with `scenario`.
+
+  ## Options
+
+    * `Benchee` opts;
+    * `only: [scenario name]`.
   """
   @spec run(atom, keyword) :: no_return
-  def run(scenario, benchee_opts \\ [])
+  def run(suite, opts \\ [])
 
   # def run(:state, benchee_opts) do
   #   # :)
@@ -144,7 +118,57 @@ defmodule AgentMap.Bench do
   #   ])
   # end
 
-  def run(:lookup, benchee_opts) do
+  def run(:lookup, opts) do
+    suite = %{
+      ":ets.lookup/2" =>
+        scenario(ETS, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            :ets.lookup(obj, k * d)
+          end
+        end),
+
+      "&Map.get(&1, key)" =>
+        scenario(Map, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            (&Map.get(&1, k * d)).(obj)
+          end
+        end),
+
+      "Map.get/2" =>
+        scenario(Map, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            Map.get(obj, k * d)
+          end
+        end),
+
+      "AgentMap.get/2" =>
+        scenario(AgentMap, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            AgentMap.get(obj, k * d)
+          end
+        end),
+
+      "Agent.get(a, &Map.get(&1, key))" =>
+        scenario(Agent, fn {obj, size, n} ->
+          d = 2 * floor(size / n)
+
+          for k <- 1..n do
+            Agent.get(obj, &Map.get(&1, k * d))
+          end
+        end)
+    }
+
+    only = opts[:only] || Map.keys(suite)
+    benchee_opts = Keyword.delete(opts, :only)
+
     # :)
     datasets =
       [
@@ -154,41 +178,6 @@ defmodule AgentMap.Bench do
         # "100_000 from 1_000_000": {100_000, 1_000_000}
       ]
 
-    Benchee.run(%{
-      ":ets.lookup/2" =>
-        scenario(ETS, fn {t, n} ->
-          for k <- 1..n do
-            fn -> :ets.lookup(t, div(k * 342, 7)) end.()
-          end
-        end),
-
-      "&Map.get(&1, key)" =>
-        scenario(Map, fn {m, n} ->
-          for k <- 1..n do
-            &Map.get(&1, div(k * 342, 7)).(m)
-          end
-        end),
-
-      "Map.get/2" =>
-        scenario(Map, fn {m, n} ->
-          for k <- 1..n do
-            Map.get(m, div(k * 342, 7))
-          end
-        end),
-
-      "AgentMap.get/2" =>
-        scenario(AgentMap, fn {m, n} ->
-          for k <- 1..n do
-            AgentMap.get(m, div(k * 342, 7))
-          end
-        end),
-
-      "Agent.get(a, &Map.get(&1, key))" =>
-        scenario(Agent, fn {a, n} ->
-          for k <- 1..n do
-            Agent.get(a, &Map.get(&1, div(k * 342, 7)))
-          end
-        end)
-    }, [{:inputs, datasets} | benchee_opts])
+    Benchee.run(Map.take(suite, only), [{:inputs, datasets} | benchee_opts])
   end
 end
