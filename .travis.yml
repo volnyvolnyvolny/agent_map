@@ -7,6 +7,7 @@ before_script:
   - MIX_ENV=test mix compile --warnings-as-errors
 script:
   - mix format --check-formatted
+  - mix test
   - mix coveralls.travis
 sudo: required
 dist: trusty

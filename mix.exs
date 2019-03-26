@@ -16,6 +16,15 @@ defmodule AgentMap.Mixfile do
       aliases: aliases(),
       docs: docs(),
       package: package(),
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.travis": :test,
+        "safe_coveralls.travis": :test
+      ],
       elixirc_paths: elixirc_paths(Mix.env())
     ]
   end
@@ -35,7 +44,8 @@ defmodule AgentMap.Mixfile do
       {:heap, "~> 2.0"},
       {:ex_doc, "~> 0.19", only: :dev, runtime: false},
       {:credo, "~> 1.0", only: :dev},
-      {:benchee, "~> 0.14", only: :test}
+      {:benchee, "~> 0.14", only: :test},
+      {:excoveralls, "~> 0.10", only: :test}
     ]
   end
 
