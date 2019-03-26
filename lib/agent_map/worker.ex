@@ -122,7 +122,6 @@ defmodule AgentMap.Worker do
   end
 
   defp handle(%{act: :drop, key: k, from: leader}) do
-    IO.inspect(:drop)
     send(leader, {k, get(:value?)})
     delete(:value?)
   end
