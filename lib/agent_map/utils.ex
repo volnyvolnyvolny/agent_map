@@ -444,7 +444,7 @@ defmodule AgentMap.Utils do
           end
         end
       end,
-      [{:tiny, true} | opts]
+      [{:tiny, true}, {:fun_arity, 2} | opts]
     )
   end
 
