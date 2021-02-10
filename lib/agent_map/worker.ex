@@ -12,13 +12,9 @@ defmodule AgentMap.Worker do
   # ms
   @wait 10
 
-  #
-
   defp now(), do: System.monotonic_time()
 
   defp rand(n) when n < 100, do: rem(abs(now()), n)
-
-  #
 
   defp to_num(:now), do: :now
 
@@ -28,9 +24,7 @@ defmodule AgentMap.Worker do
   defp to_num(i) when is_integer(i) and i >= 0, do: i
   defp to_num({p, delta}), do: to_num(p) + delta
 
-  #
-
-  # # Compress before sending to worker.
+  @doc "Compress request before sending to worker."
   def to_msg(%_{} = req) do
     req
     |> Map.from_struct()
@@ -51,15 +45,15 @@ defmodule AgentMap.Worker do
 
   def dec(key, step \\ 1), do: inc(key, -step)
 
-  #
+  # #
 
-  def value?(pid), do: dict(pid)[:value?]
+  # def value?(pid), do: dict(pid)[:value?]
 
-  def values(workers) do
-    for {k, worker} <- workers, v? = value?(worker), into: %{} do
-      {k, elem(v?, 0)}
-    end
-  end
+  # def values(workers) do
+  #   for {k, worker} <- workers, v? = value?(worker), into: %{} do
+  #     {k, elem(v?, 0)}
+  #   end
+  # end
 
   #
 
@@ -81,23 +75,23 @@ defmodule AgentMap.Worker do
     inc(:processes)
   end
 
-  # ask server to increase quota
-  defp increase_quota() do
-    ref = make_ref()
+  # # ask server to increase quota
+  # defp increase_quota() do
+  #   ref = make_ref()
 
-    send(get(:server), {ref, self(), :more?})
+  #   send(get(:server), {ref, self(), :more?})
 
-    # wait for reply 2 ms
+  #   # wait for reply 2 ms
 
-    receive do
-      {^ref, msg} ->
-        handle(msg)
-        :ok
-    after
-      2 ->
-        :error
-    end
-  end
+  #   receive do
+  #     {^ref, msg} ->
+  #       handle(msg)
+  #       :ok
+  #   after
+  #     2 ->
+  #       :error
+  #   end
+  # end
 
   ##
   ## get(:value?) → run_and_reply → … commit
@@ -171,11 +165,7 @@ defmodule AgentMap.Worker do
   ## MAIN
   ##
 
-  def loop({ref, server}, v?, quota) do
-    if v?, do: put(:value?, v?)
-
-    send(server, {ref, :resume})
-
+  def loop(server, quota) do
     put(:server, server)
     put(:processes, 0 + 1)
     put(:quota, quota)

@@ -119,12 +119,20 @@ defmodule AgentMap.Bench do
   #
 
   @doc """
-  Run benchmarks with `scenario`.
+  Run `suite`.
+
+  ## Suites
+
+    * `:lookup`;
+    * `:insert`;
+    * `:lookup_insert`;
+    * `:counter`;
+    * `:update`.
 
   ## Options
 
     * `Benchee` opts;
-    * `only: [scenario name]`.
+    * `only: [object]`, where `object`s are: `ETS`, `Agent`, `Map`, `AgentMap`.
   """
   @spec run(atom, keyword) :: no_return
   def run(suite, opts \\ [])

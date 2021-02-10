@@ -21,14 +21,11 @@ defmodule AgentMap.Req do
     !: :avg
   ]
 
-  #
-
   def reply(nil, _msg), do: :nothing
   def reply({_p, _ref} = from, msg), do: GenServer.reply(from, msg)
   def reply(from, msg), do: send(from, msg)
 
-  #
-
+  # TODO: REWRITE
   defp collect(key, {values, workers} = _state) do
     case Map.fetch(values, key) do
       {:ok, value} ->
@@ -40,8 +37,6 @@ defmodule AgentMap.Req do
         if w, do: value?(w)
     end
   end
-
-  #
 
   defp args(%{fun_arity: 2}, {value}) do
     [value, true]
@@ -59,14 +54,17 @@ defmodule AgentMap.Req do
     [Map.get(req, :initial)]
   end
 
-  #
+  @doc """
+  Run `req.fun` and reply result to `req.from`.
 
+  Returns `:keep` (leave value as it is), `:delete` or `{new_value}`.
+  """
   def run_and_reply(%{act: :get} = req, value?) do
     args = args(req, value?)
     from = Map.get(req, :from)
-    ret = apply(req.fun, args)
 
-    reply(from, ret) && :id
+    ret = apply(req.fun, args)
+    reply(from, ret) && :keep
   end
 
   def run_and_reply(req, value?) do
@@ -75,16 +73,16 @@ defmodule AgentMap.Req do
 
     case apply(req.fun, args) do
       {get} ->
-        reply(from, get) && :id
+        reply(from, get) && :keep
 
       {get, value} ->
         reply(from, get) && {value}
 
       :id ->
-        reply(from, hd(args)) && :id
+        reply(from, hd(args)) && :keep
 
       :pop ->
-        reply(from, hd(args)) && nil
+        reply(from, hd(args)) && :delete
 
       malformed ->
         raise CallbackError, got: malformed
@@ -220,11 +218,11 @@ defmodule AgentMap.Req do
   # tiny: false
 
   # :get
-  def handle(%{!: :now} = req, state) do
+  def handle(%{key: k, !: :now} = req, {storage, _meta} = state) do
     {_s, hard} = Process.get(:max_c)
 
     if Process.get(:processes) <= hard do
-      spawn_task(req, collect(req.key, state))
+      spawn_task(req, collect(k, state))
 
       {:noreply, state}
     else
@@ -232,8 +230,8 @@ defmodule AgentMap.Req do
     end
   end
 
-  def handle(req, {_map, workers} = state) do
-    worker = workers[req.key]
+  def handle(%{key: k} = req, {storage, _meta} = state) do
+    worker = get_worker(storage, k)
 
     if worker do
       send(worker, to_msg(req))
@@ -242,7 +240,7 @@ defmodule AgentMap.Req do
     else
       case req do
         %{act: :get_upd} ->
-          handle(req, spawn_worker(state, req.key))
+          handle(req, spawn_worker(state, k))
 
         %{act: :get} ->
           handle(%{req | !: :now}, state)

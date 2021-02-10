@@ -2,52 +2,14 @@ defmodule AgentMap.Utils do
   alias AgentMap.Req
 
   import AgentMap.Worker, only: [dict: 1]
-  import Task, only: [yield: 2, shutdown: 1]
+
+  alias AgentMap.Storage
+
+  @wait_time 20
+  @max_concurrency 3
 
   @type am :: AgentMap.am()
   @type key :: AgentMap.key()
-
-  @compile {:inline, now: 0}
-
-  defp now(), do: System.monotonic_time(:millisecond)
-
-  ##
-  ## SAFE_APPLY
-  ##
-
-  @doc since: "1.1.2"
-  @deprecated "Just use the `try … rescue / catch` block instead"
-  def safe_apply(fun, args) do
-    {:ok, apply(fun, args)}
-  rescue
-    BadFunctionError ->
-      {:error, :badfun}
-
-    BadArityError ->
-      {:error, :badarity}
-
-    exception ->
-      {:error, {exception, __STACKTRACE__}}
-  end
-
-  @doc since: "1.1.2"
-  @deprecated "Just use `Task.async` → `Task.yield` instead."
-  def safe_apply(fun, args, timeout) do
-    started_at = now()
-
-    task =
-      Task.async(fn ->
-        safe_apply(fun, args)
-      end)
-
-    case yield(task, timeout - (now() - started_at)) || shutdown(task) do
-      {:ok, result} ->
-        result
-
-      nil ->
-        {:error, :timeout}
-    end
-  end
 
   ##
   ## SLEEP
@@ -89,123 +51,156 @@ defmodule AgentMap.Utils do
   ## META / UPD_META / PUT_META
   ##
 
+  defp default_value(am, key, default) do
+    case key do
+      :size ->
+        length(AgentMap.keys(am))
+
+      :wait_time ->
+        @wait_time
+
+      {:wait_time, _key} ->
+        @wait_time
+
+      :max_concurrency ->
+        @max_concurrency
+
+      {:max_concurrency, _key} ->
+        @max_concurrency
+
+      _key ->
+        default
+    end
+  end
+
   @doc since: "1.1.2"
   @doc """
   Reads metadata information stored under `key`.
 
-  Functions `meta/2`, `upd_meta/4` and `put_meta/3` can be used inside
-  callbacks.
+  See `put_meta/3`, `upd_meta/3`.
 
-  ## Special keys
+  ## Reserved keys
 
-    * `:size` — current size (fast, but in some rare cases inaccurate upwards);
+    * `:size` — current number of keys;
 
-    * `:real_size` — current size (slower, but always accurate);
+    * `:wait_time` — inactivity period (ms) after which *any* worker should die;
 
-    * `:max_concurrency` — a limit for the number of processes allowed to spawn;
+    * `{:wait_time, key}` — inactivity period (ms) after which worker for `key`
+      should die;
 
-    * `:processes` — total number of processes being used (`+1` for server
-      itself).
+    * `:max_concurrency` — maximum number of `Task`s each worker can spawn to
+      handle `get`-calls;
+
+    * `{:max_concurrency, key}` — maximum number of `Task`s worker can spawn for
+      `key`;
+
+    * `:workers` — current number of workers.
+
+  ## Options
+
+    * `default: term`, `nil` — default value if `key` is missing.
 
   ## Examples
 
-      iex> am = AgentMap.new()
-      iex> meta(am, :processes)
-      1
-      iex> meta(am, :max_concurrency)
-      5000
-      iex> am
-      ...> |> sleep(:a, 10)
-      ...> |> sleep(:b, 100)
-      ...> |> meta(:processes)
-      3
-      #
-      iex> sleep(50)
-      iex> meta(am, :processes)
-      2
-      #
-      iex> sleep(200)
-      iex> meta(am, :processes)
-      1
-
-  #
-
-      iex> am = AgentMap.new()
-      iex> meta(am, :size)
-      0
-      iex> am
-      ...> |> sleep(:a, 10)
-      ...> |> sleep(:b, 50)
-      ...> |> put(:b, 42)
-      ...>
-      iex> meta(am, :size)       # size calculation is inaccurate, but fast
-      2
-      iex> meta(am, :real_size)  # that's better
-      0
-      iex> sleep(50)
-      iex> meta(am, :size)       # worker for :a just died
-      1
-      iex> meta(am, :real_size)
-      0
-      iex> sleep(40)             # worker for :b just died
-      iex> meta(am, :size)
-      1
-      iex> meta(am, :real_size)
-      1
-
-  #
+  Basic usage:
 
       iex> {:ok, am} =
-      ...>   AgentMap.start_link([key: 1], meta: [custom_key: "custom_value"])
+      ...>   AgentMap.start_link([key: 1], meta: [foo: "baz"])
       ...>
-      iex> meta(am, :custom_key)
-      "custom_value"
-      iex> meta(am, :unknown_key)
+      iex> meta(am, :foo)
+      "baz"
+      iex> meta(am, :key)
       nil
+      iex> meta(am, :key, default: 42)
+      "foo"
+      iex> am
+      ...> |> put_meta(:foo, 42)
+      ...> |> meta(:foo)
+      42
+
+  Monitoring storage usage:
+
+      iex> am = AgentMap.new()
+      iex> meta(am, :workers)
+      0
+      iex> meta(am, :max_concurrency)
+      3
+      iex> am
+      ...> |> sleep(:a, 10)   # creates worker for :a
+      ...> |> sleep(:b, 100)  # creates worker for :b
+      ...> |> put(:a, 42)
+      ...> |> put(:b, 42)
+      ...> |> meta(:workers)
+      2
+      #
+      iex> meta(am, :size)
+      0
+      iex> sleep(50)
+      iex> meta(am, :size)
+      1
+      iex> meta(am, :workers) # worker for :a just died
+      1
+      #
+      iex> sleep(200)
+      iex> meta(am, :workers) # worker for :b just died
+      0
+      iex> meta(am, :size)
+      1
+
+  If metadata storage was not created, it will be:
+
+      iex> %_{metadata: nil} = am = AgentMap.new()
+      iex> %_{metadata: id} = put_meta(am, :key, 42)
+      iex> is_nil?(id)
+      false
   """
-  @spec meta(am, term) :: term
-  def meta(am, key)
+  @spec meta(am, term, keyword) :: term
+  def meta(am, key, opts \\ [default: nil])
 
-  def meta(%{pid: p}, key) do
-    meta(p, key)
+  def meta(%_{metadata: m}, key, default: d) when not is_nil(m) do
+    Storage.get(m, key, d)
   end
 
-  def meta(pid, :max_concurrency) do
-    meta(pid, :max_c)
+  def meta(%_{server: nil} = am, :workers, _opts) do
+    Storage.count_workers(am.storage)
   end
 
-  @forbidden [:size, :real_size, :max_c]
+  def meta(%_{server: nil} = am, key, default: d) do
+    default_value(am, key, d)
+  end
 
-  def meta(pid, k) when k in @forbidden do
-    if self() == pid do
-      raise """
-      Sorry, but meta(am, #{inspect(k)} (or `#{
-        @forbidden
-        |> List.delete(k)
-        |> Enum.join(" and ")
-      }`) cannot be called from server process (`tiny: true` was given).
-      """
-    else
-      AgentMap._call(pid, %Req{act: :meta, key: k}, timeout: 5000)
+  def meta(%_{server: s} = am, key, default: d) do
+    case GenServer.call(s, {:meta, key}) do
+      {:ok, value} -> value
+      :error -> default_value(am, key, d)
     end
   end
-
-  def meta(pid, key) do
-    if self() == pid do
-      # we are inside tiny: true :-)
-      Process.get(key)
-    else
-      dict(pid)[key]
-    end
-  end
-
-  #
 
   @doc since: "1.1.2"
   @doc """
   Stores metadata information under `key`.
 
+  Read-only keys: `:size`, `:workers`, `:tasks` (see `meta/2`).
+
+  ## Special keys
+
+    * `wait_time: pos_integer | :infinity`, `20` — number of seconds of
+      inactivity after which any worker should die;
+
+    * `{{:wait_time, key}, pos_integer | :infinity}` — number of inactivity ms
+      after which worker for `key` should die;
+
+    * `max_concurrency: pos_integer | :infinity`, `3` — a maximum number of
+      processes each worker can spawn to handle `get`-calls;
+
+    * `{{:max_concurrency, key}, pos_integer | :infinity}` — maximum number of
+      `Task`s worker for `key` can spawn.
+
   See `meta/2`, `upd_meta/4`.
+
+  ## Options
+
+    * `cast: false` — to wait for the actual put to occur.
 
   ## Examples
 
@@ -223,7 +218,7 @@ defmodule AgentMap.Utils do
       iex> meta(am, :max_concurrency)
       5000
 
-  Functions `meta/2`, `upd_meta/3`, `put_meta/4` can be used inside callbacks:
+  Use `meta/2`, `upd_meta/3` and `put_meta/4` functions inside callback:
 
       iex> am = AgentMap.new()
       iex> am
@@ -232,7 +227,18 @@ defmodule AgentMap.Utils do
       :bar
   """
   @spec put_meta(am, term, term, keyword) :: am
-  def put_meta(am, key, value, opts \\ [cast: true]) do
+  def put_meta(am, key, value, opts \\ [cast: true])
+
+  def put_meta(am, :max_concurrency, value, opts) do
+    put_meta(am, :max_c, value, opts)
+  end
+
+  # default values for :max_c or :wait_time
+  def put_meta(%_{metadata: nil}, :max_c, :infinity, _opts), do: am
+  def put_meta(%_{metadata: nil}, :wait_time, @wait_time, _opts), do: am
+
+  # other values
+  def put_meta(am, key, value, opts) do
     upd_meta(am, key, fn _ -> value end, opts)
   end
 
@@ -241,8 +247,6 @@ defmodule AgentMap.Utils do
   @doc since: "1.1.2"
   @doc """
   Updates metadata information stored under `key`.
-
-  Underneath, `GenServer.cast/2` is used.
 
   See `meta/2`, `put_meta/4`.
 
@@ -265,11 +269,8 @@ defmodule AgentMap.Utils do
       when key in [
              :processes,
              :size,
-             :real_size,
              :max_concurrency,
-             :max_c,
-             :max_p,
-             :max_processes
+             :max_c
            ] do
     raise """
     Cannot update #{inspect(key)} metadata information stored under key #{inspect(key)}.
@@ -277,87 +278,6 @@ defmodule AgentMap.Utils do
   end
 
   def upd_meta(am, key, fun, opts) do
-    req = %Req{act: :upd_meta, key: key, fun: fun}
-    AgentMap._call(am, req, opts)
-  end
-
-  ##
-  ## GET_PROP / SET_PROP / UPD_PROP
-  ##
-
-  @doc since: "1.1.2"
-  @deprecated "Use `meta/2` instead."
-  @spec get_prop(am, term) :: term
-  def get_prop(am, key)
-
-  def get_prop(%{pid: p}, key) do
-    get_prop(p, key)
-  end
-
-  def get_prop(pid, :max_concurrency) do
-    get_prop(pid, :max_c)
-  end
-
-  @forbidden [:size, :real_size, :max_c]
-
-  def get_prop(pid, k) when k in @forbidden do
-    if self() == pid do
-      raise """
-      Sorry, but get_prop(am, #{inspect(k)})/2 (the same is for
-      `#{@forbidden |> List.delete(k) |> Enum.join(" and ")}`) cannot be called
-      from servers process (`tiny: true` was given).
-      """
-    else
-      AgentMap._call(pid, %Req{act: :meta, key: k}, timeout: 5000)
-    end
-  end
-
-  def get_prop(pid, key) do
-    if self() == pid do
-      # we are inside tiny: true :-)
-      Process.get(key)
-    else
-      dict(pid)[key]
-    end
-  end
-
-  @doc "Returns property with given `key` or `default`."
-  @deprecated "Use `meta/2` instead"
-  def get_prop(am, key, default) do
-    req = %Req{act: :meta, key: key, initial: default}
-    AgentMap._call(am, req, timeout: 5000)
-  end
-
-  #
-
-  @doc since: "1.1.2"
-  @deprecated "Use `put_meta/3` instead"
-  @spec set_prop(am, term, term) :: am
-  def set_prop(am, key, value) do
-    upd_prop(am, key, fn _ -> value end)
-  end
-
-  #
-
-  @doc since: "1.1.2"
-  @deprecated "Use `upd_meta/4` instead"
-  @spec upd_prop(am, term, fun) :: am
-  def upd_prop(am, key, fun, opts \\ [cast: true])
-
-  def upd_prop(_am, key, _fun, _opts)
-      when key in [
-             :processes,
-             :size,
-             :real_size,
-             :max_concurrency,
-             :max_c,
-             :max_processes,
-             :max_p
-           ] do
-    raise "Cannot update #{inspect(key)} prop."
-  end
-
-  def upd_prop(am, key, fun, opts) do
     req = %Req{act: :upd_meta, key: key, fun: fun}
     AgentMap._call(am, req, opts)
   end
@@ -417,7 +337,8 @@ defmodule AgentMap.Utils do
       |> Keyword.put_new(:cast, true)
       |> Keyword.put_new(:!, :avg)
 
-    step = opts[:step]
+    step =
+      opts[:step]
     init = opts[:initial]
 
     AgentMap.get_and_update(

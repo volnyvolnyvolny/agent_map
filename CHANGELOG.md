@@ -1,4 +1,25 @@
+# Changelog for AgentMap v2
+
+## v2.0
+
+Complete rewrite, while saving the interface.
+
+### Enhancements
+
+  * [move] internally from `Map` state to `ETS`.
+  * [loose] deprecated functions.
+  * Introducing benchmarks. See `test/bench.exs` and `test/agent_map/bench.ex`.
+
+### Hard-deprecations
+ 
+  * [loose] `AgentMap.new/2`, `transform` function as the second argument. Use
+    `enum |> Map.new(transform) |> AgentMap.new(_opts)` instead.
+
 # Changelog for AgentMap v1
+
+## v1.2
+
+### Enhancements
 
 ## v1.1.2
 
@@ -21,6 +42,8 @@
   * [new] `call/3` are now support `get: :all` and `upd: :all` being provided.
 
 #### AgentMap.Utils
+
+  To accord canon `Register` functions:
 
   * [rename] `upd_prop/4` → `upd_meta/4`
   * [rename] `get_prop/2` → `meta/2`
